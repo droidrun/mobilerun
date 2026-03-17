@@ -179,7 +179,12 @@ class ManagerAgent(Workflow):
         # and flow-control tools (remember, complete) which Manager doesn't use.
         custom_tools_descriptions = ""
         if self.registry:
-            _standard = set(ATOMIC_ACTION_SIGNATURES.keys()) | {"remember", "complete"}
+            _standard = set(ATOMIC_ACTION_SIGNATURES.keys()) | {
+                "remember",
+                "complete",
+                "read",
+                "grep",
+            }
             custom_tools_descriptions = self.registry.get_tool_descriptions_text(
                 exclude=_standard
             )
@@ -215,7 +220,9 @@ class ManagerAgent(Workflow):
 
         # Add last thought
         if self.shared_state.last_thought:
-            parts.append(f"<executor_thoughts>\n{self.shared_state.last_thought}\n</executor_thoughts>\n")
+            parts.append(
+                f"<executor_thoughts>\n{self.shared_state.last_thought}\n</executor_thoughts>\n"
+            )
 
         # Add all actions from last executor turn
         n = self.shared_state.last_executor_action_count
@@ -232,7 +239,9 @@ class ManagerAgent(Workflow):
                 if outcome:
                     parts.append(f"Action: {action_str} | Result: {summ}\n")
                 else:
-                    parts.append(f"Action: {action_str} | Result: Failed | Error: {err}\n")
+                    parts.append(
+                        f"Action: {action_str} | Result: Failed | Error: {err}\n"
+                    )
             parts.append("</executed_actions>\n")
         elif self.shared_state.step_number > 1:
             # Executor ran but returned no tool calls
@@ -320,9 +329,7 @@ class ManagerAgent(Workflow):
                         + "\n".join(error_lines)
                         + "\n</potentially_stuck>\n"
                     )
-                    messages[last_user_idx].blocks.append(
-                        TextBlock(text=error_block)
-                    )
+                    messages[last_user_idx].blocks.append(TextBlock(text=error_block))
 
             # Add script result if available
             if self.shared_state.last_scripter_message:

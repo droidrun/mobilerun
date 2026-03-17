@@ -213,13 +213,6 @@ async def wait(duration: float = 1.0, *, ctx: "ActionContext") -> ActionResult:
 # ---------------------------------------------------------------------------
 
 
-async def remember(information: str, *, ctx: "ActionContext") -> ActionResult:
-    """Remember important information for later use."""
-    result = await ctx.shared_state.remember(information)
-    success = not result.startswith("Failed")
-    return ActionResult(success=success, summary=result)
-
-
 async def complete(
     success: bool, reason: str = "", message: str = "", *, ctx: "ActionContext"
 ) -> ActionResult:

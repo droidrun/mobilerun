@@ -105,7 +105,6 @@ class FastAgent(Workflow):
 
         self.system_prompt: ChatMessage | None = None
         self.tool_call_counter = 0
-        self.remembered_info: list[str] | None = None
 
         # Build tool descriptions and param types from registry
         self.tool_descriptions = self.registry.get_tool_descriptions_xml()
@@ -193,17 +192,6 @@ class FastAgent(Workflow):
         self.shared_state.message_history.clear()
         self.shared_state.message_history.append(user_message)
 
-        # Store remembered info if provided
-        remembered_info = ev.get("remembered_info", default=None)
-        if remembered_info:
-            self.remembered_info = remembered_info
-            memory_text = "\n### Remembered Information:\n"
-            for idx, item in enumerate(remembered_info, 1):
-                memory_text += f"{idx}. {item}\n"
-            self.shared_state.message_history[0].blocks.append(
-                TextBlock(text=memory_text)
-            )
-
         return FastAgentInputEvent()
 
     @step
@@ -237,6 +225,10 @@ class FastAgent(Workflow):
 
         self.shared_state.step_number += 1
         logger.info(f"🔄 Step {self.shared_state.step_number}/{self.max_steps}")
+
+        # Track what was saved to step history
+        step_saved_ui = False
+        step_saved_screenshot = False
 
         # Capture screenshot if needed
         screenshot = None
@@ -286,6 +278,16 @@ class FastAgent(Workflow):
             # Stream formatted state for trajectory
             ctx.write_event_to_stream(RecordUIStateEvent(ui_state=ui_state.elements))
 
+            # Save to step history store
+            if self.action_ctx.step_store:
+                self.action_ctx.step_store.save(
+                    step=self.shared_state.step_number,
+                    ui_state_text=ui_state.formatted_text,
+                    screenshot=screenshot,
+                )
+                step_saved_ui = True
+                step_saved_screenshot = screenshot is not None
+
         except DeviceDisconnectedError:
             raise
         except Exception as e:
@@ -311,9 +313,24 @@ class FastAgent(Workflow):
             # Current device state → last user message
             current_state = self.shared_state.formatted_device_state.strip()
             if current_state:
+                step_note = ""
+                if step_saved_ui or step_saved_screenshot:
+                    saved_files = []
+                    if step_saved_ui:
+                        saved_files.append(
+                            f"/steps/{self.shared_state.step_number}/ui_state.txt"
+                        )
+                    if step_saved_screenshot:
+                        saved_files.append(
+                            f"/steps/{self.shared_state.step_number}/screenshot.png"
+                        )
+                    step_note = (
+                        f"Step {self.shared_state.step_number} saved: "
+                        f"{', '.join(saved_files)}\n"
+                    )
                 messages_to_send[last_user_idx].blocks.append(
                     TextBlock(
-                        text=f"\n<device_state>\n{current_state}\n</device_state>\n"
+                        text=f"\n<device_state>\n{step_note}{current_state}\n</device_state>\n"
                     )
                 )
 
@@ -441,6 +458,7 @@ class FastAgent(Workflow):
             return event
 
         results: list[ToolResult] = []
+        images: list[bytes] = []
 
         for call in tool_calls:
             logger.debug(f"Executing: {call.name}({call.parameters})")
@@ -464,6 +482,8 @@ class FastAgent(Workflow):
                     is_error=not action_result.success,
                 )
             )
+            if action_result.image:
+                images.append(action_result.image)
 
             # Check if complete() was called successfully
             if self.shared_state.finished:
@@ -476,7 +496,7 @@ class FastAgent(Workflow):
                     self.shared_state.success = None
                     self.shared_state.answer = ""
                     results_xml = format_tool_results(results)
-                    event = FastAgentOutputEvent(output=results_xml)
+                    event = FastAgentOutputEvent(output=results_xml, images=images)
                     ctx.write_event_to_stream(event)
                     return event
 
@@ -508,10 +528,7 @@ class FastAgent(Workflow):
         logger.info(f"{results_xml}")
         await asyncio.sleep(self.agent_config.after_sleep_action)
 
-        # Update remembered info
-        self.remembered_info = self.shared_state.fast_memory
-
-        event = FastAgentOutputEvent(output=results_xml)
+        event = FastAgentOutputEvent(output=results_xml, images=images)
         ctx.write_event_to_stream(event)
         return event
 
@@ -542,9 +559,10 @@ class FastAgent(Workflow):
             )
 
         # Add results (+ any external messages) as a single user message
-        self.shared_state.message_history.append(
-            ChatMessage(role="user", content=output)
-        )
+        msg = ChatMessage(role="user", content=output)
+        for image in ev.images:
+            msg.blocks.append(ImageBlock(image=image))
+        self.shared_state.message_history.append(msg)
 
         return FastAgentInputEvent()
 

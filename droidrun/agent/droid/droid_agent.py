@@ -46,9 +46,10 @@ from droidrun.agent.manager import ManagerAgent, StatelessManagerAgent
 from droidrun.agent.oneflows.structured_output_agent import StructuredOutputAgent
 from droidrun.agent.oneflows.text_manipulator import run_text_manipulation_agent
 from droidrun.agent.scripter import ScripterAgent
+from droidrun.agent.step_store import StepStore, grep_steps, read_step_file
 from droidrun.agent.tool_registry import ToolRegistry
 from droidrun.agent.trajectory import TrajectoryWriter
-from droidrun.agent.utils.actions import complete, open_app, remember
+from droidrun.agent.utils.actions import complete, open_app
 from droidrun.agent.utils.llm_loader import (
     load_agent_llms,
     merge_llms_with_config,
@@ -349,7 +350,7 @@ class DroidAgent(Workflow):
                         else "None"
                     ),
                 },
-                tools=",".join(atomic_tools + ["remember", "complete"]),
+                tools=",".join(atomic_tools + ["read", "grep", "complete"]),
                 max_steps=self.config.agent.max_steps,
                 timeout=timeout,
                 vision={
@@ -472,13 +473,50 @@ class DroidAgent(Workflow):
             deps={"start_app", "get_apps"},
         )
 
-        # 3c. remember + complete (always registered, from DroidAgentState methods)
+        # 3c. Step history tools (read + grep)
         registry.register(
-            "remember",
-            fn=remember,
-            params={"information": {"type": "string", "required": True}},
-            description="Remember information for later use",
+            "read",
+            fn=read_step_file,
+            params={
+                "path": {
+                    "type": "string",
+                    "description": "Step file path: /steps/{n}/ui_state.txt or /steps/{n}/screenshot.png",
+                    "required": True,
+                },
+                "offset": {
+                    "type": "number",
+                    "description": "Line number to start reading from. Ignored for images.",
+                    "required": False,
+                    "default": 0,
+                },
+                "limit": {
+                    "type": "number",
+                    "description": "Number of lines to read. Ignored for images.",
+                    "required": False,
+                    "default": 0,
+                },
+            },
+            description="Read a file from step history. UI state files return text, screenshot files return the image.",
         )
+        registry.register(
+            "grep",
+            fn=grep_steps,
+            params={
+                "pattern": {
+                    "type": "string",
+                    "description": "Python regex pattern (case-insensitive). Special characters like . ( ) [ ] * + must be escaped with \\\\ to match literally.",
+                    "required": True,
+                },
+                "steps": {
+                    "type": "list",
+                    "description": "List of step numbers to search, e.g. [3, 5, 7]",
+                    "required": True,
+                },
+            },
+            description="Search UI state history using Python regex. Searches line-by-line across the specified steps. Returns matching lines with file path and line number.",
+        )
+
+        # 3d. complete (always registered)
         registry.register(
             "complete",
             fn=complete,
@@ -527,6 +565,7 @@ class DroidAgent(Workflow):
         self.registry = registry
 
         # ── 4. Create ActionContext ────────────────────────────────────
+        self.step_store = StepStore()
         self.action_ctx = ActionContext(
             driver=driver,
             ui=None,  # populated each step by state_provider
@@ -535,6 +574,7 @@ class DroidAgent(Workflow):
             app_opener_llm=self.app_opener_llm,
             credential_manager=self.credential_manager,
             streaming=self.config.agent.streaming,
+            step_store=self.step_store,
         )
 
         # ── 5. Wire up sub-agents ─────────────────────────────────────
@@ -652,7 +692,6 @@ class DroidAgent(Workflow):
 
             handler = agent.run(
                 input=ev.instruction,
-                remembered_info=self.shared_state.fast_memory,
             )
 
             async for nested_ev in handler.stream_events():
@@ -860,7 +899,9 @@ class DroidAgent(Workflow):
     ) -> ManagerInputEvent:
         if not ev.text_to_type or not ev.text_to_type.strip():
             logger.warning("⚠️ TextManipulator returned empty text, treating as no-op")
-            self.shared_state.last_executor_full_response = "Text manipulation returned empty result"
+            self.shared_state.last_executor_full_response = (
+                "Text manipulation returned empty result"
+            )
             self.shared_state.action_outcomes.append(False)
         else:
             try:
@@ -882,7 +923,9 @@ class DroidAgent(Workflow):
                     self.shared_state.action_outcomes.append(True)
             except Exception as e:
                 logger.error(f"❌ Error during text input: {e}")
-                self.shared_state.last_executor_full_response = f"Text manipulation error: {str(e)}"
+                self.shared_state.last_executor_full_response = (
+                    f"Text manipulation error: {str(e)}"
+                )
                 self.shared_state.action_outcomes.append(False)
 
         text_manipulation_record = {
@@ -927,7 +970,10 @@ class DroidAgent(Workflow):
         self.shared_state.last_executor_action_count = len(actions)
 
         for action_record in actions:
-            action_dict = {"action": action_record["action"], **action_record.get("args", {})}
+            action_dict = {
+                "action": action_record["action"],
+                **action_record.get("args", {}),
+            }
             self.shared_state.action_history.append(action_dict)
             self.shared_state.summary_history.append(action_record["summary"])
             self.shared_state.action_outcomes.append(action_record["outcome"])
@@ -935,7 +981,9 @@ class DroidAgent(Workflow):
 
         if not actions:
             # Executor returned text without tool calls — pass output to Manager
-            self.shared_state.last_executor_full_response = result.get("full_response", "")
+            self.shared_state.last_executor_full_response = result.get(
+                "full_response", ""
+            )
 
         return ExecutorResultEvent(
             actions=actions,

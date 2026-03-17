@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, TypedDict
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, TypedDict
 
 
 @dataclass
@@ -12,6 +12,7 @@ class ActionResult:
 
     success: bool
     summary: str
+    image: Optional[bytes] = field(default=None, repr=False)
 
     def __str__(self) -> str:
         return self.summary

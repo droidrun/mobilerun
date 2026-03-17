@@ -74,6 +74,7 @@ class FastAgentOutputEvent(Event):
     """Tool execution result."""
 
     output: str
+    images: list[bytes] = []
 
 
 class FastAgentEndEvent(Event):

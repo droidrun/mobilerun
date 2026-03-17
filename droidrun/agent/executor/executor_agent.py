@@ -57,7 +57,7 @@ class ExecutorAgent(Workflow):
     """
 
     # Flow-control tools hidden from executor's LLM prompt
-    _EXCLUDE_TOOLS = {"remember", "complete"}
+    _EXCLUDE_TOOLS = {"remember", "complete", "read", "grep"}
 
     def __init__(
         self,
@@ -280,13 +280,15 @@ class ExecutorAgent(Workflow):
 
             if call.error:
                 error_msg = f"Invalid arguments for {call.name}: {call.error}"
-                actions.append(ActionRecord(
-                    action=call.name,
-                    args=call.parameters,
-                    outcome=False,
-                    error=error_msg,
-                    summary=error_msg,
-                ))
+                actions.append(
+                    ActionRecord(
+                        action=call.name,
+                        args=call.parameters,
+                        outcome=False,
+                        error=error_msg,
+                        summary=error_msg,
+                    )
+                )
                 # Stop on error
                 break
 
@@ -294,13 +296,15 @@ class ExecutorAgent(Workflow):
                 call.name, call.parameters, self.action_ctx, workflow_ctx=ctx
             )
 
-            actions.append(ActionRecord(
-                action=call.name,
-                args=call.parameters,
-                outcome=action_result.success,
-                error="" if action_result.success else action_result.summary,
-                summary=action_result.summary,
-            ))
+            actions.append(
+                ActionRecord(
+                    action=call.name,
+                    args=call.parameters,
+                    outcome=action_result.success,
+                    error="" if action_result.success else action_result.summary,
+                    summary=action_result.summary,
+                )
+            )
 
             if not action_result.success:
                 # Stop on failure

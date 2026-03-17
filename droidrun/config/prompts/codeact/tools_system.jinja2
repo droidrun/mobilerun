@@ -122,8 +122,13 @@ When done:
 - Prefer one tool call per response so you can observe the result before acting again
 {% endif %}
 - Use `complete` to signal task completion (success or failure)
-- Use `remember` to store important information for later steps
 - Messages in `<external_user_message>` tags are live corrections or new instructions from the user sent mid-execution. They override earlier assumptions — honor the most recent user guidance on your next step
+
+## Step History
+When a step's UI state or screenshot is successfully captured, it is saved and the available paths are listed at the top of the `<device_state>` block. You can access past steps using:
+- `read` — read a step's UI state (`/steps/{n}/ui_state.txt`) or screenshot (`/steps/{n}/screenshot.png`). Use `offset` and `limit` to read specific line ranges.
+- `grep` — search UI state history with regex across specified steps.
+Not all steps may have screenshots (depends on configuration).
 
 {% if output_schema %}
 

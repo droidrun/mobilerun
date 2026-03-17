@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from droidrun.agent.droid.state import DroidAgentState
+    from droidrun.agent.step_store import StepStore
     from droidrun.credential_manager import CredentialManager
     from droidrun.tools.driver.base import DeviceDriver
     from droidrun.tools.ui.provider import StateProvider
@@ -28,6 +29,7 @@ class ActionContext:
         app_opener_llm=None,
         credential_manager: "Optional[CredentialManager]" = None,
         streaming: bool = False,
+        step_store: "Optional[StepStore]" = None,
     ) -> None:
         self.driver = driver
         self.ui = ui  # refreshed each step before tool execution
@@ -36,3 +38,4 @@ class ActionContext:
         self.app_opener_llm = app_opener_llm
         self.credential_manager = credential_manager
         self.streaming = streaming
+        self.step_store = step_store
