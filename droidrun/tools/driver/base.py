@@ -24,6 +24,8 @@ class DeviceDriver:
     """
 
     supported: set[str] = set()
+    supported_system_buttons: set[str] = set()
+    device_prompt_name: str = "device"
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -63,6 +65,10 @@ class DeviceDriver:
 
     async def press_key(self, keycode: int) -> None:
         """Send a single key-event."""
+        raise NotImplementedError
+
+    async def press_system_button(self, button: str) -> None:
+        """Press a semantic system button like ``back`` or ``home``."""
         raise NotImplementedError
 
     async def drag(

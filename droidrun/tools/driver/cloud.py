@@ -34,6 +34,8 @@ class CloudDriver(DeviceDriver):
         "get_apps",
         "list_packages",
     }
+    supported_system_buttons = {"back", "home", "enter"}
+    device_prompt_name = "Android phone"
 
     # MobileRun global action codes (accessibility service)
     _GLOBAL_BACK = 1
@@ -156,6 +158,13 @@ class CloudDriver(DeviceDriver):
                     self.device_id, key=keycode, **self._display_kw
                 )
             )
+
+    async def press_system_button(self, button: str) -> None:
+        keycodes = {"back": 4, "home": 3, "enter": 66}
+        keycode = keycodes.get(button.lower())
+        if keycode is None:
+            raise ValueError(f"Unsupported system button: {button}")
+        await self.press_key(keycode)
 
     async def drag(
         self,

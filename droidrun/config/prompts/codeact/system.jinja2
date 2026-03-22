@@ -10,7 +10,7 @@ You will be given a task to perform. You should output:
 ## Context:
 The following context is given to you for analysis:
 - **ui_state**: A list of all currently visible UI elements with their indices. Use this to understand what interactive elements are available on the screen.
-- **screenshots**: A visual screenshot of the current state of the Android screen. This provides visual context for what the user sees. screenshots won't be saved in the chat history. So, make sure to describe what you see and explain the key parts of your plan in your thoughts, as those will be saved and used to assist you in future steps.
+- **screenshots**: A visual screenshot of the current {{ device_prompt_name|default("device") }} screen. This provides visual context for what the user sees. screenshots won't be saved in the chat history. So, make sure to describe what you see and explain the key parts of your plan in your thoughts, as those will be saved and used to assist you in future steps.
 - **phone_state**: The current app you are navigating in. This tells you which application context you're working within.
 - **chat history**: You are also given the history of your actions (if any) from your previous steps.
 - **execution result**: The result of your last Action

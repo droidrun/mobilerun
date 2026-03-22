@@ -92,6 +92,7 @@ class StatelessManagerAgent(Workflow):
         variables = {
             "instruction": self.shared_state.instruction,
             "device_date": self.shared_state.device_date,
+            "device_prompt_name": self.action_ctx.driver.device_prompt_name,
             "previous_plan": self.shared_state.previous_plan,
             "previous_state": self.shared_state.previous_formatted_device_state,
             "memory": self.shared_state.manager_memory,

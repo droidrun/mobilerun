@@ -104,6 +104,7 @@ class ExecutorAgent(Workflow):
         variables = {
             "instruction": self.shared_state.instruction,
             "app_card": "",
+            "device_prompt_name": self.action_ctx.driver.device_prompt_name,
             "device_state": self.shared_state.formatted_device_state,
             "plan": self.shared_state.plan,
             "subgoal": subgoal,

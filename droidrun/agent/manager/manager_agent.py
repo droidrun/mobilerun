@@ -197,6 +197,7 @@ class ManagerAgent(Workflow):
         variables = {
             "instruction": self.shared_state.instruction,
             "device_date": self.shared_state.device_date,
+            "device_prompt_name": self.action_ctx.driver.device_prompt_name,
             "app_card": self.shared_state.app_card,
             "important_notes": "",  # TODO: implement
             "error_history": error_history,

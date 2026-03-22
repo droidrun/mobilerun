@@ -38,6 +38,8 @@ class AndroidDriver(DeviceDriver):
         "install_app",
         "drag",
     }
+    supported_system_buttons = {"back", "home", "enter"}
+    device_prompt_name = "Android phone"
 
     def __init__(
         self,
@@ -100,6 +102,13 @@ class AndroidDriver(DeviceDriver):
     async def press_key(self, keycode: int) -> None:
         await self.ensure_connected()
         await self.device.keyevent(keycode)
+
+    async def press_system_button(self, button: str) -> None:
+        keycodes = {"back": 4, "home": 3, "enter": 66}
+        keycode = keycodes.get(button.lower())
+        if keycode is None:
+            raise ValueError(f"Unsupported system button: {button}")
+        await self.press_key(keycode)
 
     async def drag(
         self,

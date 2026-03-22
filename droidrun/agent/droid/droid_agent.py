@@ -1,6 +1,6 @@
 """
 DroidAgent - A wrapper class that coordinates the planning and execution of tasks
-to achieve a user's goal on an Android device.
+to achieve a user's goal on a mobile device.
 
 Architecture:
 - When reasoning=False: Uses CodeActAgent directly
@@ -56,6 +56,7 @@ from droidrun.agent.utils.llm_loader import (
 from droidrun.agent.utils.prompt_resolver import PromptResolver
 from droidrun.agent.utils.signatures import (
     ATOMIC_ACTION_SIGNATURES,
+    build_atomic_action_signatures,
     build_credential_tools,
 )
 from droidrun.agent.utils.tracing_setup import (
@@ -459,9 +460,12 @@ class DroidAgent(Workflow):
 
         # ── 3. Build tool registry ────────────────────────────────────
         registry = ToolRegistry()
+        atomic_action_signatures = build_atomic_action_signatures(
+            driver.supported_system_buttons
+        )
 
         # 3a. Atomic tools (click, long_press, type, system_button, swipe, etc.)
-        registry.register_from_dict(ATOMIC_ACTION_SIGNATURES)
+        registry.register_from_dict(atomic_action_signatures)
 
         # 3b. open_app (always registered)
         registry.register(

@@ -158,6 +158,7 @@ class CodeActAgent(Workflow):
             "tool_descriptions": self.tool_descriptions,
             "available_secrets": self._available_secrets,
             "available_tools": set(self.registry.tools.keys()),
+            "device_prompt_name": self.action_ctx.driver.device_prompt_name,
             "variables": (
                 self.shared_state.custom_variables if self.shared_state else {}
             ),

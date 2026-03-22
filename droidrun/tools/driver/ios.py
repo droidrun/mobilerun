@@ -63,6 +63,8 @@ class IOSDriver(DeviceDriver):
         "list_packages",
         "get_apps",
     }
+    supported_system_buttons = {"back", "home", "enter"}
+    device_prompt_name = "iPhone"
 
     def __init__(
         self,
@@ -140,6 +142,13 @@ class IOSDriver(DeviceDriver):
             return
         resp = await self._client.post("/inputs/key", json={"key": ios_keycode})
         resp.raise_for_status()
+
+    async def press_system_button(self, button: str) -> None:
+        keycodes = {"back": 4, "home": 3, "enter": 66}
+        keycode = keycodes.get(button.lower())
+        if keycode is None:
+            raise ValueError(f"Unsupported system button: {button}")
+        await self.press_key(keycode)
 
     # -- app management ------------------------------------------------------
 
