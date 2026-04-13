@@ -612,7 +612,6 @@ class OpenAIOAuth(OpenAI):
             )
             return self.login_manual(
                 open_browser=open_browser,
-                callback_host=callback_host,
                 callback_port=callback_port,
                 callback_path=callback_path,
                 redirect_host=redirect_host,
@@ -698,7 +697,6 @@ class OpenAIOAuth(OpenAI):
         *,
         open_browser: bool = True,
         input_fn: Any = input,
-        callback_host: str = DEFAULT_OPENAI_OAUTH_CALLBACK_HOST,
         callback_port: int = DEFAULT_OPENAI_OAUTH_CALLBACK_PORT,
         callback_path: str = DEFAULT_OPENAI_OAUTH_CALLBACK_PATH,
         redirect_host: str = DEFAULT_OPENAI_OAUTH_CALLBACK_HOST,
