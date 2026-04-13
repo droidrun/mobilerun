@@ -1,7 +1,10 @@
+import base64
+import hashlib
 import json
 import os
 import secrets
 import socket
+import sys
 import threading
 import time
 import webbrowser
@@ -41,6 +44,52 @@ DEFAULT_CLIENT_ID = (
     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
 )
 DEFAULT_CLIENT_SECRET = "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"
+
+
+def _b64_no_pad(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _pkce_pair() -> tuple[str, str]:
+    verifier = _b64_no_pad(secrets.token_bytes(64))
+    challenge = _b64_no_pad(hashlib.sha256(verifier.encode("utf-8")).digest())
+    return verifier, challenge
+
+
+def _is_headless_environment() -> bool:
+    """Detect SSH, WSL, or missing display where browser popups won't work."""
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return True
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    if sys.platform.startswith("linux"):
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            return True
+    return False
+
+
+def _normalize_manual_code(raw: str, expected_state: str) -> str:
+    """Parse pasted input: full URL with code= param, code#state, or bare code."""
+    value = raw.strip()
+    if not value:
+        return value
+
+    first_token = value.split()[0]
+
+    if "code=" in first_token:
+        parsed = urlparse(first_token)
+        params = parse_qs(parsed.query)
+        code = params.get("code", [None])[0]
+        if isinstance(code, str) and code:
+            return code
+
+    if "#" in first_token:
+        code_part, fragment = first_token.split("#", 1)
+        if fragment and fragment != expected_state:
+            raise RuntimeError("OAuth manual code state mismatch.")
+        return code_part
+
+    return first_token
 
 
 class GeminiOAuthCodeAssistLLM(CustomLLM):
@@ -359,16 +408,25 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
 
         return access_token
 
-    def _exchange_authorization_code(self, code: str, redirect_uri: str) -> str:
+    def _exchange_authorization_code(
+        self,
+        code: str,
+        redirect_uri: str,
+        code_verifier: Optional[str] = None,
+    ) -> str:
+        payload = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        }
+        if code_verifier:
+            payload["code_verifier"] = code_verifier
+
         response = self._session.post(
             self.token_url,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-            },
+            data=payload,
             timeout=self.timeout,
         )
         response.raise_for_status()
@@ -384,6 +442,12 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         if isinstance(refresh_token, str) and refresh_token:
             self._cached_refresh_token = refresh_token
 
+        if not self._cached_refresh_token:
+            raise RuntimeError(
+                "No refresh token received from Google. "
+                "Revoke access at https://myaccount.google.com/permissions and retry."
+            )
+
         expires_in = data.get("expires_in", 3600)
         try:
             expires_in_s = int(expires_in)
@@ -395,7 +459,13 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         self._persist_credentials()
         return access_token
 
-    def _build_auth_url(self, redirect_uri: str, state: str, prompt_consent: bool) -> str:
+    def _build_auth_url(
+        self,
+        redirect_uri: str,
+        state: str,
+        prompt_consent: bool,
+        code_challenge: Optional[str] = None,
+    ) -> str:
         scope = " ".join(
             [
                 "https://www.googleapis.com/auth/cloud-platform",
@@ -413,6 +483,9 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         }
         if prompt_consent:
             query["prompt"] = "consent"
+        if code_challenge:
+            query["code_challenge"] = code_challenge
+            query["code_challenge_method"] = "S256"
         return f"{self.authorize_url}?{urlencode(query)}"
 
     def login(
@@ -425,9 +498,16 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         callback_path: str = "/oauth2callback",
         prompt_consent: bool = True,
     ) -> str:
+        if os.environ.get("DROIDRUN_OAUTH_FORCE_MANUAL"):
+            return self.login_manual(
+                open_browser=open_browser, prompt_consent=prompt_consent
+            )
+
         result: Dict[str, Optional[str]] = {"code": None, "state": None, "error": None}
+        manual_code: Dict[str, Optional[str]] = {"code": None}
         done = threading.Event()
         expected_state = secrets.token_hex(32)
+        code_verifier, code_challenge = _pkce_pair()
 
         class _OAuthHandler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802
@@ -459,38 +539,111 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
             def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
                 return
 
-        httpd = HTTPServer((callback_host, callback_port), _OAuthHandler)
+        try:
+            httpd = HTTPServer((callback_host, callback_port), _OAuthHandler)
+        except OSError as exc:
+            print(
+                f"Could not bind callback server on {callback_host}:{callback_port} ({exc}). "
+                "Falling back to manual code entry."
+            )
+            return self.login_manual(
+                open_browser=open_browser, prompt_consent=prompt_consent
+            )
+
         actual_port = httpd.server_address[1]
         redirect_uri = f"http://127.0.0.1:{actual_port}{callback_path}"
         auth_url = self._build_auth_url(
             redirect_uri=redirect_uri,
             state=expected_state,
             prompt_consent=prompt_consent,
+            code_challenge=code_challenge,
         )
 
         server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         server_thread.start()
 
         try:
+            print(f"Open this URL to login:\n{auth_url}\n")
             if open_browser:
                 webbrowser.open(auth_url)
-            else:
-                print(f"Open this URL to login:\n{auth_url}")
+
+            def _read_manual() -> None:
+                try:
+                    raw = str(input("Or paste the redirect URL / authorization code: "))
+                except Exception:
+                    return
+                if done.is_set() or not raw.strip():
+                    return
+                try:
+                    code = _normalize_manual_code(raw, expected_state)
+                except Exception as e:  # noqa: BLE001
+                    print(f"Invalid paste: {e}")
+                    return
+                if code:
+                    manual_code["code"] = code
+                    done.set()
+
+            manual_thread = threading.Thread(target=_read_manual, daemon=True)
+            manual_thread.start()
 
             if not done.wait(timeout=timeout_seconds):
                 raise TimeoutError("OAuth login timed out before callback was received.")
 
-            if result["error"]:
-                raise RuntimeError(f"OAuth callback returned error: {result['error']}")
-            if result["state"] != expected_state:
-                raise RuntimeError("OAuth callback state mismatch.")
-            if not result["code"]:
-                raise RuntimeError("OAuth callback did not include an authorization code.")
+            if manual_code["code"]:
+                code_to_exchange = manual_code["code"]
+            else:
+                if result["error"]:
+                    raise RuntimeError(f"OAuth callback returned error: {result['error']}")
+                if result["state"] != expected_state:
+                    raise RuntimeError("OAuth callback state mismatch.")
+                if not result["code"]:
+                    raise RuntimeError("OAuth callback did not include an authorization code.")
+                code_to_exchange = result["code"]
 
-            return self._exchange_authorization_code(result["code"], redirect_uri)
+            return self._exchange_authorization_code(
+                code_to_exchange, redirect_uri, code_verifier=code_verifier
+            )
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+    def login_manual(
+        self,
+        *,
+        open_browser: bool = True,
+        input_fn: Any = input,
+        prompt_consent: bool = True,
+    ) -> str:
+        """Manual OAuth flow for headless/VPS/WSL environments.
+
+        Opens (or prints) the auth URL and prompts the user to paste the
+        redirected URL or bare authorization code from the browser.
+        """
+        code_verifier, code_challenge = _pkce_pair()
+        expected_state = secrets.token_hex(32)
+        # Google allows any loopback redirect for installed apps. The browser
+        # will fail to load the page, but the URL bar will contain the code.
+        redirect_uri = "http://localhost/oauth2callback"
+
+        auth_url = self._build_auth_url(
+            redirect_uri=redirect_uri,
+            state=expected_state,
+            prompt_consent=prompt_consent,
+            code_challenge=code_challenge,
+        )
+
+        print(f"Open this URL to login:\n{auth_url}")
+        if open_browser:
+            webbrowser.open(auth_url)
+
+        raw = str(input_fn("Paste the redirect URL or authorization code: "))
+        code = _normalize_manual_code(raw, expected_state)
+        if not code:
+            raise RuntimeError("Authorization code was empty.")
+
+        return self._exchange_authorization_code(
+            code, redirect_uri, code_verifier=code_verifier
+        )
 
     def _resolve_access_token(self) -> str:
         env_access_token = os.environ.get("GEMINI_OAUTH_ACCESS_TOKEN")

@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import secrets
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -58,6 +59,87 @@ def _pkce_pair() -> tuple[str, str]:
     verifier = _b64_no_pad(secrets.token_bytes(64))
     challenge = _b64_no_pad(hashlib.sha256(verifier.encode("utf-8")).digest())
     return verifier, challenge
+
+
+def _is_headless_environment() -> bool:
+    """Detect SSH, WSL, or missing display where browser popups won't work."""
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return True
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    if sys.platform.startswith("linux"):
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            return True
+    return False
+
+
+def _normalize_manual_code(raw: str, expected_state: str) -> str:
+    """Parse pasted input: full URL with code= param, code#state, or bare code."""
+    value = raw.strip()
+    if not value:
+        return value
+
+    first_token = value.split()[0]
+
+    if "code=" in first_token:
+        parsed = urlparse(first_token)
+        params = parse_qs(parsed.query)
+        code = params.get("code", [None])[0]
+        if isinstance(code, str) and code:
+            return code
+
+    if "#" in first_token:
+        code_part, fragment = first_token.split("#", 1)
+        if fragment and fragment != expected_state:
+            raise RuntimeError("OAuth manual code state mismatch.")
+        return code_part
+
+    return first_token
+
+
+def _tls_preflight(issuer: str, timeout: float = 5.0) -> None:
+    """Probe the OAuth issuer to detect TLS/certificate issues before login.
+
+    Raises RuntimeError on TLS certificate errors (with fix suggestions).
+    Prints warnings for non-TLS connection errors but does not block.
+    """
+    probe_url = f"{issuer.rstrip('/')}/oauth/authorize"
+    try:
+        httpx.head(probe_url, follow_redirects=False, timeout=timeout)
+    except httpx.ConnectError as exc:
+        err_str = str(exc).lower()
+        tls_indicators = (
+            "certificate",
+            "ssl",
+            "tls",
+            "unable_to_get_issuer_cert",
+            "cert_has_expired",
+            "self_signed_cert",
+            "verify_leaf_signature",
+            "altname_invalid",
+        )
+        if any(indicator in err_str for indicator in tls_indicators):
+            raise RuntimeError(
+                f"TLS certificate error connecting to {probe_url}: {exc}\n"
+                "Possible fixes:\n"
+                "  - Update CA certificates "
+                "(e.g. `sudo update-ca-certificates` on Linux, "
+                "`brew postinstall ca-certificates` on macOS)\n"
+                "  - Update OpenSSL (e.g. `brew postinstall openssl@3`)\n"
+                "  - Check if a corporate proxy is intercepting HTTPS traffic"
+            ) from exc
+        print(
+            f"Warning: Could not connect to {probe_url}: {exc}\n"
+            "The login flow may fail if there is a DNS or firewall issue."
+        )
+    except httpx.TimeoutException:
+        print(
+            f"Warning: Connection to {probe_url} timed out.\n"
+            "The login flow may fail if there is a network issue."
+        )
+    except Exception as exc:
+        # Unexpected error — warn but don't block.
+        print(f"Warning: TLS preflight check encountered an error: {exc}")
 
 
 @dataclass
@@ -480,7 +562,20 @@ class OpenAIOAuth(OpenAI):
         redirect_host: str = DEFAULT_OPENAI_OAUTH_CALLBACK_HOST,
         scope: str = DEFAULT_OPENAI_OAUTH_SCOPE,
     ) -> OpenAIOAuthCredentials:
+        _tls_preflight(self._oauth_manager.issuer)
+
+        if os.environ.get("DROIDRUN_OAUTH_FORCE_MANUAL"):
+            return self.login_manual(
+                open_browser=open_browser,
+                callback_host=callback_host,
+                callback_port=callback_port,
+                callback_path=callback_path,
+                redirect_host=redirect_host,
+                scope=scope,
+            )
+
         result: Dict[str, Optional[str]] = {"code": None, "state": None, "error": None}
+        manual_code: Dict[str, Optional[str]] = {"code": None}
         done = threading.Event()
         code_verifier, code_challenge = _pkce_pair()
         state = _b64_no_pad(secrets.token_bytes(32))
@@ -515,7 +610,22 @@ class OpenAIOAuth(OpenAI):
             def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
                 return
 
-        httpd = HTTPServer((callback_host, callback_port), _OAuthHandler)
+        try:
+            httpd = HTTPServer((callback_host, callback_port), _OAuthHandler)
+        except OSError as exc:
+            print(
+                f"Could not bind callback server on {callback_host}:{callback_port} ({exc}). "
+                "Falling back to manual code entry."
+            )
+            return self.login_manual(
+                open_browser=open_browser,
+                callback_host=callback_host,
+                callback_port=callback_port,
+                callback_path=callback_path,
+                redirect_host=redirect_host,
+                scope=scope,
+            )
+
         actual_port = httpd.server_address[1]
         redirect_uri = f"http://{redirect_host}:{actual_port}{callback_path}"
         auth_url = self._build_auth_url(
@@ -529,23 +639,47 @@ class OpenAIOAuth(OpenAI):
 
         server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         server_thread.start()
+
         try:
+            print(f"Open this URL to login:\n{auth_url}\n")
             if open_browser:
                 webbrowser.open(auth_url)
-            else:
-                print(f"Open this URL to login:\n{auth_url}")
+
+            def _read_manual() -> None:
+                try:
+                    raw = str(input("Or paste the redirect URL / authorization code: "))
+                except Exception:
+                    return
+                if done.is_set() or not raw.strip():
+                    return
+                try:
+                    code = _normalize_manual_code(raw, state)
+                except Exception as e:  # noqa: BLE001
+                    print(f"Invalid paste: {e}")
+                    return
+                if code:
+                    manual_code["code"] = code
+                    done.set()
+
+            manual_thread = threading.Thread(target=_read_manual, daemon=True)
+            manual_thread.start()
 
             if not done.wait(timeout=timeout_seconds):
                 raise TimeoutError("OAuth login timed out before callback was received.")
-            if result["error"]:
-                raise RuntimeError(f"OAuth callback returned error: {result['error']}")
-            if result["state"] != state:
-                raise RuntimeError("OAuth callback state mismatch.")
-            if not result["code"]:
-                raise RuntimeError("OAuth callback did not include an authorization code.")
+
+            if manual_code["code"]:
+                code_to_exchange = manual_code["code"]
+            else:
+                if result["error"]:
+                    raise RuntimeError(f"OAuth callback returned error: {result['error']}")
+                if result["state"] != state:
+                    raise RuntimeError("OAuth callback state mismatch.")
+                if not result["code"]:
+                    raise RuntimeError("OAuth callback did not include an authorization code.")
+                code_to_exchange = result["code"]
 
             creds = self._oauth_manager.exchange_authorization_code(
-                code=result["code"],
+                code=code_to_exchange,
                 redirect_uri=redirect_uri,
                 code_verifier=code_verifier,
             )
@@ -555,6 +689,53 @@ class OpenAIOAuth(OpenAI):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+    def login_manual(
+        self,
+        *,
+        open_browser: bool = True,
+        input_fn: Any = input,
+        callback_host: str = DEFAULT_OPENAI_OAUTH_CALLBACK_HOST,
+        callback_port: int = DEFAULT_OPENAI_OAUTH_CALLBACK_PORT,
+        callback_path: str = DEFAULT_OPENAI_OAUTH_CALLBACK_PATH,
+        redirect_host: str = DEFAULT_OPENAI_OAUTH_CALLBACK_HOST,
+        scope: str = DEFAULT_OPENAI_OAUTH_SCOPE,
+    ) -> OpenAIOAuthCredentials:
+        """Manual OAuth flow for headless/VPS/WSL environments.
+
+        Uses the same redirect_uri as the browser flow (OpenAI requires
+        port 1455). The browser will fail to load the redirect page, but
+        the URL bar will contain the authorization code.
+        """
+        code_verifier, code_challenge = _pkce_pair()
+        state = _b64_no_pad(secrets.token_bytes(32))
+        redirect_uri = f"http://{redirect_host}:{callback_port}{callback_path}"
+        auth_url = self._build_auth_url(
+            issuer=self._oauth_manager.issuer,
+            client_id=self._oauth_manager.client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            state=state,
+            scope=scope,
+        )
+
+        print(f"Open this URL to login:\n{auth_url}")
+        if open_browser:
+            webbrowser.open(auth_url)
+
+        raw = str(input_fn("Paste the redirect URL or authorization code: "))
+        code = _normalize_manual_code(raw, state)
+        if not code:
+            raise RuntimeError("Authorization code was empty.")
+
+        creds = self._oauth_manager.exchange_authorization_code(
+            code=code,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+        )
+        if creds.account_id:
+            object.__setattr__(self, "_oauth_account_id", creds.account_id)
+        return creds
 
     def _ensure_access_token(self) -> OpenAIOAuthCredentials:
         creds = self._oauth_manager.get_valid_credentials(skew_ms=self._oauth_refresh_skew_ms)
