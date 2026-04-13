@@ -638,24 +638,34 @@ class OpenAIOAuth(OpenAI):
             if open_browser:
                 webbrowser.open(auth_url)
 
-            def _read_manual() -> None:
-                try:
-                    raw = str(input("Or paste the redirect URL / authorization code: "))
-                except Exception:
-                    return
-                if done.is_set() or not raw.strip():
-                    return
-                try:
-                    code = _normalize_manual_code(raw, state)
-                except Exception as e:  # noqa: BLE001
-                    print(f"Invalid paste: {e}")
-                    return
-                if code:
-                    manual_code["code"] = code
-                    done.set()
+            # Only run the manual-paste race when we can't rely on the local
+            # browser callback: headless envs (SSH/WSL/no-display), or when the
+            # user explicitly opts in with DROIDRUN_OAUTH_MANUAL=1. On a normal
+            # desktop the server always wins anyway, and a blocked input()
+            # thread would intercept InquirerPy's terminal queries and lag the
+            # configure wizard.
+            enable_manual = _is_headless_environment() or bool(
+                os.environ.get("DROIDRUN_OAUTH_MANUAL")
+            )
+            if enable_manual:
+                def _read_manual() -> None:
+                    try:
+                        raw = str(input("Or paste the redirect URL / authorization code: "))
+                    except Exception:
+                        return
+                    if done.is_set() or not raw.strip():
+                        return
+                    try:
+                        code = _normalize_manual_code(raw, state)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"Invalid paste: {e}")
+                        return
+                    if code:
+                        manual_code["code"] = code
+                        done.set()
 
-            manual_thread = threading.Thread(target=_read_manual, daemon=True)
-            manual_thread.start()
+                manual_thread = threading.Thread(target=_read_manual, daemon=True)
+                manual_thread.start()
 
             if not done.wait(timeout=timeout_seconds):
                 raise TimeoutError("OAuth login timed out before callback was received.")
