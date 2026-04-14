@@ -24,6 +24,7 @@ logger = logging.getLogger("mobilerun")
 
 REPO = "droidrun/droidrun-portal"
 ASSET_NAME = "droidrun-portal"
+DOWNLOAD_BASE = f"https://github.com/{REPO}/releases/download"
 GITHUB_API_HOSTS = ["https://api.github.com", "https://ungh.cc"]
 
 VERSION_MAP_GIST_URL = "https://raw.githubusercontent.com/droidrun/gists/refs/heads/main/version_map_android.json"
@@ -118,7 +119,7 @@ def get_compatible_portal_version(
 
     mappings = mapping.get("mappings", {})
     download_base = mapping.get(
-        "download_base", "https://github.com/droidrun/droidrun-portal/releases/download"
+        "download_base", DOWNLOAD_BASE
     )
 
     # Try exact match first

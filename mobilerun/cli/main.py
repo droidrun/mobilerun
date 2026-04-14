@@ -586,9 +586,7 @@ async def _setup_portal(
         elif specific_version:
             version = specific_version.lstrip("v")
             version = f"v{version}"
-            download_base = (
-                "https://github.com/droidrun/droidrun-portal/releases/download"
-            )
+            download_base = DOWNLOAD_BASE
             apk_context = download_versioned_portal_apk(version, download_base, debug)
         elif latest:
             console.print("[bold blue]Downloading latest Portal APK...[/]")

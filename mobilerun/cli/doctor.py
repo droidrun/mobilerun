@@ -19,6 +19,7 @@ from mobilerun.portal import (
     LEGACY_PORTAL_PACKAGE_NAME,
     PORTAL_PACKAGE_NAME,
     GITHUB_API_HOSTS,
+    REPO,
     check_portal_accessibility,
     enable_portal_accessibility,
     get_compatible_portal_version,
@@ -255,7 +256,7 @@ def _get_latest_portal_version() -> str | None:
     """Fetch latest portal release version from GitHub."""
     for host in GITHUB_API_HOSTS:
         try:
-            url = f"{host}/repos/droidrun/droidrun-portal/releases/latest"
+            url = f"{host}/repos/{REPO}/releases/latest"
             resp = requests.get(url, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
