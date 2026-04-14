@@ -1,8 +1,8 @@
 [project]
-name = "droidrun"
+name = "mobilerun"
 version = "0.5.9"
 description = "A framework for controlling Android devices through LLM agents"
-authors = [{ name = "Niels Schmidt", email = "niels.schmidt@droidrun.ai" }]
+authors = [{ name = "Niels Schmidt", email = "niels.schmidt@mobilerun.ai" }]
 dependencies = [
     "async_adbutils",
     "llama-index==0.14.4",
@@ -49,9 +49,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/droidrun/droidrun"
-"Bug Tracker" = "https://github.com/droidrun/droidrun/issues"
-Documentation = "https://docs.droidrun.ai/"
+Homepage = "https://github.com/mobilerun/mobilerun"
+"Bug Tracker" = "https://github.com/mobilerun/mobilerun/issues"
+Documentation = "https://docs.mobilerun.ai/"
 
 [project.optional-dependencies]
 anthropic = [
@@ -67,7 +67,7 @@ dev = [
     "mypy>=1.0.0",
     "bandit>=1.8.6",
     "safety>=3.2.11",
-    "droidrun[langfuse]",
+    "mobilerun[langfuse]",
 ]
 langfuse = [
     "langfuse==3.12.1",
@@ -83,10 +83,10 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["droidrun"]
+packages = ["mobilerun"]
 
 [project.scripts]
-droidrun = "droidrun.cli.main:cli"
+mobilerun = "mobilerun.cli.main:cli"
 
 [tool.ruff]
 line-length = 100
@@ -104,8 +104,8 @@ ignore = ["E501"]
 
 [[tool.pydoc-markdown.loaders]]
 type = "python"
-packages = ["droidrun"]
-modules = ["droidrun"]
+packages = ["mobilerun"]
+modules = ["mobilerun"]
 
 [[tool.pydoc-markdown.processors]]
 type = "filter"
@@ -143,33 +143,33 @@ header_level_by_type = { Module = 1, Class = 2, Method = 4, Function = 4, Variab
 title = "DroidAgent"
 name = "droid-agent"
 contents = [
-    "droidrun.agent.droid.droid_agent.DroidAgent",
-    "droidrun.agent.droid.droid_agent.DroidAgent.__init__",
-    "droidrun.agent.droid.droid_agent.DroidAgent.run",
+    "mobilerun.agent.droid.droid_agent.MobileAgent",
+    "mobilerun.agent.droid.droid_agent.MobileAgent.__init__",
+    "mobilerun.agent.droid.droid_agent.MobileAgent.run",
 ]
 
 [[tool.pydoc-markdown.renderer.pages]]
 title = "Tools"
 name = "base-tools"
 contents = [
-    "droidrun.tools.tools.Tools.*",
-    "droidrun.tools.tools.describe_tools",
+    "mobilerun.tools.tools.Tools.*",
+    "mobilerun.tools.tools.describe_tools",
 ]
 
 [[tool.pydoc-markdown.renderer.pages]]
 title = "AdbTools"
 name = "adb-tools"
-contents = ["droidrun.tools.adb.AdbTools.*"]
+contents = ["mobilerun.tools.adb.AdbTools.*"]
 
 [[tool.pydoc-markdown.renderer.pages]]
 title = "IOSTools"
 name = "ios-tools"
-contents = ["droidrun.tools.ios.IOSTools.*"]
+contents = ["mobilerun.tools.ios.IOSTools.*"]
 
 [[tool.pydoc-markdown.renderer.pages]]
 title = "CloudTools"
 name = "cloud-tools"
-contents = ["droidrun.tools.cloud.MobileRunTools.*"]
+contents = ["mobilerun.tools.cloud.MobileRunTools.*"]
 
 [dependency-groups]
 dev = [

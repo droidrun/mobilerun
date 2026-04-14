@@ -294,7 +294,7 @@ def _print_version(ctx, param, value):
         return
     version = None
     try:
-        version = importlib.metadata.version("droidrun")
+        version = importlib.metadata.version("mobilerun")
         # print("debug: step 1")
     except Exception:
         pass
