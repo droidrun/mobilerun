@@ -38,8 +38,7 @@
 </div>
 
 
-
-Mobilerun is a cloud solution powered by Mobilerun a powerful framework for controlling Android and iOS devices through LLM agents. It allows you to automate device interactions using natural language commands. [Checkout our benchmark results](https://mobilerun.ai/benchmark)
+Mobilerun a powerful framework for controlling Android and iOS devices through LLM agents. It allows you to automate device interactions using natural language commands. [Checkout our benchmark results](https://mobilerun.ai/benchmark)
 
 
 - 🤖 Control Android and iOS devices with natural language commands
