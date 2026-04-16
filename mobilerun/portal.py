@@ -52,7 +52,7 @@ _PORTAL_META = {
 # Artifact channels — download helpers use explicit channel parameter
 _ARTIFACT_CHANNELS = {
     PORTAL_PACKAGE_NAME: {
-        "repo": "mobilerun/mobilerun-portal",
+        "repo": "droidrun/mobilerun-portal",
         "asset_name": "mobilerun-portal",
     },
     LEGACY_PORTAL_PACKAGE_NAME: {

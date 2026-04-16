@@ -11,7 +11,7 @@
 [![Cloud](https://img.shields.io/badge/Cloud-☁️-0D9373?style=for-the-badge)](https://cloud.mobilerun.ai/sign-in?waitlist=true)
 
 
-[![GitHub stars](https://img.shields.io/github/stars/mobilerun/mobilerun?style=social)](https://github.com/mobilerun/mobilerun/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/droidrun/mobilerun?style=social)](https://github.com/droidrun/mobilerun/stargazers)
 [![mobilerun.ai](https://img.shields.io/badge/mobilerun.ai-white)](https://mobilerun.ai)
 [![Twitter Follow](https://img.shields.io/twitter/follow/mobilerun_ai?style=social)](https://x.com/mobilerun_ai)
 [![Discord](https://img.shields.io/discord/1360219330318696488?color=white&label=Discord&logo=discord&logoColor=white)](https://discord.gg/ZZbKEZZkwK)
@@ -26,14 +26,14 @@
 </picture>
 
 
-[Deutsch](https://zdoc.app/de/mobilerun/mobilerun) | 
-[Español](https://zdoc.app/es/mobilerun/mobilerun) | 
-[français](https://zdoc.app/fr/mobilerun/mobilerun) | 
-[日本語](https://zdoc.app/ja/mobilerun/mobilerun) | 
-[한국어](https://zdoc.app/ko/mobilerun/mobilerun) | 
-[Português](https://zdoc.app/pt/mobilerun/mobilerun) | 
-[Русский](https://zdoc.app/ru/mobilerun/mobilerun) | 
-[中文](https://zdoc.app/zh/mobilerun/mobilerun)
+[Deutsch](https://zdoc.app/de/droidrun/mobilerun) | 
+[Español](https://zdoc.app/es/droidrun/mobilerun) | 
+[français](https://zdoc.app/fr/droidrun/mobilerun) | 
+[日本語](https://zdoc.app/ja/droidrun/mobilerun) | 
+[한국어](https://zdoc.app/ko/droidrun/mobilerun) | 
+[Português](https://zdoc.app/pt/droidrun/mobilerun) | 
+[Русский](https://zdoc.app/ru/droidrun/mobilerun) | 
+[中文](https://zdoc.app/zh/droidrun/mobilerun)
 
 </div>
 

@@ -53,7 +53,7 @@ Follow the steps below to ensure your host system is properly configured to moun
 Pull the image from the GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/mobilerun/mobilerun:latest
+docker pull ghcr.io/droidrun/mobilerun:latest
 ```
 
 Before running the container, note that the following options are always required when launching Mobilerun in Docker:
@@ -73,7 +73,7 @@ docker run \
   --device /dev/phone1/phone:/dev/phone \
   --volume /dev/bus/usb:/dev/bus/usb \
   --volume ~/.android:/home/mobilerun/.android \
-  ghcr.io/mobilerun/mobilerun:latest \
+  ghcr.io/droidrun/mobilerun:latest \
   <mobilerun command>
 ```
 
@@ -87,7 +87,7 @@ docker run \
   --device /dev/phone1/phone:/dev/phone \
   --volume /dev/bus/usb:/dev/bus/usb \
   --volume ~/.android:/home/mobilerun/.android \
-  ghcr.io/mobilerun/mobilerun:latest \
+  ghcr.io/droidrun/mobilerun:latest \
   setup
 ```
 
@@ -101,7 +101,7 @@ docker run \
   --device /dev/phone1/phone:/dev/phone \
   --volume /dev/bus/usb:/dev/bus/usb \
   --volume ~/.android:/home/mobilerun/.android \
-  ghcr.io/mobilerun/mobilerun:latest \
+  ghcr.io/droidrun/mobilerun:latest \
   ping
 ```
 
@@ -111,13 +111,13 @@ Now you’re ready to control your device using Docker and natural language:
 
 ```bash
 # Using default configuration with Google API key
-docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --env GOOGLE_API_KEY=your-api-key-here ghcr.io/mobilerun/mobilerun:latest run "Open the settings app and tell me the Android version"
+docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --env GOOGLE_API_KEY=your-api-key-here ghcr.io/droidrun/mobilerun:latest run "Open the settings app and tell me the Android version"
 
 # Override provider and model
-docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --env OPENAI_API_KEY=your-api-key-here ghcr.io/mobilerun/mobilerun:latest run "Open a browser and search for mobilerun" -p OpenAI -m gpt-4o
+docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --env OPENAI_API_KEY=your-api-key-here ghcr.io/droidrun/mobilerun:latest run "Open a browser and search for mobilerun" -p OpenAI -m gpt-4o
 
 # Use a locally-running LLM, example for LM Studio running in the LAN
-docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --network host ghcr.io/mobilerun/mobilerun:latest run "Open a browser and search for mobilerun" -p OpenAILike -m gpt-oss --api_base http://IP-of-LMStudio-server:PORT/v1
+docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --network host ghcr.io/droidrun/mobilerun:latest run "Open a browser and search for mobilerun" -p OpenAILike -m gpt-oss --api_base http://IP-of-LMStudio-server:PORT/v1
 ```
 
 #### Troubleshooting

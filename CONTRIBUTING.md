@@ -62,7 +62,7 @@ Thank you for your interest in contributing to Mobilerun! This document provides
 - Join our [Discord server](https://discord.gg/ZZbKEZZkwK) for discussions
 - Follow us on [Twitter/X](https://x.com/mobilerun_ai)
 - Check our [Documentation](https://docs.mobilerun.ai)
-- Report bugs and request features through [GitHub Issues](https://github.com/mobilerun/mobilerun/issues)
+- Report bugs and request features through [GitHub Issues](https://github.com/droidrun/mobilerun/issues)
 
 ## Security Checks
 

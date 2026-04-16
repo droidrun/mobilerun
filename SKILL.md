@@ -8,7 +8,7 @@ description: Mobilerun documentation reference. Use when users ask about Mobiler
 Mobilerun is an open-source (MIT) framework for controlling Android and iOS devices through LLM agents.
 It enables mobile automation using natural language commands.
 
-- **GitHub**: https://github.com/mobilerun/mobilerun
+- **GitHub**: https://github.com/droidrun/mobilerun
 - **Docs site**: https://docs.mobilerun.ai
 - **License**: MIT
 - **Install**: `uv tool install mobilerun` (Google Gemini, OpenAI, Ollama, OpenRouter included by default)

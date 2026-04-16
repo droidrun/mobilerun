@@ -1,6 +1,6 @@
 """CloudDriver — MobileRun cloud device driver.
 
-Wraps the ``mobilerun`` SDK (``AsyncMobilerun``) to provide device I/O
+Wraps the ``mobilerun_sdk`` SDK (``AsyncMobilerun``) to provide device I/O
 for cloud-hosted devices via the MobileRun API.
 """
 
@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Dict, List, Optional, TypeVar
 
-from mobilerun import AsyncMobilerun
-from mobilerun._exceptions import APIConnectionError, APITimeoutError, ConflictError
+from mobilerun_sdk import AsyncMobilerun
+from mobilerun_sdk._exceptions import APIConnectionError, APITimeoutError, ConflictError
 
 from mobilerun.tools.driver.base import DeviceDisconnectedError, DeviceDriver
 

@@ -87,7 +87,7 @@
       {
         "tab": "GitHub",
         "icon": "github",
-        "href": "https://github.com/mobilerun/mobilerun"
+        "href": "https://github.com/droidrun/mobilerun"
       }
     ]
   },
@@ -105,7 +105,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/mobilerun/mobilerun",
+      "github": "https://github.com/droidrun/mobilerun",
       "x": "https://x.com/mobilerun_ai",
       "discord": "https://discord.gg/gdekvkJFvn",
       "website": "https://mobilerun.ai"

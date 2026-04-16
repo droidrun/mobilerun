@@ -5,7 +5,7 @@ on:
     types: [labeled]
 
 env:
-  ORG: mobilerun
+  ORG: droidrun
   PROJECT_NUMBER: 2
   PROJECT_TOKEN: ${{ secrets.BOUNTY_SECRET }}
 
@@ -87,7 +87,7 @@ jobs:
               }
             }
           }' \
-          -f owner="mobilerun" \
+          -f owner="droidrun" \
           -f repo="mobilerun" \
           -F number=104 \
           --jq '.data.repository.issue as $i |

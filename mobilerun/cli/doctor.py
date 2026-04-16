@@ -84,7 +84,7 @@ async def check_sdk_version(debug: bool) -> CheckResult:
 
     for host in GITHUB_API_HOSTS:
         try:
-            url = f"{host}/repos/mobilerun/mobilerun/releases/latest"
+            url = f"{host}/repos/droidrun/mobilerun/releases/latest"
             resp = requests.get(url, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()

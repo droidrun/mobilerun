@@ -23,7 +23,7 @@ dependencies = [
     "llama-index-llms-google-genai>=0.8.5",
     "llama-index-llms-ollama>=0.7.2",
     "llama-index-llms-openrouter>=0.4.2",
-    "mobilerun-sdk",
+    "mobilerun-sdk>=3.1.0",
 ]
 requires-python = ">=3.11,<3.14"
 readme = "README.md"
@@ -49,8 +49,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mobilerun/mobilerun"
-"Bug Tracker" = "https://github.com/mobilerun/mobilerun/issues"
+Homepage = "https://github.com/droidrun/mobilerun"
+"Bug Tracker" = "https://github.com/droidrun/mobilerun/issues"
 Documentation = "https://docs.mobilerun.ai/"
 
 [project.optional-dependencies]

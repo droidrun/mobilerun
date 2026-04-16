@@ -73,7 +73,7 @@ class ConfigLoader:
             raise OutdatedConfigError(
                 f"Config at {user_config_path} is outdated (missing _version).\n"
                 "Please update your config based on the latest example:\n"
-                "https://github.com/mobilerun/mobilerun/blob/main/mobilerun/config_example.yaml"
+                "https://github.com/droidrun/mobilerun/blob/main/mobilerun/config_example.yaml"
             )
 
         old_version = user_dict["_version"]
