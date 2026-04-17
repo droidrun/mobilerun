@@ -773,116 +773,6 @@ wheels = [
 ]
 
 [[package]]
-name = "droidrun"
-version = "0.5.3"
-source = { editable = "." }
-dependencies = [
-    { name = "aiofiles" },
-    { name = "arize-phoenix" },
-    { name = "async-adbutils" },
-    { name = "httpx" },
-    { name = "inquirerpy" },
-    { name = "llama-index" },
-    { name = "llama-index-callbacks-arize-phoenix" },
-    { name = "llama-index-llms-google-genai" },
-    { name = "llama-index-llms-ollama" },
-    { name = "llama-index-llms-openai" },
-    { name = "llama-index-llms-openai-like" },
-    { name = "llama-index-llms-openrouter" },
-    { name = "llama-index-workflows" },
-    { name = "mcp" },
-    { name = "mobilerun-sdk" },
-    { name = "posthog" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "rich" },
-    { name = "textual" },
-]
-
-[package.optional-dependencies]
-anthropic = [
-    { name = "anthropic" },
-    { name = "llama-index-llms-anthropic" },
-]
-deepseek = [
-    { name = "llama-index-llms-deepseek" },
-]
-dev = [
-    { name = "bandit" },
-    { name = "black" },
-    { name = "langfuse" },
-    { name = "llama-index-instrumentation" },
-    { name = "mypy" },
-    { name = "openinference-instrumentation-llama-index" },
-    { name = "ruff" },
-    { name = "safety" },
-]
-langfuse = [
-    { name = "langfuse" },
-    { name = "llama-index-instrumentation" },
-    { name = "openinference-instrumentation-llama-index" },
-]
-minimax = [
-    { name = "llama-index-llms-minimax" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "arize-phoenix" },
-    { name = "bandit" },
-    { name = "llama-index-callbacks-arize-phoenix" },
-    { name = "ruff" },
-    { name = "safety" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiofiles", specifier = ">=25.1.0" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.67.0" },
-    { name = "arize-phoenix", specifier = ">=12.3.0" },
-    { name = "async-adbutils" },
-    { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.8.6" },
-    { name = "black", marker = "extra == 'dev'", specifier = "==25.9.0" },
-    { name = "droidrun", extras = ["langfuse"], marker = "extra == 'dev'" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "inquirerpy", specifier = ">=0.3.4" },
-    { name = "langfuse", marker = "extra == 'langfuse'", specifier = "==3.12.1" },
-    { name = "llama-index", specifier = "==0.14.4" },
-    { name = "llama-index-callbacks-arize-phoenix", specifier = ">=0.6.1" },
-    { name = "llama-index-instrumentation", marker = "extra == 'langfuse'" },
-    { name = "llama-index-llms-anthropic", marker = "extra == 'anthropic'", specifier = ">=0.8.6,<0.9.0" },
-    { name = "llama-index-llms-deepseek", marker = "extra == 'deepseek'", specifier = ">=0.2.1" },
-    { name = "llama-index-llms-google-genai", specifier = ">=0.8.5" },
-    { name = "llama-index-llms-minimax", marker = "extra == 'minimax'" },
-    { name = "llama-index-llms-ollama", specifier = ">=0.7.2" },
-    { name = "llama-index-llms-openai", specifier = ">=0.5.6" },
-    { name = "llama-index-llms-openai-like", specifier = ">=0.5.1" },
-    { name = "llama-index-llms-openrouter", specifier = ">=0.4.2" },
-    { name = "llama-index-workflows", specifier = "==2.8.3" },
-    { name = "mcp", specifier = ">=1.26.0" },
-    { name = "mobilerun-sdk" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
-    { name = "posthog", specifier = ">=6.7.6" },
-    { name = "pydantic", specifier = ">=2.11.10" },
-    { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "rich", specifier = ">=14.1.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13.0" },
-    { name = "safety", marker = "extra == 'dev'", specifier = ">=3.2.11" },
-    { name = "textual", specifier = ">=6.11.0" },
-]
-provides-extras = ["anthropic", "minimax", "deepseek", "dev", "langfuse"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "arize-phoenix", specifier = ">=11.32.1" },
-    { name = "bandit", specifier = ">=1.8.6" },
-    { name = "llama-index-callbacks-arize-phoenix", specifier = ">=0.6.1" },
-    { name = "ruff", specifier = ">=0.13.0" },
-    { name = "safety", specifier = ">=3.2.11" },
-]
-
-[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1990,8 +1880,114 @@ wheels = [
 ]
 
 [[package]]
+name = "mobilerun"
+version = "0.6.0rc1"
+source = { editable = "." }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "arize-phoenix" },
+    { name = "async-adbutils" },
+    { name = "httpx" },
+    { name = "inquirerpy" },
+    { name = "llama-index" },
+    { name = "llama-index-callbacks-arize-phoenix" },
+    { name = "llama-index-llms-google-genai" },
+    { name = "llama-index-llms-minimax" },
+    { name = "llama-index-llms-ollama" },
+    { name = "llama-index-llms-openai" },
+    { name = "llama-index-llms-openai-like" },
+    { name = "llama-index-llms-openrouter" },
+    { name = "llama-index-workflows" },
+    { name = "mcp" },
+    { name = "mobilerun-sdk" },
+    { name = "posthog" },
+    { name = "pydantic" },
+    { name = "rich" },
+    { name = "textual" },
+]
+
+[package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+    { name = "llama-index-llms-anthropic" },
+]
+deepseek = [
+    { name = "llama-index-llms-deepseek" },
+]
+dev = [
+    { name = "bandit" },
+    { name = "black" },
+    { name = "langfuse" },
+    { name = "llama-index-instrumentation" },
+    { name = "mypy" },
+    { name = "openinference-instrumentation-llama-index" },
+    { name = "ruff" },
+    { name = "safety" },
+]
+langfuse = [
+    { name = "langfuse" },
+    { name = "llama-index-instrumentation" },
+    { name = "openinference-instrumentation-llama-index" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "arize-phoenix" },
+    { name = "bandit" },
+    { name = "llama-index-callbacks-arize-phoenix" },
+    { name = "ruff" },
+    { name = "safety" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiofiles", specifier = ">=25.1.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.67.0" },
+    { name = "arize-phoenix", specifier = ">=12.3.0" },
+    { name = "async-adbutils" },
+    { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.8.6" },
+    { name = "black", marker = "extra == 'dev'", specifier = "==25.9.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "inquirerpy", specifier = ">=0.3.4" },
+    { name = "langfuse", marker = "extra == 'langfuse'", specifier = "==3.12.1" },
+    { name = "llama-index", specifier = "==0.14.4" },
+    { name = "llama-index-callbacks-arize-phoenix", specifier = ">=0.6.1" },
+    { name = "llama-index-instrumentation", marker = "extra == 'langfuse'" },
+    { name = "llama-index-llms-anthropic", marker = "extra == 'anthropic'", specifier = ">=0.8.6,<0.9.0" },
+    { name = "llama-index-llms-deepseek", marker = "extra == 'deepseek'", specifier = ">=0.2.1" },
+    { name = "llama-index-llms-google-genai", specifier = ">=0.8.5" },
+    { name = "llama-index-llms-minimax", specifier = ">=0.1.0" },
+    { name = "llama-index-llms-ollama", specifier = ">=0.7.2" },
+    { name = "llama-index-llms-openai", specifier = ">=0.5.6" },
+    { name = "llama-index-llms-openai-like", specifier = ">=0.5.1" },
+    { name = "llama-index-llms-openrouter", specifier = ">=0.4.2" },
+    { name = "llama-index-workflows", specifier = "==2.8.3" },
+    { name = "mcp", specifier = ">=1.26.0" },
+    { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
+    { name = "mobilerun-sdk", specifier = ">=3.1.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
+    { name = "posthog", specifier = ">=6.7.6" },
+    { name = "pydantic", specifier = ">=2.11.10" },
+    { name = "rich", specifier = ">=14.1.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13.0" },
+    { name = "safety", marker = "extra == 'dev'", specifier = ">=3.2.11" },
+    { name = "textual", specifier = ">=6.11.0" },
+]
+provides-extras = ["anthropic", "deepseek", "dev", "langfuse"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "arize-phoenix", specifier = ">=11.32.1" },
+    { name = "bandit", specifier = ">=1.8.6" },
+    { name = "llama-index-callbacks-arize-phoenix", specifier = ">=0.6.1" },
+    { name = "ruff", specifier = ">=0.13.0" },
+    { name = "safety", specifier = ">=3.2.11" },
+]
+
+[[package]]
 name = "mobilerun-sdk"
-version = "3.0.0"
+version = "3.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2001,9 +1997,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/21/8e/fbdbe38dadbdb13cd7702eaae023d219ca3f08d0b0775017aea9e0c95b10/mobilerun_sdk-3.0.0.tar.gz", hash = "sha256:0af20a2332da74c4c1526ad4a3abcabebec0f9e1e624a4e088f33f585208be71", size = 164293, upload-time = "2026-03-15T16:15:25.374Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/05/62fa287da8567adffbeeeac2ab462cafd71dcf62e4189c5907e4aa4651c8/mobilerun_sdk-3.1.0.tar.gz", hash = "sha256:f3a2f4e9ae82dee4f8ae63d5058b6577ee51376de9a2e07c7c3fd21cebfd2171", size = 173415, upload-time = "2026-04-16T12:42:27.268Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/4a/ac933a33b51aea63e3476b3034a34b9d46595efe309eee8eec923c84f0dd/mobilerun_sdk-3.0.0-py3-none-any.whl", hash = "sha256:539aae21e7a40c895337349c2c08393f719a00eaf60afe5c4bd87f83d9170e31", size = 198497, upload-time = "2026-03-15T16:15:24.036Z" },
+    { url = "https://files.pythonhosted.org/packages/39/f8/7e3ff7225b41439d87f403c98adc063fb47b88929692ffbc089286a4e06e/mobilerun_sdk-3.1.0-py3-none-any.whl", hash = "sha256:9117fa6f604c6f143366f92979ce1a8450bac427a5307d123ca8b46e7385b6f2", size = 209988, upload-time = "2026-04-16T12:42:25.875Z" },
 ]
 
 [[package]]

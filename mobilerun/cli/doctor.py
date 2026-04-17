@@ -16,7 +16,6 @@ from mobilerun.tools.android.portal_client import PortalClient
 
 from mobilerun import __version__
 from mobilerun.portal import (
-    LEGACY_PORTAL_PACKAGE_NAME,
     PORTAL_PACKAGE_NAME,
     GITHUB_API_HOSTS,
     REPO,
@@ -280,7 +279,7 @@ async def check_portal_version(
     installed = None
     try:
         output = await device.shell(
-            f"content query --uri {portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, 'version')}"
+            f"content query --uri {portal_content_uri(PORTAL_PACKAGE_NAME, 'version')}"
         )
         if "result=" in output:
             json_str = output.split("result=", 1)[1].strip()
@@ -398,7 +397,7 @@ async def check_content_provider(device: AdbDevice, debug: bool) -> CheckResult:
     """Check content provider connectivity."""
     try:
         state = await device.shell(
-            f"content query --uri {portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, 'state')}"
+            f"content query --uri {portal_content_uri(PORTAL_PACKAGE_NAME, 'state')}"
         )
         if "Row: 0 result=" in state:
             return CheckResult("Content Provider", Status.PASS, "reachable")
@@ -420,7 +419,7 @@ async def check_tcp(device: AdbDevice, debug: bool) -> CheckResult:
 
     # Step 1: Enable socket server via content provider
     try:
-        toggle_uri = portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, "toggle_socket_server")
+        toggle_uri = portal_content_uri(PORTAL_PACKAGE_NAME, "toggle_socket_server")
         await device.shell(
             f"content insert --uri {toggle_uri} --bind enabled:b:true"
         )
@@ -589,7 +588,7 @@ async def check_keyboard(device: AdbDevice, debug: bool) -> CheckResult:
     """Check if Mobilerun keyboard IME is available."""
     try:
         output = await device.shell("ime list -s")
-        ime_id = portal_ime_id(LEGACY_PORTAL_PACKAGE_NAME)
+        ime_id = portal_ime_id(PORTAL_PACKAGE_NAME)
         if ime_id in output:
             return CheckResult("Keyboard", Status.PASS, "available")
         else:

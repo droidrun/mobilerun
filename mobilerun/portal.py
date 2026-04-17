@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import tempfile
+from urllib.parse import urlparse
 
 import requests
 from async_adbutils import AdbDevice, adb
@@ -21,18 +22,19 @@ from mobilerun import __version__
 
 logger = logging.getLogger("mobilerun")
 
-REPO = "droidrun/droidrun-portal"
-ASSET_NAME = "droidrun-portal"
+REPO = "droidrun/mobilerun-portal"
+ASSET_NAME = "mobilerun-portal"
 DOWNLOAD_BASE = f"https://github.com/{REPO}/releases/download"
 GITHUB_API_HOSTS = ["https://api.github.com", "https://ungh.cc"]
 
 VERSION_MAP_GIST_URL = "https://raw.githubusercontent.com/droidrun/gists/refs/heads/main/version_map_android.json"
 
 PORTAL_PACKAGE_NAME = "com.mobilerun.portal"
-LEGACY_PORTAL_PACKAGE_NAME = "com.droidrun.portal"
-
-# Phase 1: install target is the legacy package (new APK not yet published)
-INSTALL_TARGET_PACKAGE = LEGACY_PORTAL_PACKAGE_NAME
+PORTAL_APK_ASSET_PREFIXES = (
+    PORTAL_PACKAGE_NAME,
+    "mobilerun-portal-internal",
+    ASSET_NAME,
+)
 
 # ── Centralized portal identity resolution ──
 # ALL portal identifiers (package, a11y service, IME, content URIs) MUST be
@@ -43,26 +45,18 @@ _PORTAL_META = {
         "a11y": f"{PORTAL_PACKAGE_NAME}/{PORTAL_PACKAGE_NAME}.service.MobilerunAccessibilityService",
         "ime": f"{PORTAL_PACKAGE_NAME}/.input.MobilerunKeyboardIME",
     },
-    LEGACY_PORTAL_PACKAGE_NAME: {
-        "a11y": f"{LEGACY_PORTAL_PACKAGE_NAME}/{LEGACY_PORTAL_PACKAGE_NAME}.service.DroidrunAccessibilityService",
-        "ime": f"{LEGACY_PORTAL_PACKAGE_NAME}/.input.DroidrunKeyboardIME",
-    },
 }
 
-# Artifact channels — download helpers use explicit channel parameter
+# Artifact channels — mobilerun-portal-internal is a repo/artifact convention,
+# not an Android package name.
 _ARTIFACT_CHANNELS = {
     PORTAL_PACKAGE_NAME: {
         "repo": "droidrun/mobilerun-portal",
         "asset_name": "mobilerun-portal",
     },
-    LEGACY_PORTAL_PACKAGE_NAME: {
-        "repo": "droidrun/droidrun-portal",
-        "asset_name": "droidrun-portal",
-    },
 }
 
-# Legacy compat: A11Y_SERVICE_NAME still exported for callers
-A11Y_SERVICE_NAME = _PORTAL_META[LEGACY_PORTAL_PACKAGE_NAME]["a11y"]
+A11Y_SERVICE_NAME = _PORTAL_META[PORTAL_PACKAGE_NAME]["a11y"]
 
 
 def portal_content_uri(pkg: str, path: str) -> str:
@@ -117,9 +111,7 @@ def get_compatible_portal_version(
         return (None, "", False)
 
     mappings = mapping.get("mappings", {})
-    download_base = mapping.get(
-        "download_base", DOWNLOAD_BASE
-    )
+    download_base = _normalize_download_base(mapping.get("download_base", DOWNLOAD_BASE))
 
     # Try exact match first
     if mobilerun_version in mappings:
@@ -133,15 +125,187 @@ def get_compatible_portal_version(
     return (None, download_base, True)
 
 
+def _normalize_download_base(download_base: str | None) -> str:
+    if not download_base:
+        return DOWNLOAD_BASE
+    return download_base.replace("droidrun/droidrun-portal", "droidrun/mobilerun-portal")
+
+
+def _normalize_portal_release_tag(version: str) -> str:
+    version = version.strip()
+    return version if version.startswith("v") else f"v{version}"
+
+
+def _extract_release_assets(release: dict) -> list[dict]:
+    if "release" in release:
+        return release["release"].get("assets", [])
+    return release.get("assets", [])
+
+
+def _asset_download_url(asset: dict) -> str | None:
+    return asset.get("browser_download_url") or asset.get("downloadUrl")
+
+
+def _asset_file_name(asset: dict) -> str:
+    name = asset.get("name")
+    if name:
+        return name
+
+    asset_url = _asset_download_url(asset)
+    if not asset_url:
+        return ""
+
+    return os.path.basename(urlparse(asset_url).path)
+
+
+def _is_portal_apk_asset_name(asset_name: str) -> bool:
+    lower_name = asset_name.lower()
+    if not lower_name.endswith(".apk"):
+        return False
+
+    return any(
+        lower_name.startswith(prefix.lower()) for prefix in PORTAL_APK_ASSET_PREFIXES
+    )
+
+
+def _portal_apk_asset_priority(asset_name: str) -> tuple[int, str]:
+    lower_name = asset_name.lower()
+    if "unsigned" in lower_name:
+        return (3, lower_name)
+    if "release" in lower_name or "stable" in lower_name:
+        return (0, lower_name)
+    if "debug" in lower_name:
+        return (1, lower_name)
+    return (2, lower_name)
+
+
+def _parse_portal_asset_version(asset_name: str) -> str | None:
+    stem = os.path.basename(asset_name).removesuffix(".apk")
+    lower_stem = stem.lower()
+
+    for suffix in (
+        "-release-unsigned",
+        "-release-signed",
+        "-unsigned",
+        "-release",
+        "-debug",
+        "-stable",
+    ):
+        if lower_stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            lower_stem = lower_stem[: -len(suffix)]
+            break
+
+    for prefix in PORTAL_APK_ASSET_PREFIXES:
+        marker = f"{prefix}-"
+        if lower_stem.startswith(marker.lower()):
+            version = stem[len(marker) :]
+            return version.removeprefix("v") or None
+
+    return None
+
+
+def _format_asset_names(assets: list[dict]) -> str:
+    names = [_asset_file_name(asset) or "<unnamed>" for asset in assets]
+    return ", ".join(names) if names else "none"
+
+
+def _select_portal_apk_asset(assets: list[dict]) -> tuple[str, str, str | None]:
+    candidates: list[tuple[tuple[int, str], str, str]] = []
+
+    for asset in assets:
+        asset_name = _asset_file_name(asset)
+        asset_url = _asset_download_url(asset)
+        if not asset_name or not asset_url:
+            continue
+        if not _is_portal_apk_asset_name(asset_name):
+            continue
+        candidates.append(
+            (_portal_apk_asset_priority(asset_name), asset_name, asset_url)
+        )
+
+    if not candidates:
+        raise Exception(
+            "Portal APK asset not found in release. "
+            f"Saw assets: {_format_asset_names(assets)}"
+        )
+
+    _, asset_name, asset_url = min(candidates, key=lambda candidate: candidate[0])
+    return asset_url, asset_name, _parse_portal_asset_version(asset_name)
+
+
+def _fetch_release_json(release_path: str, debug: bool = False) -> dict:
+    path = release_path.lstrip("/")
+    response = None
+    last_request_error: requests.RequestException | None = None
+
+    for host in GITHUB_API_HOSTS:
+        url = f"{host}/repos/{REPO}/{path}"
+        try:
+            response = requests.get(url)
+        except requests.RequestException as e:
+            last_request_error = e
+            if debug:
+                print(f"Failed to fetch release from {host}: {e}")
+            continue
+
+        if response.status_code == 200:
+            if debug:
+                print(f"Using GitHub release on {host}")
+            return response.json()
+
+    if response is not None:
+        response.raise_for_status()
+
+    if last_request_error is not None:
+        raise Exception(
+            "Failed to fetch Portal release metadata from all configured hosts"
+        ) from last_request_error
+
+    raise Exception("No GitHub API hosts configured")
+
+
+def _get_release_assets_by_tag(version: str, debug: bool = False) -> list[dict]:
+    tag = _normalize_portal_release_tag(version)
+    release = _fetch_release_json(f"releases/tags/{tag}", debug)
+    return _extract_release_assets(release)
+
+
+def _resolve_versioned_portal_apk_asset(
+    version: str, download_base: str, debug: bool = False
+) -> tuple[str, str, str]:
+    tag = _normalize_portal_release_tag(version)
+
+    try:
+        assets = _get_release_assets_by_tag(tag, debug)
+        asset_url, asset_name, asset_version = _select_portal_apk_asset(assets)
+        return asset_url, asset_version or tag.removeprefix("v"), asset_name
+    except Exception as e:
+        if debug:
+            print(f"Failed to resolve release assets for {tag}, using fallback URL: {e}")
+
+    asset_name = f"{PORTAL_PACKAGE_NAME}-{tag.removeprefix('v')}-debug.apk"
+    base = _normalize_download_base(download_base).rstrip("/")
+    return f"{base}/{tag}/{asset_name}", tag.removeprefix("v"), asset_name
+
+
+def _resolve_latest_portal_apk_asset(debug: bool = False) -> tuple[str, str, str]:
+    assets = get_latest_release_assets(debug)
+    asset_url, asset_name, asset_version = _select_portal_apk_asset(assets)
+    return asset_url, asset_version or "unknown", asset_name
+
+
 @contextlib.contextmanager
 def download_versioned_portal_apk(
     version: str, download_base: str, debug: bool = False
 ):
     """Download a specific Portal APK version."""
     console = Console()
-    asset_url = f"{download_base}/{version}/{ASSET_NAME}-{version}.apk"
+    asset_url, asset_version, _ = _resolve_versioned_portal_apk_asset(
+        version, download_base, debug
+    )
 
-    console.print(f"Downloading Portal APK [bold]{version}[/bold]")
+    console.print(f"Downloading Portal APK [bold]{asset_version}[/bold]")
     if debug:
         console.print(f"Asset URL: {asset_url}")
 
@@ -172,23 +336,8 @@ def get_latest_release_assets(debug: bool = False):
     Raises:
         requests.HTTPError: If the GitHub API request fails
     """
-    for host in GITHUB_API_HOSTS:
-        url = f"{host}/repos/{REPO}/releases/latest"
-        response = requests.get(url)
-        if response.status_code == 200:
-            if debug:
-                print(f"Using GitHub release on {host}")
-            break
-
-    response.raise_for_status()
-    latest_release = response.json()
-
-    if "release" in latest_release:
-        assets = latest_release["release"]["assets"]
-    else:
-        assets = latest_release.get("assets", [])
-
-    return assets
+    latest_release = _fetch_release_json("releases/latest", debug)
+    return _extract_release_assets(latest_release)
 
 
 @contextlib.contextmanager
@@ -210,35 +359,7 @@ def download_portal_apk(debug: bool = False):
         requests.HTTPError: If the download fails
     """
     console = Console()
-    assets = get_latest_release_assets(debug)
-
-    asset_version = None
-    asset_url = None
-    for asset in assets:
-        if (
-            "browser_download_url" in asset
-            and "name" in asset
-        and (asset["name"].startswith(ASSET_NAME) or asset["name"].startswith(PORTAL_PACKAGE_NAME))
-        ):
-            asset_url = asset["browser_download_url"]
-            asset_version = asset["name"].split("-")[-1]
-            asset_version = asset_version.removesuffix(".apk")
-            break
-        elif "downloadUrl" in asset and os.path.basename(
-            asset["downloadUrl"]
-        ).startswith(ASSET_NAME):
-            asset_url = asset["downloadUrl"]
-            asset_version: str = asset.get("name", os.path.basename(asset_url)).split(
-                "-"
-            )[-1]
-            asset_version = asset_version.removesuffix(".apk")
-            break
-        else:
-            if debug:
-                print(asset)
-
-    if not asset_url:
-        raise Exception(f"Asset named '{ASSET_NAME}' not found in the latest release.")
+    asset_url, asset_version, _ = _resolve_latest_portal_apk_asset(debug)
 
     console.print(f"Found Portal APK [bold]{asset_version}[/bold]")
     if debug:
@@ -342,7 +463,7 @@ async def ping_portal_content(device: AdbDevice, debug: bool = False):
         Exception: If Portal is not reachable via content provider
     """
     try:
-        uri = portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, "state")
+        uri = portal_content_uri(PORTAL_PACKAGE_NAME, "state")
         state = await device.shell(
             f"content query --uri {uri}"
         )
@@ -377,7 +498,7 @@ async def set_overlay_offset(device: AdbDevice, offset: int):
     Set the overlay offset using the /overlay_offset portal content provider endpoint.
     """
     try:
-        uri = portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, "overlay_offset")
+        uri = portal_content_uri(PORTAL_PACKAGE_NAME, "overlay_offset")
         cmd = f'content insert --uri "{uri}" --bind offset:i:{offset}'
         await device.shell(cmd)
     except Exception as e:
@@ -396,7 +517,7 @@ async def toggle_overlay(device: AdbDevice, visible: bool):
     """
     try:
         visible_str = "true" if visible else "false"
-        uri = portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, "overlay_visible")
+        uri = portal_content_uri(PORTAL_PACKAGE_NAME, "overlay_visible")
         cmd = f'content insert --uri "{uri}" --bind visible:b:{visible_str}'
         await device.shell(cmd)
     except Exception as e:
@@ -412,7 +533,7 @@ async def setup_keyboard(device: AdbDevice):
         Exception: If the keyboard setup fails
     """
     try:
-        ime = portal_ime_id(LEGACY_PORTAL_PACKAGE_NAME)
+        ime = portal_ime_id(PORTAL_PACKAGE_NAME)
         await device.shell(f"ime enable {ime}")
         await device.shell(f"ime set {ime}")
     except Exception as e:
@@ -434,7 +555,7 @@ async def disable_keyboard(
         bool: True if disabled successfully, False otherwise
     """
     if target_ime is None:
-        target_ime = portal_ime_id(LEGACY_PORTAL_PACKAGE_NAME)
+        target_ime = portal_ime_id(PORTAL_PACKAGE_NAME)
     try:
         await device.shell(f"ime disable {target_ime}")
         return True
@@ -528,7 +649,7 @@ async def _wait_for_portal_service(
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         try:
-            uri = portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, "state")
+            uri = portal_content_uri(PORTAL_PACKAGE_NAME, "state")
             state = await device.shell(
                 f"content query --uri {uri}"
             )
@@ -577,7 +698,7 @@ async def ensure_portal_ready(
     # ── parallel checks ──────────────────────────────────────────
     packages_task = device.list_packages()
     version_task = device.shell(
-        f"content query --uri {portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, 'version')}"
+        f"content query --uri {portal_content_uri(PORTAL_PACKAGE_NAME, 'version')}"
     )
     a11y_task = device.shell("settings get secure enabled_accessibility_services")
 

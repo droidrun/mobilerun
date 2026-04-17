@@ -169,9 +169,9 @@ class AndroidStateProvider(StateProvider):
         if device is None:
             return
 
-        from mobilerun.portal import LEGACY_PORTAL_PACKAGE_NAME, portal_a11y_service, portal_content_uri
+        from mobilerun.portal import PORTAL_PACKAGE_NAME, portal_a11y_service, portal_content_uri
 
-        a11y = portal_a11y_service(LEGACY_PORTAL_PACKAGE_NAME)
+        a11y = portal_a11y_service(PORTAL_PACKAGE_NAME)
 
         # 1. Restart accessibility service
         logger.debug("Restarting Portal accessibility service...")
@@ -186,7 +186,7 @@ class AndroidStateProvider(StateProvider):
         portal = self.driver.portal
         if portal is not None and portal.tcp_available:
             logger.debug("Restarting Portal TCP socket server...")
-            toggle_uri = portal_content_uri(LEGACY_PORTAL_PACKAGE_NAME, "toggle_socket_server")
+            toggle_uri = portal_content_uri(PORTAL_PACKAGE_NAME, "toggle_socket_server")
             try:
                 await device.shell(
                     f"content insert --uri {toggle_uri} --bind enabled:b:false"

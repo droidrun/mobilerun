@@ -625,15 +625,15 @@ class MobileTUI(App):
         apk_tmp = None
         try:
             import asyncio
-            import os
             import tempfile
 
             import requests
             from async_adbutils import adb
             from mobilerun.portal import (
-                get_compatible_portal_version,
+                _resolve_latest_portal_apk_asset,
+                _resolve_versioned_portal_apk_asset,
                 enable_portal_accessibility,
-                ASSET_NAME,
+                get_compatible_portal_version,
             )
 
             self._dbg("_run_device_setup imports done")
@@ -655,30 +655,21 @@ class MobileTUI(App):
 
             # Build download URL
             if portal_version:
-                log.append(f"  downloading portal {portal_version}...")
-                url = f"{download_base}/{portal_version}/{ASSET_NAME}-{portal_version}.apk"
+                log.append(f"  resolving portal {portal_version}...")
+                url, asset_version, _ = await asyncio.to_thread(
+                    _resolve_versioned_portal_apk_asset,
+                    portal_version,
+                    download_base,
+                )
+                log.append(f"  downloading portal {asset_version}...")
             else:
                 if not mapping_fetched:
                     log.append("  version map unavailable, using latest")
-                log.append("  downloading latest portal...")
-
-                from mobilerun.portal import get_latest_release_assets
-
-                assets = await asyncio.to_thread(get_latest_release_assets)
-                url = None
-                for asset in assets:
-                    if "browser_download_url" in asset and asset.get(
-                        "name", ""
-                    ).startswith(ASSET_NAME):
-                        url = asset["browser_download_url"]
-                        break
-                    elif "downloadUrl" in asset and os.path.basename(
-                        asset["downloadUrl"]
-                    ).startswith(ASSET_NAME):
-                        url = asset["downloadUrl"]
-                        break
-                if not url:
-                    raise Exception("portal APK not found in latest release")
+                log.append("  resolving latest portal...")
+                url, asset_version, _ = await asyncio.to_thread(
+                    _resolve_latest_portal_apk_asset
+                )
+                log.append(f"  downloading portal {asset_version}...")
 
             # Download APK in thread
             def _download(download_url: str) -> str:

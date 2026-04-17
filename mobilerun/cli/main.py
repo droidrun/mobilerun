@@ -497,8 +497,8 @@ async def run(
             if not ios:
                 device_obj = await adb.device(device)
                 if device_obj:
-                    from mobilerun.portal import LEGACY_PORTAL_PACKAGE_NAME, portal_ime_id
-                    ime = portal_ime_id(LEGACY_PORTAL_PACKAGE_NAME)
+                    from mobilerun.portal import PORTAL_PACKAGE_NAME, portal_ime_id
+                    ime = portal_ime_id(PORTAL_PACKAGE_NAME)
                     await device_obj.shell(f"ime disable {ime}")
         except Exception:
             click.echo("Failed to disable Mobilerun keyboard")
