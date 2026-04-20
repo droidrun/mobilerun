@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import struct
+from io import BytesIO
+
+from PIL import Image
+
+MODEL_SCREENSHOT_MAX_SIDE = 2048
 
 
 def image_dimensions(image: bytes) -> tuple[int, int]:
@@ -15,6 +20,38 @@ def image_dimensions(image: bytes) -> tuple[int, int]:
         return _jpeg_dimensions(image)
 
     raise ValueError("Unsupported screenshot image format. Expected PNG or JPEG.")
+
+
+def fit_dimensions_to_max_side(
+    width: int, height: int, max_side: int = MODEL_SCREENSHOT_MAX_SIDE
+) -> tuple[int, int]:
+    """Return dimensions scaled down so the longest side is at most ``max_side``."""
+    if width <= 0 or height <= 0:
+        raise ValueError("Image dimensions must be positive.")
+    if max(width, height) <= max_side:
+        return width, height
+
+    scale = max_side / max(width, height)
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+def resize_image_to_max_side(
+    image: bytes, max_side: int = MODEL_SCREENSHOT_MAX_SIDE
+) -> bytes:
+    """Resize image bytes to the same coordinate space exposed to vision agents."""
+    width, height = image_dimensions(image)
+    target_width, target_height = fit_dimensions_to_max_side(width, height, max_side)
+    if (target_width, target_height) == (width, height):
+        return image
+
+    with Image.open(BytesIO(image)) as source:
+        resized = source.convert("RGBA").resize(
+            (target_width, target_height),
+            Image.Resampling.LANCZOS,
+        )
+        output = BytesIO()
+        resized.save(output, format="PNG")
+        return output.getvalue()
 
 
 def _jpeg_dimensions(image: bytes) -> tuple[int, int]:

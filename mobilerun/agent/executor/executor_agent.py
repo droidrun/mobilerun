@@ -30,6 +30,7 @@ from mobilerun.agent.utils.inference import acall_with_retries
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.config_manager.config_manager import AgentConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
+from mobilerun.tools.helpers.images import resize_image_to_max_side
 
 if TYPE_CHECKING:
     from mobilerun.agent.action_context import ActionContext
@@ -136,6 +137,12 @@ class ExecutorAgent(Workflow):
         if self.vision:
             screenshot = self.shared_state.screenshot
             if screenshot is not None:
+                if getattr(
+                    self.action_ctx.state_provider,
+                    "requires_coordinate_tools",
+                    False,
+                ):
+                    screenshot = resize_image_to_max_side(screenshot)
                 messages[0].blocks.append(ImageBlock(image=screenshot))
                 logger.debug("📸 Using screenshot for Executor")
             else:

@@ -1,12 +1,15 @@
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from mobilerun.agent.droid.droid_agent import _effective_disabled_tools
+from mobilerun.agent.utils.actions import click_area, click_at, long_press_at, swipe
 from mobilerun.agent.utils.signatures import build_tool_registry
 from mobilerun.config_manager.config_manager import MobileConfig
 from mobilerun.tools.driver.visual_remote import VisualRemoteDriver
 from mobilerun.tools.ui.screenshot_provider import ScreenshotOnlyStateProvider
+from mobilerun.tools.ui.state import UIState
 
 
 def _png(width: int = 1320, height: int = 2868) -> bytes:
@@ -172,28 +175,46 @@ class VisualRemoteDriverTest(unittest.TestCase):
 
 
 class ScreenshotOnlyStateProviderTest(unittest.TestCase):
-    def test_state_has_no_elements_and_uses_normalized_coordinates(self):
+    def test_state_has_no_elements_and_uses_screenshot_pixel_coordinates(self):
         class FakeDriver:
             async def screenshot(self):
                 return _png(1000, 2000)
 
-        provider = ScreenshotOnlyStateProvider(FakeDriver(), use_normalized=True)
+        provider = ScreenshotOnlyStateProvider(FakeDriver())
         state = asyncio.run(provider.get_state())
 
         self.assertEqual(state.elements, [])
         self.assertEqual(state.screen_width, 1000)
         self.assertEqual(state.screen_height, 2000)
-        self.assertEqual(state.convert_point(500, 500), (500, 1000))
+        self.assertEqual(state.convert_point(500, 500), (500, 500))
         self.assertFalse(state.phone_state["accessibilityTree"])
+        self.assertIn("screenshot pixel coordinates", state.formatted_text)
+        self.assertIn("1000x2000", state.formatted_text)
+        self.assertIn("(0,0) is top-left", state.formatted_text)
+        self.assertIn("(999,1999) is bottom-right", state.formatted_text)
         self.assertIn("direct_text_input", provider.supported)
         self.assertNotIn("element_index", provider.supported)
+
+    def test_large_state_uses_model_screenshot_coordinate_space(self):
+        class FakeDriver:
+            async def screenshot(self):
+                return _png(1080, 2316)
+
+        provider = ScreenshotOnlyStateProvider(FakeDriver())
+        state = asyncio.run(provider.get_state())
+
+        self.assertEqual(state.screen_width, 955)
+        self.assertEqual(state.screen_height, 2048)
+        self.assertEqual(state.convert_point(274, 1228), (310, 1389))
+        self.assertIn("955x2048", state.formatted_text)
+        self.assertIn("(954,2047) is bottom-right", state.formatted_text)
 
     def test_tool_filter_keeps_coordinate_tools_and_direct_text(self):
         class FakeDriver:
             async def screenshot(self):
                 return _png()
 
-        provider = ScreenshotOnlyStateProvider(FakeDriver(), use_normalized=True)
+        provider = ScreenshotOnlyStateProvider(FakeDriver())
 
         async def run():
             registry, _ = await build_tool_registry(
@@ -226,6 +247,99 @@ class ScreenshotOnlyStateProviderTest(unittest.TestCase):
         self.assertIn("system_button", registry.tools)
         self.assertNotIn("click", registry.tools)
         self.assertNotIn("type", registry.tools)
+
+    def test_coordinate_tools_describe_screenshot_pixel_coordinates(self):
+        async def run():
+            registry, _ = await build_tool_registry(
+                supported_buttons={"enter"},
+                platform="ios",
+            )
+            return registry
+
+        registry = asyncio.run(run())
+
+        self.assertIn("screenshot pixel coordinates", registry.tools["click_at"].description)
+        self.assertIn("(0,0) is top-left", registry.tools["click_area"].description)
+        self.assertIn(
+            "screenshot pixel coordinates",
+            registry.tools["long_press_at"].description,
+        )
+        self.assertIn("bottom-right coordinate is shown", registry.tools["swipe"].description)
+        self.assertNotIn("0..1000", registry.tools["click_at"].description)
+        self.assertNotIn("0..1000", registry.tools["click_area"].description)
+        self.assertNotIn("0..1000", registry.tools["long_press_at"].description)
+        self.assertNotIn("0..1000", registry.tools["swipe"].description)
+
+
+class ScreenshotOnlyCoordinateValidationTest(unittest.TestCase):
+    def _ctx(self):
+        class FakeDriver:
+            def __init__(self):
+                self.taps = []
+                self.swipes = []
+
+            async def tap(self, x, y):
+                self.taps.append((x, y))
+
+            async def swipe(self, x1, y1, x2, y2, duration_ms=1000):
+                self.swipes.append((x1, y1, x2, y2, duration_ms))
+
+        driver = FakeDriver()
+        ui = UIState(
+            elements=[],
+            formatted_text="",
+            focused_text="",
+            phone_state={},
+            screen_width=1000,
+            screen_height=2000,
+            use_normalized=False,
+        )
+        provider = SimpleNamespace(requires_coordinate_tools=True)
+        return SimpleNamespace(driver=driver, ui=ui, state_provider=provider), driver
+
+    def test_click_at_valid_coordinate_converts_and_taps(self):
+        ctx, driver = self._ctx()
+
+        result = asyncio.run(click_at(500, 500, ctx=ctx))
+
+        self.assertTrue(result.success)
+        self.assertEqual(driver.taps, [(500, 500)])
+
+    def test_click_at_rejects_out_of_range_before_tapping(self):
+        ctx, driver = self._ctx()
+
+        result = asyncio.run(click_at(1000, 2000, ctx=ctx))
+
+        self.assertFalse(result.success)
+        self.assertIn("Coordinates must be inside the screenshot size 1000x2000", result.summary)
+        self.assertEqual(driver.taps, [])
+
+    def test_swipe_rejects_out_of_range_before_swiping(self):
+        ctx, driver = self._ctx()
+
+        result = asyncio.run(swipe([500, 2000], [500, 500], ctx=ctx))
+
+        self.assertFalse(result.success)
+        self.assertIn("Coordinates must be inside the screenshot size 1000x2000", result.summary)
+        self.assertEqual(driver.swipes, [])
+
+    def test_click_area_rejects_out_of_range_corner_before_tapping(self):
+        ctx, driver = self._ctx()
+
+        result = asyncio.run(click_area(100, 100, 1000, 300, ctx=ctx))
+
+        self.assertFalse(result.success)
+        self.assertIn("Coordinates must be inside the screenshot size 1000x2000", result.summary)
+        self.assertEqual(driver.taps, [])
+
+    def test_long_press_at_rejects_out_of_range_before_swiping(self):
+        ctx, driver = self._ctx()
+
+        result = asyncio.run(long_press_at(-1, 500, ctx=ctx))
+
+        self.assertFalse(result.success)
+        self.assertIn("Coordinates must be inside the screenshot size 1000x2000", result.summary)
+        self.assertEqual(driver.swipes, [])
 
 
 class VisualRemoteConfigTest(unittest.TestCase):

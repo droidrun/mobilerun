@@ -479,10 +479,7 @@ class MobileAgent(Workflow):
         if self._injected_state_provider is not None:
             self.state_provider = self._injected_state_provider
         elif self.config.agent.vision_only or is_visual_remote:
-            self.state_provider = ScreenshotOnlyStateProvider(
-                driver,
-                use_normalized=True,
-            )
+            self.state_provider = ScreenshotOnlyStateProvider(driver)
         elif is_ios:
             self.state_provider = IOSStateProvider(
                 driver,

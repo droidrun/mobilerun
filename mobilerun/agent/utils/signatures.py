@@ -79,8 +79,13 @@ async def build_tool_registry(
             "y": {"type": "number", "required": True},
         },
         description=(
-            "Click at screen position (x, y). Use element bounds as reference "
-            'to determine where to click. Usage: {"action": "click_at", "x": 500, "y": 300}'
+            "Click at screen position (x, y). In screenshot-only mode, use "
+            "screenshot pixel coordinates from the current screenshot: (0,0) is "
+            "top-left and the bottom-right coordinate is shown in the state. Do "
+            "not tap toggles or destructive controls unless explicitly asked. "
+            "Tap the actual target text or control, not section headers or "
+            "category labels. "
+            'Usage: {"action": "click_at", "x": 500, "y": 300}'
         ),
         deps={"tap", "convert_point"},
     )
@@ -95,8 +100,12 @@ async def build_tool_registry(
             "y2": {"type": "number", "required": True},
         },
         description=(
-            "Click center of area (x1, y1, x2, y2). Useful when you want to click "
-            'a specific region. Usage: {"action": "click_area", "x1": 100, "y1": 200, "x2": 300, "y2": 400}'
+            "Click center of area (x1, y1, x2, y2). In screenshot-only mode, "
+            "use screenshot pixel coordinates from the current screenshot: "
+            "(0,0) is top-left and the bottom-right coordinate is shown in the "
+            "state. Do not tap toggles or destructive controls unless explicitly "
+            "asked. Use a tight area around the actual target text or control, "
+            'not a section header. Usage: {"action": "click_area", "x1": 100, "y1": 200, "x2": 300, "y2": 400}'
         ),
         deps={"tap", "convert_point"},
     )
@@ -109,7 +118,11 @@ async def build_tool_registry(
             "y": {"type": "number", "required": True},
         },
         description=(
-            "Long press at screen position (x, y). Use element bounds as reference. "
+            "Long press at screen position (x, y). In screenshot-only mode, use "
+            "screenshot pixel coordinates from the current screenshot: (0,0) is "
+            "top-left and the bottom-right coordinate is shown in the state. Do "
+            "not long press toggles or destructive controls unless explicitly "
+            "asked. "
             'Usage: {"action": "long_press_at", "x": 500, "y": 300}'
         ),
         deps={"swipe", "convert_point"},
@@ -176,7 +189,10 @@ async def build_tool_registry(
         },
         description=(
             "Scroll from the position with coordinate to the position with "
-            "coordinate2. Duration is in seconds (default: 1.0). "
+            "coordinate2. In screenshot-only mode, use screenshot pixel "
+            "coordinates from the current screenshot: (0,0) is top-left and the "
+            "bottom-right coordinate is shown in the state. Duration is in "
+            "seconds (default: 1.0). "
             'Usage Example: {"action": "swipe", "coordinate": [x1, y1], "coordinate2": [x2, y2], "duration": 1.5}'
         ),
         deps={"swipe", "convert_point"},

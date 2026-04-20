@@ -24,6 +24,8 @@ class UIState:
         screen_width: int,
         screen_height: int,
         use_normalized: bool = False,
+        coordinate_scale_x: float = 1.0,
+        coordinate_scale_y: float = 1.0,
     ) -> None:
         self.elements = elements
         self.formatted_text = formatted_text
@@ -32,6 +34,8 @@ class UIState:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.use_normalized = use_normalized
+        self.coordinate_scale_x = coordinate_scale_x
+        self.coordinate_scale_y = coordinate_scale_y
 
     # -- element lookup ------------------------------------------------------
 
@@ -132,7 +136,10 @@ class UIState:
         """Convert point to absolute pixels if normalized mode is active."""
         if self.use_normalized:
             return to_absolute(x, y, self.screen_width, self.screen_height)
-        return x, y
+        return (
+            int(round(x * self.coordinate_scale_x)),
+            int(round(y * self.coordinate_scale_y)),
+        )
 
     # -- internal helpers ----------------------------------------------------
 
