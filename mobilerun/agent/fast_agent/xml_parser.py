@@ -62,7 +62,7 @@ def parse_tool_calls(
     parts = text.split(OPEN_TAG)
     text_before = parts[0].strip()
 
-    calls: List[ToolCall] = []
+    call_blocks: List[List[ToolCall]] = []
     for part in parts[1:]:
         close_idx = part.find(CLOSE_TAG)
         if close_idx == -1:
@@ -72,36 +72,12 @@ def parse_tool_calls(
         if not block:
             continue
 
-        block = _sanitize_param_content(block)
+        calls = _parse_tool_call_block(block, param_types)
+        if calls:
+            call_blocks.append(calls)
 
-        try:
-            root = ET.fromstring(f"<root>{block}</root>")
-        except ET.ParseError:
-            logger.warning("Failed to parse tool call XML block, skipping")
-            continue
-
-        for invoke in root.findall("invoke"):
-            name = invoke.get("name", "")
-            if not name:
-                continue
-
-            params: Dict[str, Any] = {}
-            error: Optional[str] = None
-            for param in invoke.findall("parameter"):
-                param_name = param.get("name", "")
-                param_value = param.text or ""
-                if param_name:
-                    try:
-                        params[param_name] = _coerce_param(
-                            param_name, param_value, param_types
-                        )
-                    except ValueError as e:
-                        error = str(e)
-                        break
-
-            calls.append(ToolCall(name=name, parameters=params, error=error))
-
-    return text_before, _drop_adjacent_duplicate_calls(calls)
+    deduped_blocks = _drop_adjacent_duplicate_blocks(call_blocks)
+    return text_before, [call for block in deduped_blocks for call in block]
 
 
 def format_tool_results(results: List[ToolResult]) -> str:
@@ -145,26 +121,55 @@ def format_tool_calls(calls: List[ToolCall]) -> str:
     return "\n".join(lines)
 
 
-def _drop_adjacent_duplicate_calls(calls: List[ToolCall]) -> List[ToolCall]:
-    """Drop exact adjacent duplicate calls emitted in the same LLM response."""
-    if not calls:
-        return calls
+def _parse_tool_call_block(
+    block: str, param_types: Optional[Dict[str, str]]
+) -> List[ToolCall]:
+    block = _sanitize_param_content(block)
 
-    deduped = [calls[0]]
-    for call in calls[1:]:
-        previous = deduped[-1]
-        if (
-            call.name == previous.name
-            and call.parameters == previous.parameters
-            and call.error == previous.error
-        ):
-            logger.debug(
-                "Dropping duplicate adjacent tool call: %s(%s)",
-                call.name,
-                call.parameters,
-            )
+    try:
+        root = ET.fromstring(f"<root>{block}</root>")
+    except ET.ParseError:
+        logger.warning("Failed to parse tool call XML block, skipping")
+        return []
+
+    calls: List[ToolCall] = []
+    for invoke in root.findall("invoke"):
+        name = invoke.get("name", "")
+        if not name:
             continue
-        deduped.append(call)
+
+        params: Dict[str, Any] = {}
+        error: Optional[str] = None
+        for param in invoke.findall("parameter"):
+            param_name = param.get("name", "")
+            param_value = param.text or ""
+            if param_name:
+                try:
+                    params[param_name] = _coerce_param(
+                        param_name, param_value, param_types
+                    )
+                except ValueError as e:
+                    error = str(e)
+                    break
+
+        calls.append(ToolCall(name=name, parameters=params, error=error))
+    return calls
+
+
+def _drop_adjacent_duplicate_blocks(
+    blocks: List[List[ToolCall]],
+) -> List[List[ToolCall]]:
+    """Drop exact adjacent duplicate <function_calls> blocks."""
+    if not blocks:
+        return blocks
+
+    deduped = [blocks[0]]
+    for block in blocks[1:]:
+        previous = deduped[-1]
+        if block == previous:
+            logger.debug("Dropping duplicate adjacent tool-call block")
+            continue
+        deduped.append(block)
     return deduped
 
 

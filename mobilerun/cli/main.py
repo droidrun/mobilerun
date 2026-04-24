@@ -70,6 +70,13 @@ os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
 console = Console()
 
 
+def _force_screenshot_only_vision(config: MobileConfig) -> None:
+    config.agent.vision_only = True
+    config.agent.manager.vision = True
+    config.agent.executor.vision = True
+    config.agent.fast_agent.vision = True
+
+
 def _setup_cli_logging(debug: bool) -> None:
     """Configure the mobilerun logger with a CLILogHandler."""
     handler = CLILogHandler()
@@ -159,9 +166,7 @@ async def run_command(
             config.agent.vision_only = vision_only
 
         if config.agent.vision_only:
-            config.agent.manager.vision = True
-            config.agent.executor.vision = True
-            config.agent.fast_agent.vision = True
+            _force_screenshot_only_vision(config)
             logger.debug("CLI override: vision_only=True")
         elif vision is not None:
             # --vision flag overrides all agents
@@ -197,6 +202,10 @@ async def run_command(
             config.device.control_backend = control_backend
         if device_id is not None:
             config.device.device_id = device_id
+
+        if (config.device.control_backend or "").strip().lower() == VISUAL_REMOTE_CONNECTION:
+            _force_screenshot_only_vision(config)
+            logger.debug("Control backend visual-remote forces screenshot-only vision")
 
         # Logging overrides
         if debug is not None:

@@ -134,6 +134,52 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         self.assertTrue(config.agent.executor.vision)
         self.assertTrue(config.agent.fast_agent.vision)
 
+    def test_run_command_visual_remote_forces_vision_without_vision_only(self):
+        created_agents = []
+
+        class FakeHandler:
+            async def stream_events(self):
+                if False:
+                    yield None
+
+            def __await__(self):
+                async def done():
+                    return SimpleNamespace(success=True)
+
+                return done().__await__()
+
+        class FakeAgent:
+            def __init__(self, **kwargs):
+                created_agents.append(kwargs)
+
+            def run(self):
+                return FakeHandler()
+
+        with (
+            patch(
+                "mobilerun.cli.main.ConfigLoader.load",
+                return_value=MobileConfig(),
+            ),
+            patch("mobilerun.cli.main.MobileAgent", FakeAgent),
+        ):
+            success = asyncio.run(
+                run_command(
+                    "Check Wi-Fi",
+                    control_backend="visual-remote",
+                    device="http://localhost:8090",
+                    debug=False,
+                )
+            )
+
+        self.assertTrue(success)
+        config = created_agents[0]["config"]
+        self.assertEqual(config.device.control_backend, "visual-remote")
+        self.assertEqual(config.device.serial, "http://localhost:8090")
+        self.assertTrue(config.agent.vision_only)
+        self.assertTrue(config.agent.manager.vision)
+        self.assertTrue(config.agent.executor.vision)
+        self.assertTrue(config.agent.fast_agent.vision)
+
     def test_run_command_skips_adb_cleanup_for_config_visual_remote(self):
         created_agents = []
 
@@ -157,7 +203,6 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         config = MobileConfig.from_dict(
             {
-                "agent": {"vision_only": True},
                 "device": {
                     "control_backend": "visual-remote",
                     "serial": "http://localhost:8090",
@@ -174,7 +219,12 @@ class RunCliVisionOnlyTest(unittest.TestCase):
             success = asyncio.run(run_command("Check Wi-Fi", debug=False))
 
         self.assertTrue(success)
-        self.assertEqual(created_agents[0]["config"].device.control_backend, "visual-remote")
+        config = created_agents[0]["config"]
+        self.assertEqual(config.device.control_backend, "visual-remote")
+        self.assertTrue(config.agent.vision_only)
+        self.assertTrue(config.agent.manager.vision)
+        self.assertTrue(config.agent.executor.vision)
+        self.assertTrue(config.agent.fast_agent.vision)
         adb_device.assert_not_called()
 
 

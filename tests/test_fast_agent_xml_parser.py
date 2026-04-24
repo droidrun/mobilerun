@@ -49,6 +49,26 @@ I will tap two different targets.
         self.assertEqual(calls[0].parameters, {"x": 128, "y": 1560})
         self.assertEqual(calls[1].parameters, {"x": 200, "y": 1560})
 
+    def test_keeps_identical_invokes_inside_one_block(self):
+        text = """
+I will press back twice.
+<function_calls>
+<invoke name="system_button">
+<parameter name="button">back</parameter>
+</invoke>
+<invoke name="system_button">
+<parameter name="button">back</parameter>
+</invoke>
+</function_calls>
+"""
+
+        _, calls = parse_tool_calls(text)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([call.name for call in calls], ["system_button", "system_button"])
+        self.assertEqual(calls[0].parameters, {"button": "back"})
+        self.assertEqual(calls[1].parameters, {"button": "back"})
+
     def test_keeps_intentional_mixed_batch(self):
         text = """
 I will focus the field and type.
@@ -76,7 +96,7 @@ I will focus the field and type.
             {"text": "Android version", "clear": True},
         )
 
-    def test_duplicate_complete_calls_execute_once(self):
+    def test_duplicate_complete_blocks_execute_once(self):
         text = """
 The task is done.
 <function_calls>
@@ -84,6 +104,8 @@ The task is done.
 <parameter name="success">true</parameter>
 <parameter name="message">Done</parameter>
 </invoke>
+</function_calls>
+<function_calls>
 <invoke name="complete">
 <parameter name="success">true</parameter>
 <parameter name="message">Done</parameter>

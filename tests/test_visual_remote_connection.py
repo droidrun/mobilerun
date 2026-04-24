@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from mobilerun.agent.droid.droid_agent import _effective_disabled_tools
+from mobilerun.agent.droid.droid_agent import MobileAgent, _effective_disabled_tools
 from mobilerun.agent.utils.actions import click_area, click_at, long_press_at, swipe
 from mobilerun.agent.utils.signatures import build_tool_registry
 from mobilerun.config_manager.config_manager import MobileConfig
@@ -504,6 +504,21 @@ class VisualRemoteConfigTest(unittest.TestCase):
         self.assertTrue(config.agent.vision_only)
         self.assertEqual(config.device.control_backend, "visual-remote")
         self.assertEqual(config.device.device_id, "phone-1")
+
+    def test_mobile_agent_forces_visual_remote_screenshot_vision(self):
+        config = MobileConfig.from_dict(
+            {
+                "agent": {"name": "external-agent"},
+                "device": {"control_backend": "visual-remote"},
+            }
+        )
+
+        agent = MobileAgent("Check Wi-Fi", config=config)
+
+        self.assertTrue(agent.config.agent.vision_only)
+        self.assertTrue(agent.config.agent.manager.vision)
+        self.assertTrue(agent.config.agent.executor.vision)
+        self.assertTrue(agent.config.agent.fast_agent.vision)
 
 
 if __name__ == "__main__":

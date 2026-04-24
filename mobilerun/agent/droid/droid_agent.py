@@ -107,6 +107,13 @@ def _normalize_control_backend(control_backend: str | None) -> str | None:
     return normalized or None
 
 
+def _force_screenshot_only_vision(agent_config: AgentConfig) -> None:
+    agent_config.vision_only = True
+    agent_config.manager.vision = True
+    agent_config.executor.vision = True
+    agent_config.fast_agent.vision = True
+
+
 def _effective_disabled_tools(disabled_tools: list[str], state_provider) -> list[str]:
     if getattr(state_provider, "requires_coordinate_tools", False):
         return [name for name in disabled_tools if name not in _COORDINATE_TOOL_NAMES]
@@ -201,10 +208,15 @@ class MobileAgent(Workflow):
             external_agents=config.external_agents if config else {},
             mcp=config.mcp if config else MCPConfig(),
         )
-        if self.config.agent.vision_only:
-            self.config.agent.manager.vision = True
-            self.config.agent.executor.vision = True
-            self.config.agent.fast_agent.vision = True
+        control_backend = _normalize_control_backend(
+            self.resolved_device_config.control_backend
+        )
+        if (
+            self.config.agent.vision_only
+            or control_backend == VISUAL_REMOTE_CONNECTION
+            or getattr(state_provider, "requires_coordinate_tools", False)
+        ):
+            _force_screenshot_only_vision(self.config.agent)
 
         # These are populated in start_handler (unless injected via __init__)
         self._injected_driver = driver
