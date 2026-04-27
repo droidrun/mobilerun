@@ -29,6 +29,7 @@ async def build_tool_registry(
     credential_manager=None,
     platform: str = "android",
     exact_app_launch: bool = False,
+    screenshot_only: bool = False,
 ) -> tuple[ToolRegistry, set[str]]:
     """Build a ToolRegistry with all standard mobilerun tools.
 
@@ -40,6 +41,8 @@ async def build_tool_registry(
             implementation is registered unless exact_app_launch is enabled.
         exact_app_launch: Register ``open_app`` as an exact app identifier
             launcher that only depends on ``start_app``.
+        screenshot_only: When true, coordinate tool descriptions refer to the
+            screenshot shown to the model. Normal mode keeps generic wording.
 
     Returns:
         ``(registry, standard_tool_names)`` where *standard_tool_names* is the
@@ -49,6 +52,56 @@ async def build_tool_registry(
         this set, so they correctly appear in ``<custom_actions>``.
     """
     registry = ToolRegistry()
+
+    if screenshot_only:
+        click_at_description = (
+            "Click at screenshot position (x, y). Use screenshot pixel "
+            "coordinates shown to the model. The coordinate grid is only a "
+            "reference; do not use grid-cell numbers. Prefer click_at for "
+            "dense lists, adjacent rows, compact menus, visible text, and "
+            "small controls. "
+            'Usage: {"action": "click_at", "x": 500, "y": 300}'
+        )
+        click_area_description = (
+            "Click the center of a screenshot area (x1, y1, x2, y2). Use "
+            "screenshot pixel coordinates shown to the model. The coordinate "
+            "grid is only a reference; do not use grid-cell numbers. Use "
+            "click_area only for large, unambiguous targets; prefer click_at "
+            "for dense rows or text labels. "
+            'Usage: {"action": "click_area", "x1": 100, "y1": 200, "x2": 300, "y2": 400}'
+        )
+        long_press_at_description = (
+            "Long press at screenshot position (x, y). Use screenshot pixel "
+            "coordinates shown to the model. The coordinate grid is only a "
+            "reference; do not use grid-cell numbers. "
+            'Usage: {"action": "long_press_at", "x": 500, "y": 300}'
+        )
+        swipe_description = (
+            "Swipe from screenshot coordinate to coordinate2. Use screenshot "
+            "pixel coordinates shown to the model. The coordinate grid is only "
+            "a reference; do not use grid-cell numbers. Duration is in seconds "
+            "(default: 1.0). "
+            'Usage Example: {"action": "swipe", "coordinate": [x1, y1], "coordinate2": [x2, y2], "duration": 1.5}'
+        )
+    else:
+        click_at_description = (
+            "Click at screen position (x, y). "
+            'Usage: {"action": "click_at", "x": 500, "y": 300}'
+        )
+        click_area_description = (
+            "Click the center of area (x1, y1, x2, y2). Use click_area only "
+            "for large, unambiguous targets. "
+            'Usage: {"action": "click_area", "x1": 100, "y1": 200, "x2": 300, "y2": 400}'
+        )
+        long_press_at_description = (
+            "Long press at screen position (x, y). "
+            'Usage: {"action": "long_press_at", "x": 500, "y": 300}'
+        )
+        swipe_description = (
+            "Swipe from the position with coordinate to the position with "
+            "coordinate2. Duration is in seconds (default: 1.0). "
+            'Usage Example: {"action": "swipe", "coordinate": [x1, y1], "coordinate2": [x2, y2], "duration": 1.5}'
+        )
 
     # -- Core UI actions -----------------------------------------------------
 
@@ -81,19 +134,7 @@ async def build_tool_registry(
             "x": {"type": "number", "required": True},
             "y": {"type": "number", "required": True},
         },
-        description=(
-            "Click at screen position (x, y). In screenshot-only mode, use "
-            "the screenshot pixel coordinates shown to the model: (0,0) is "
-            "top-left and the bottom-right coordinate is shown in the state. "
-            "The screenshot may include a coordinate grid for reference; use "
-            "the underlying screenshot pixel coordinates, not grid-cell numbers. "
-            "In dense lists, adjacent rows, and compact menus, prefer click_at "
-            "on the center of the visible target text or control. Do not tap "
-            "rows that are partially visible or close to the top or bottom edge; "
-            "scroll them toward the middle first. Do not tap toggles or destructive "
-            "controls unless explicitly asked. "
-            'Usage: {"action": "click_at", "x": 500, "y": 300}'
-        ),
+        description=click_at_description,
         deps={"tap", "convert_point"},
     )
 
@@ -106,19 +147,7 @@ async def build_tool_registry(
             "x2": {"type": "number", "required": True},
             "y2": {"type": "number", "required": True},
         },
-        description=(
-            "Click center of area (x1, y1, x2, y2). In screenshot-only mode, "
-            "use the screenshot pixel coordinates shown to the model: (0,0) is "
-            "top-left and the bottom-right coordinate is shown in the state. "
-            "The screenshot may include a coordinate grid for reference; use "
-            "the underlying screenshot pixel coordinates, not grid-cell numbers. "
-            "Use click_area only for large, unambiguous targets; do not use it "
-            "for dense list rows, adjacent rows, or compact menus. Do not tap "
-            "rows that are partially visible or close to the top or bottom edge; "
-            "scroll them toward the middle first. Do not tap toggles or destructive "
-            "controls unless explicitly asked. "
-            'Usage: {"action": "click_area", "x1": 100, "y1": 200, "x2": 300, "y2": 400}'
-        ),
+        description=click_area_description,
         deps={"tap", "convert_point"},
     )
 
@@ -129,14 +158,7 @@ async def build_tool_registry(
             "x": {"type": "number", "required": True},
             "y": {"type": "number", "required": True},
         },
-        description=(
-            "Long press at screen position (x, y). In screenshot-only mode, use "
-            "the screenshot pixel coordinates shown to the model: (0,0) is "
-            "top-left and the bottom-right coordinate is shown in the state. Do "
-            "not use grid-cell numbers if a coordinate grid is visible. Do not "
-            "long press toggles or destructive controls unless explicitly asked. "
-            'Usage: {"action": "long_press_at", "x": 500, "y": 300}'
-        ),
+        description=long_press_at_description,
         deps={"swipe", "convert_point"},
     )
 
@@ -199,15 +221,7 @@ async def build_tool_registry(
             "coordinate2": {"type": "list", "required": True},
             "duration": {"type": "number", "required": False, "default": 1.0},
         },
-        description=(
-            "Scroll from the position with coordinate to the position with "
-            "coordinate2. In screenshot-only mode, use the screenshot pixel "
-            "coordinates shown to the model: (0,0) is top-left and the "
-            "bottom-right coordinate is shown in the state. Do not use grid-cell "
-            "numbers if a coordinate grid is visible. Duration is in seconds "
-            "(default: 1.0). "
-            'Usage Example: {"action": "swipe", "coordinate": [x1, y1], "coordinate2": [x2, y2], "duration": 1.5}'
-        ),
+        description=swipe_description,
         deps={"swipe", "convert_point"},
     )
 

@@ -518,6 +518,11 @@ class MobileAgent(Workflow):
             credential_manager=self.credential_manager,
             platform="ios" if driver.platform.lower() == "ios" else "android",
             exact_app_launch=is_visual_remote,
+            screenshot_only=getattr(
+                self.state_provider,
+                "requires_coordinate_tools",
+                False,
+            ),
         )
 
         # User custom tools

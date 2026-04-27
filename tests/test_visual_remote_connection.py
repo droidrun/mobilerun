@@ -290,6 +290,8 @@ class ScreenshotOnlyStateProviderTest(unittest.TestCase):
         self.assertIn("(0,0) is top-left", state.formatted_text)
         self.assertIn("(999,1999) is bottom-right", state.formatted_text)
         self.assertIn("scroll it toward the middle", state.formatted_text)
+        self.assertNotIn("destructive controls", state.formatted_text)
+        self.assertNotIn("Do not tap toggles", state.formatted_text)
         self.assertIn("direct_text_input", provider.supported)
         self.assertNotIn("element_index", provider.supported)
 
@@ -365,6 +367,7 @@ class ScreenshotOnlyStateProviderTest(unittest.TestCase):
             registry, _ = await build_tool_registry(
                 supported_buttons={"enter"},
                 platform="ios",
+                screenshot_only=True,
             )
             capabilities = {
                 "tap",
@@ -393,11 +396,12 @@ class ScreenshotOnlyStateProviderTest(unittest.TestCase):
         self.assertNotIn("click", registry.tools)
         self.assertNotIn("type", registry.tools)
 
-    def test_coordinate_tools_describe_screenshot_pixel_coordinates(self):
+    def test_screenshot_only_coordinate_tools_describe_model_screenshot_coordinates(self):
         async def run():
             registry, _ = await build_tool_registry(
                 supported_buttons={"enter"},
                 platform="ios",
+                screenshot_only=True,
             )
             return registry
 
@@ -407,28 +411,52 @@ class ScreenshotOnlyStateProviderTest(unittest.TestCase):
             "screenshot pixel coordinates",
             registry.tools["click_at"].description,
         )
-        self.assertIn("(0,0) is top-left", registry.tools["click_area"].description)
-        self.assertIn("prefer click_at", registry.tools["click_at"].description)
+        self.assertIn("grid is only a reference", registry.tools["click_at"].description)
+        self.assertIn("do not use grid-cell numbers", registry.tools["click_at"].description)
+        self.assertIn("Prefer click_at", registry.tools["click_at"].description)
         self.assertIn("coordinate grid", registry.tools["click_at"].description)
-        self.assertIn("not grid-cell numbers", registry.tools["click_at"].description)
         self.assertIn(
             "large, unambiguous targets",
             registry.tools["click_area"].description,
         )
         self.assertIn(
-            "do not use it for dense list rows",
+            "prefer click_at",
             registry.tools["click_area"].description,
         )
-        self.assertIn("scroll them toward the middle", registry.tools["click_at"].description)
         self.assertIn(
             "screenshot pixel coordinates",
             registry.tools["long_press_at"].description,
         )
-        self.assertIn("bottom-right coordinate is shown", registry.tools["swipe"].description)
-        self.assertNotIn("0..1000", registry.tools["click_at"].description)
-        self.assertNotIn("0..1000", registry.tools["click_area"].description)
-        self.assertNotIn("0..1000", registry.tools["long_press_at"].description)
-        self.assertNotIn("0..1000", registry.tools["swipe"].description)
+        self.assertIn("screenshot coordinate", registry.tools["swipe"].description)
+
+        for name in ("click_at", "click_area", "long_press_at", "swipe"):
+            description = registry.tools[name].description
+            self.assertNotIn("0..1000", description)
+            self.assertNotIn("destructive controls", description)
+            self.assertNotIn("Do not tap toggles", description)
+
+    def test_normal_coordinate_tools_do_not_describe_screenshot_only_mode(self):
+        async def run():
+            registry, _ = await build_tool_registry(
+                supported_buttons={"enter"},
+                platform="ios",
+                screenshot_only=False,
+            )
+            return registry
+
+        registry = asyncio.run(run())
+
+        for name in ("click_at", "click_area", "long_press_at", "swipe"):
+            description = registry.tools[name].description
+            self.assertNotIn("screenshot-only", description)
+            self.assertNotIn("screenshot pixel", description)
+            self.assertNotIn("coordinate grid", description)
+            self.assertNotIn("grid-cell", description)
+            self.assertNotIn("destructive controls", description)
+            self.assertNotIn("Do not tap toggles", description)
+
+        self.assertIn("Click at screen position", registry.tools["click_at"].description)
+        self.assertIn("Duration is in seconds", registry.tools["swipe"].description)
 
     def test_screenshot_only_agent_sources_resize_screenshots(self):
         repo = Path(__file__).resolve().parents[1]
