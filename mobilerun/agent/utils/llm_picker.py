@@ -46,11 +46,20 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
         from mobilerun.agent.utils.oauth.gemini_oauth_code_assist_llm import GeminiOAuthCodeAssistLLM
         return GeminiOAuthCodeAssistLLM(**{k: v for k, v in kwargs.items() if v is not None})
 
-    # Legacy alias: MiniMax configs now route through OpenAILike.
+    # Legacy aliases: MiniMax and DeepSeek route through OpenAILike.
     if provider_name == "MiniMax":
         provider_name = "OpenAILike"
         kwargs.setdefault("is_chat_model", True)
         kwargs.setdefault("api_base", "https://api.minimaxi.chat/v1")
+        if "base_url" in kwargs and "api_base" not in kwargs:
+            kwargs["api_base"] = kwargs.pop("base_url")
+
+    if provider_name == "DeepSeek":
+        provider_name = "OpenAILike"
+        kwargs.setdefault("is_chat_model", True)
+        kwargs.setdefault("is_function_calling_model", kwargs.get("model") == "deepseek-chat")
+        kwargs.setdefault("context_window", 64000)
+        kwargs.setdefault("api_base", "https://api.deepseek.com")
         if "base_url" in kwargs and "api_base" not in kwargs:
             kwargs["api_base"] = kwargs.pop("base_url")
 
@@ -73,9 +82,6 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
     elif provider_name == "Anthropic":
         from llama_index.llms.anthropic import Anthropic
         llm_class = Anthropic
-    elif provider_name == "DeepSeek":
-        from llama_index.llms.deepseek import DeepSeek
-        llm_class = DeepSeek
     elif provider_name == "OpenRouter":
         from llama_index.llms.openrouter import OpenRouter
         llm_class = OpenRouter
