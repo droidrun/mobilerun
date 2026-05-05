@@ -555,9 +555,12 @@ class AnthropicOAuthLLM(CustomLLM):
 
             deadline = time.time() + timeout_seconds
             input_queue: _queue.Queue[Optional[str]] = _queue.Queue()
+            stop = threading.Event()
 
             def _reader() -> None:
-                while True:
+                for _ in range(2):
+                    if stop.is_set():
+                        return
                     try:
                         input_queue.put(str(input_fn("Enter the authorization code: ")))
                     except (EOFError, OSError):
@@ -566,43 +569,46 @@ class AnthropicOAuthLLM(CustomLLM):
 
             threading.Thread(target=_reader, daemon=True).start()
 
-            for attempt in range(2):
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    raise TimeoutError("OAuth login timed out.")
+            try:
+                for attempt in range(2):
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        raise TimeoutError("OAuth login timed out.")
 
-                try:
-                    raw = input_queue.get(timeout=remaining)
-                except _queue.Empty:
-                    raise TimeoutError("OAuth login timed out.")
+                    try:
+                        raw = input_queue.get(timeout=remaining)
+                    except _queue.Empty:
+                        raise TimeoutError("OAuth login timed out.")
 
-                if raw is None:
-                    raise RuntimeError("Login failed — stdin closed.")
-                if not raw.strip():
-                    if attempt == 0:
-                        print("No code entered. Try again.")
-                        continue
-                    raise RuntimeError("Login failed.")
-                try:
-                    code = _normalize_manual_code(raw, state)
-                except Exception:  # noqa: BLE001
+                    if raw is None:
+                        raise RuntimeError("Login failed — stdin closed.")
+                    if not raw.strip():
+                        if attempt == 0:
+                            print("No code entered. Try again.")
+                            continue
+                        raise RuntimeError("Login failed.")
+                    try:
+                        code = _normalize_manual_code(raw, state)
+                    except Exception:  # noqa: BLE001
+                        if attempt == 0:
+                            print("Invalid code. Try again.")
+                            continue
+                        raise RuntimeError("Login failed.")
+                    if code:
+                        return self._exchange_authorization_code(
+                            code=code,
+                            redirect_uri=redirect_uri,
+                            code_verifier=code_verifier,
+                            state=state,
+                            expires_in=expires_in,
+                        )
                     if attempt == 0:
                         print("Invalid code. Try again.")
                         continue
                     raise RuntimeError("Login failed.")
-                if code:
-                    return self._exchange_authorization_code(
-                        code=code,
-                        redirect_uri=redirect_uri,
-                        code_verifier=code_verifier,
-                        state=state,
-                        expires_in=expires_in,
-                    )
-                if attempt == 0:
-                    print("Invalid code. Try again.")
-                    continue
                 raise RuntimeError("Login failed.")
-            raise RuntimeError("Login failed.")
+            finally:
+                stop.set()
         finally:
             self.authorize_url = original_authorize_url
 

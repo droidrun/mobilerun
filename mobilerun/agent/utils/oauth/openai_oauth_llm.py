@@ -698,6 +698,7 @@ class OpenAIOAuth(OpenAI):
             )
             return self.login_manual(
                 open_browser=open_browser,
+                timeout_seconds=timeout_seconds,
                 callback_port=callback_port,
                 callback_path=callback_path,
                 redirect_host=redirect_host,
@@ -836,55 +837,65 @@ class OpenAIOAuth(OpenAI):
         if open_browser:
             webbrowser.open(auth_url)
 
+        import queue as _queue
+
         deadline = time.time() + timeout_seconds
+        input_queue: _queue.Queue[Optional[str]] = _queue.Queue()
+        stop = threading.Event()
 
-        for attempt in range(2):
-            remaining = deadline - time.time()
-            if remaining <= 0:
-                raise TimeoutError("OAuth login timed out.")
-
-            read_result: Dict[str, Optional[str]] = {"value": None}
-            read_done = threading.Event()
-
-            def _reader() -> None:
+        def _reader() -> None:
+            for _ in range(2):
+                if stop.is_set():
+                    return
                 try:
-                    read_result["value"] = str(input_fn("Paste the redirect URL or authorization code: "))
+                    input_queue.put(str(input_fn("Paste the redirect URL or authorization code: ")))
                 except (EOFError, OSError):
-                    pass
-                read_done.set()
+                    input_queue.put(None)
+                    return
 
-            threading.Thread(target=_reader, daemon=True).start()
+        threading.Thread(target=_reader, daemon=True).start()
 
-            if not read_done.wait(timeout=remaining):
-                raise TimeoutError("OAuth login timed out.")
+        try:
+            for attempt in range(2):
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise TimeoutError("OAuth login timed out.")
 
-            raw = read_result["value"] or ""
-            if not raw.strip():
+                try:
+                    raw = input_queue.get(timeout=remaining)
+                except _queue.Empty:
+                    raise TimeoutError("OAuth login timed out.")
+
+                if raw is None:
+                    raise RuntimeError("Login failed — stdin closed.")
+                if not raw.strip():
+                    if attempt == 0:
+                        print("Invalid paste. Try again.")
+                        continue
+                    raise RuntimeError("Login failed.")
+                try:
+                    code = _normalize_manual_code(raw, state)
+                except Exception:  # noqa: BLE001
+                    if attempt == 0:
+                        print("Invalid paste. Try again.")
+                        continue
+                    raise RuntimeError("Login failed.")
+                if code:
+                    creds = self._oauth_manager.exchange_authorization_code(
+                        code=code,
+                        redirect_uri=redirect_uri,
+                        code_verifier=code_verifier,
+                    )
+                    if creds.account_id:
+                        object.__setattr__(self, "_oauth_account_id", creds.account_id)
+                    return creds
                 if attempt == 0:
                     print("Invalid paste. Try again.")
                     continue
                 raise RuntimeError("Login failed.")
-            try:
-                code = _normalize_manual_code(raw, state)
-            except Exception:  # noqa: BLE001
-                if attempt == 0:
-                    print("Invalid paste. Try again.")
-                    continue
-                raise RuntimeError("Login failed.")
-            if code:
-                creds = self._oauth_manager.exchange_authorization_code(
-                    code=code,
-                    redirect_uri=redirect_uri,
-                    code_verifier=code_verifier,
-                )
-                if creds.account_id:
-                    object.__setattr__(self, "_oauth_account_id", creds.account_id)
-                return creds
-            if attempt == 0:
-                print("Invalid paste. Try again.")
-                continue
             raise RuntimeError("Login failed.")
-        raise RuntimeError("Login failed.")
+        finally:
+            stop.set()
 
     def _ensure_access_token(self) -> OpenAIOAuthCredentials:
         creds = self._oauth_manager.get_valid_credentials(skew_ms=self._oauth_refresh_skew_ms)
