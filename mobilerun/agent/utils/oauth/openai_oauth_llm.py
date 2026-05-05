@@ -785,12 +785,8 @@ class OpenAIOAuth(OpenAI):
         verification_url = (
             device_resp.get("verification_uri")
             or device_resp.get("verification_url")
+            or f"{mgr.issuer}/codex/device"
         )
-        if not verification_url:
-            raise RuntimeError(
-                "Device code response did not include a verification URL. "
-                "The server may not support this login flow."
-            )
 
         print(
             f"\nSign in with your ChatGPT account:\n"
