@@ -551,29 +551,33 @@ class AnthropicOAuthLLM(CustomLLM):
             if open_browser:
                 webbrowser.open(auth_url)
 
+            import queue as _queue
+
             deadline = time.time() + timeout_seconds
+            input_queue: _queue.Queue[Optional[str]] = _queue.Queue()
+
+            def _reader() -> None:
+                while True:
+                    try:
+                        input_queue.put(str(input_fn("Enter the authorization code: ")))
+                    except (EOFError, OSError):
+                        input_queue.put(None)
+                        return
+
+            threading.Thread(target=_reader, daemon=True).start()
 
             for attempt in range(2):
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     raise TimeoutError("OAuth login timed out.")
 
-                read_result: Dict[str, Optional[str]] = {"value": None}
-                read_done = threading.Event()
-
-                def _reader() -> None:
-                    try:
-                        read_result["value"] = str(input_fn("Enter the authorization code: "))
-                    except (EOFError, OSError):
-                        pass
-                    read_done.set()
-
-                threading.Thread(target=_reader, daemon=True).start()
-
-                if not read_done.wait(timeout=remaining):
+                try:
+                    raw = input_queue.get(timeout=remaining)
+                except _queue.Empty:
                     raise TimeoutError("OAuth login timed out.")
 
-                raw = read_result["value"] or ""
+                if raw is None:
+                    raise RuntimeError("Login failed — stdin closed.")
                 if not raw.strip():
                     if attempt == 0:
                         print("No code entered. Try again.")

@@ -153,6 +153,9 @@ class _DeviceCodeNotSupported(Exception):
     pass
 
 
+_DEVICE_CODE_TIMEOUT = 15 * 60
+
+
 def _request_device_code(
     issuer: str,
     client_id: str,
@@ -175,9 +178,6 @@ def _request_device_code(
     return response.json()
 
 
-_DEVICE_CODE_TIMEOUT = 15 * 60
-
-
 def _poll_device_code(
     issuer: str,
     device_auth_id: str,
@@ -188,7 +188,8 @@ def _poll_device_code(
     timeout_seconds: float = _DEVICE_CODE_TIMEOUT,
 ) -> dict:
     url = f"{issuer.rstrip('/')}/api/accounts/deviceauth/token"
-    deadline = time.time() + min(timeout_seconds, _DEVICE_CODE_TIMEOUT)
+    effective_timeout = min(timeout_seconds, _DEVICE_CODE_TIMEOUT)
+    deadline = time.time() + effective_timeout
     post = http_client.post if http_client is not None else httpx.post
 
     while time.time() < deadline:
@@ -200,6 +201,7 @@ def _poll_device_code(
         )
         if response.status_code == 200:
             return response.json()
+      
         if response.status_code in (403, 404):
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -208,7 +210,8 @@ def _poll_device_code(
             continue
         response.raise_for_status()
 
-    raise TimeoutError("Device code login timed out (15 minutes).")
+    minutes = int(effective_timeout // 60)
+    raise TimeoutError(f"Device code login timed out ({minutes} minutes).")
 
 
 @dataclass
@@ -642,7 +645,8 @@ class OpenAIOAuth(OpenAI):
                 return self.login_device_code(timeout_seconds=timeout_seconds)
             except _DeviceCodeNotSupported:
                 return self.login_manual(
-                    open_browser=False,
+                    open_browser=open_browser,
+                    timeout_seconds=timeout_seconds,
                     callback_port=callback_port,
                     callback_path=callback_path,
                     redirect_host=redirect_host,
@@ -764,12 +768,18 @@ class OpenAIOAuth(OpenAI):
             request_timeout=mgr.request_timeout,
         )
         device_auth_id = device_resp["device_auth_id"]
+       
         user_code = device_resp.get("user_code") or device_resp.get("usercode", "")
         try:
             interval = int(str(device_resp.get("interval", "5")).strip())
         except (TypeError, ValueError):
             interval = 5
-        verification_url = f"{mgr.issuer}/codex/device"
+        # Prefer server-provided URL if present, fall back to issuer default.
+        verification_url = (
+            device_resp.get("verification_uri")
+            or device_resp.get("verification_url")
+            or f"{mgr.issuer}/codex/device"
+        )
 
         print(
             f"\nSign in with your ChatGPT account:\n"
@@ -802,6 +812,7 @@ class OpenAIOAuth(OpenAI):
         self,
         *,
         open_browser: bool = True,
+        timeout_seconds: float = 300.0,
         input_fn: Any = input,
         callback_port: int = DEFAULT_OPENAI_OAUTH_CALLBACK_PORT,
         callback_path: str = DEFAULT_OPENAI_OAUTH_CALLBACK_PATH,
@@ -825,8 +836,29 @@ class OpenAIOAuth(OpenAI):
         if open_browser:
             webbrowser.open(auth_url)
 
+        deadline = time.time() + timeout_seconds
+
         for attempt in range(2):
-            raw = str(input_fn("Paste the redirect URL or authorization code: "))
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError("OAuth login timed out.")
+
+            read_result: Dict[str, Optional[str]] = {"value": None}
+            read_done = threading.Event()
+
+            def _reader() -> None:
+                try:
+                    read_result["value"] = str(input_fn("Paste the redirect URL or authorization code: "))
+                except (EOFError, OSError):
+                    pass
+                read_done.set()
+
+            threading.Thread(target=_reader, daemon=True).start()
+
+            if not read_done.wait(timeout=remaining):
+                raise TimeoutError("OAuth login timed out.")
+
+            raw = read_result["value"] or ""
             if not raw.strip():
                 if attempt == 0:
                     print("Invalid paste. Try again.")
