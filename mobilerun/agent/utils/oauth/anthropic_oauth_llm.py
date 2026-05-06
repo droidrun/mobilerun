@@ -524,11 +524,7 @@ class AnthropicOAuthLLM(CustomLLM):
         input_fn: Any = input,
         expires_in: Optional[int] = None,
     ) -> str:
-        """Headless OAuth flow for SSH/WSL environments.
-
-        Redirects to Anthropic's hosted callback page which displays the
-        authorization code on screen.
-        """
+        """Headless OAuth flow for SSH/WSL environments."""
         code_verifier, code_challenge = _pkce_pair()
         state = _b64_no_pad(secrets.token_bytes(32))
         redirect_uri = "https://platform.claude.com/oauth/code/callback"

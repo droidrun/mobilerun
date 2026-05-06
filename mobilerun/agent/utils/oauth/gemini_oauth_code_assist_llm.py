@@ -621,11 +621,7 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         input_fn: Any = input,
         prompt_consent: bool = True,
     ) -> str:
-        """Headless OAuth flow for SSH/WSL environments.
-
-        Redirects to Google's authcode page which displays the authorization
-        code on screen. The user copies that short code back to the terminal.
-        """
+        """Headless OAuth flow for SSH/WSL environments."""
         code_verifier, code_challenge = _pkce_pair()
         expected_state = secrets.token_hex(32)
         redirect_uri = "https://codeassist.google.com/authcode"

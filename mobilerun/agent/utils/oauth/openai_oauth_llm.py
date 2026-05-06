@@ -757,14 +757,7 @@ class OpenAIOAuth(OpenAI):
     ) -> OpenAIOAuthCredentials:
         """Device Code login for headless/SSH environments.
 
-        Uses the OAuth 2.0 Device Authorization Grant (RFC 8628). The user
-        opens a URL on any browser (phone, laptop, etc.) and enters a short
-        one-time code. The CLI polls until the auth completes — no redirect
-        back to localhost needed.
-
-        timeout_seconds is capped at _DEVICE_CODE_TIMEOUT (15 min) because
-        the server-issued code expires after that window.
-
+        timeout_seconds is capped at 15 min (device code expiry).
         Raises _DeviceCodeNotSupported if the server returns 404.
         """
         mgr = self._oauth_manager
