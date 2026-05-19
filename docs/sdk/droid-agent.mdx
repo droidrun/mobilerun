@@ -49,7 +49,7 @@ Initialize the MobileAgent wrapper.
   - `LLM`: Single LLM instance used for all agents
   - `None`: LLMs will be loaded from config.llm_profiles
 - `custom_tools` _dict_ - Custom tool definitions. Format: `{"tool_name": {"parameters": {...}, "description": "...", "function": callable}}`. These are merged with auto-generated credential tools.
-- `credentials` _Union[dict, CredentialManager, None]_ - Direct credential mapping `{"SECRET_ID": "value"}`, a CredentialManager instance, or None. If None, credentials will be loaded from config.credentials if available.
+- `credentials` _Union[dict, CredentialManager, None]_ - Direct credential mapping `{"SECRET_ID": "value"}`, source mapping such as `{"SECRET_ID": {"env": "ENV_VAR"}}` or `{"SECRET_ID": {"file": "/path/to/secret"}}`, a CredentialManager instance, or None. If None, credentials will be loaded from config.credentials if available.
 - `variables` _dict | None_ - Custom variables accessible throughout execution. Available in shared_state.custom_variables.
 - `output_model` _Type[BaseModel] | None_ - Pydantic model for structured output extraction from final answer. If provided, the final answer will be parsed into this model.
 - `prompts` _dict[str, str] | None_ - Custom Jinja2 prompt templates to override defaults. Keys: "fast_agent_system", "fast_agent_user", "manager_system", "executor_system". Values: Jinja2 template strings (NOT file paths).

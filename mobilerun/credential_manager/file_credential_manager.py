@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Any, Dict, Optional
 
 import yaml
@@ -15,6 +16,9 @@ logger = logging.getLogger("mobilerun")
 class FileCredentialManager(CredentialManager):
     """
     Credential manager that supports both dict and YAML file sources.
+
+    Secret values can be provided directly, read from environment variables, or
+    read from local secret files.
     """
 
     def __init__(self, credentials: Any):
@@ -59,13 +63,10 @@ class FileCredentialManager(CredentialManager):
     def _load_from_dict(self, credentials_dict: dict) -> Dict[str, str]:
         """Load credentials from in-memory dict."""
         secrets = {}
-        for secret_id, secret_value in credentials_dict.items():
-            if isinstance(secret_value, str) and secret_value:
-                secrets[secret_id] = secret_value
-            else:
-                logger.warning(
-                    f"Skipped invalid secret: {secret_id} (type={type(secret_value)})"
-                )
+        for secret_id, secret_data in credentials_dict.items():
+            value = self._resolve_secret_data(secret_id, secret_data)
+            if value:
+                secrets[secret_id] = value
         return secrets
 
     def _load_from_file(self, file_path: str) -> Dict[str, str]:
@@ -77,6 +78,10 @@ class FileCredentialManager(CredentialManager):
               MY_PASSWORD:
                 value: "secret123"
                 enabled: true
+              USERNAME:
+                env: APP_USERNAME
+              TOKEN:
+                file: ~/.config/my-app/token
               SIMPLE_KEY: "simple_value"  # Auto-enabled
 
         Returns:
@@ -92,22 +97,72 @@ class FileCredentialManager(CredentialManager):
 
         secrets = {}
         for secret_id, secret_data in data["secrets"].items():
-            if isinstance(secret_data, dict):
-                enabled = secret_data.get("enabled", True)
-                value = secret_data.get("value", "")
-            else:
-                enabled = True
-                value = secret_data
-
-            if enabled and value:
+            value = self._resolve_secret_data(secret_id, secret_data)
+            if value:
                 secrets[secret_id] = value
                 logger.debug(f"Loaded secret: {secret_id}")
-            else:
-                logger.debug(
-                    f"Skipped secret: {secret_id} (enabled={enabled}, has_value={bool(value)})"
-                )
 
         return secrets
+
+    def _resolve_secret_data(self, secret_id: str, secret_data: Any) -> Optional[str]:
+        """Resolve a secret entry without logging the resolved value."""
+        if isinstance(secret_data, str):
+            return secret_data or None
+
+        if not isinstance(secret_data, dict):
+            logger.warning(
+                f"Skipped invalid secret: {secret_id} (type={type(secret_data)})"
+            )
+            return None
+
+        enabled = secret_data.get("enabled", True)
+        if not enabled:
+            logger.debug(f"Skipped disabled secret: {secret_id}")
+            return None
+
+        if "value" in secret_data:
+            value = secret_data.get("value", "")
+            if isinstance(value, str) and value:
+                return value
+            logger.warning(f"Skipped secret '{secret_id}': empty or invalid value")
+            return None
+
+        if "env" in secret_data:
+            env_name = secret_data.get("env")
+            if not isinstance(env_name, str) or not env_name:
+                logger.warning(f"Skipped secret '{secret_id}': invalid env source")
+                return None
+            value = os.environ.get(env_name, "")
+            if value:
+                return value
+            logger.warning(
+                f"Skipped secret '{secret_id}': environment variable '{env_name}' is not set"
+            )
+            return None
+
+        if "file" in secret_data:
+            source_path = secret_data.get("file")
+            if not isinstance(source_path, str) or not source_path:
+                logger.warning(f"Skipped secret '{secret_id}': invalid file source")
+                return None
+            try:
+                resolved_path = PathResolver.resolve(source_path, must_exist=True)
+                with open(resolved_path, "r") as f:
+                    value = f.read().strip()
+            except Exception as exc:
+                logger.warning(
+                    f"Skipped secret '{secret_id}': could not read file source ({exc})"
+                )
+                return None
+            if value:
+                return value
+            logger.warning(f"Skipped secret '{secret_id}': file source is empty")
+            return None
+
+        logger.warning(
+            f"Skipped secret '{secret_id}': expected one of value, env, or file"
+        )
+        return None
 
     async def resolve_key(self, key: str) -> str:
         """Get secret value by key."""
