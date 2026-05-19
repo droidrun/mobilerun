@@ -10,7 +10,7 @@ Architecture:
 import logging
 import os
 import traceback
-from typing import TYPE_CHECKING, Awaitable, Type, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Type, Union
 
 from async_adbutils import adb
 from llama_index.core.llms.llm import LLM
@@ -100,6 +100,38 @@ logger = logging.getLogger("mobilerun")
 _COORDINATE_TOOL_NAMES = {"click_at", "click_area", "long_press_at"}
 
 
+class _StructuredOutputHandler:
+    """Awaitable wrapper that returns the parsed Pydantic output directly."""
+
+    def __init__(self, handler: WorkflowHandler, output_model: Type[BaseModel]):
+        self._handler = handler
+        self._output_model = output_model
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._handler, name)
+
+    def __await__(self):
+        return self._await_structured_output().__await__()
+
+    async def _await_structured_output(self) -> BaseModel:
+        result = await self._handler
+        structured_output = getattr(result, "structured_output", None)
+
+        if isinstance(structured_output, self._output_model):
+            return structured_output
+
+        if structured_output is None:
+            raise ValueError(
+                "Structured output was requested, but no structured output was "
+                f"produced. Final result: {getattr(result, 'reason', result)!r}"
+            )
+
+        raise TypeError(
+            "Structured output was produced, but it does not match "
+            f"{self._output_model.__name__}: {type(structured_output).__name__}"
+        )
+
+
 def _normalize_control_backend(control_backend: str | None) -> str | None:
     if control_backend is None:
         return None
@@ -171,6 +203,7 @@ class MobileAgent(Workflow):
             runtype=self.runtype,
         )
         self.output_model = output_model
+        self._return_structured_output_directly = False
 
         # Initialize prompt resolver for custom prompts
         self.prompt_resolver = PromptResolver(custom_prompts=prompts)
@@ -351,9 +384,32 @@ class MobileAgent(Workflow):
 
         logger.debug("✅ MobileAgent initialized successfully.")
 
-    def run(self, *args, **kwargs) -> Awaitable[ResultEvent] | WorkflowHandler:
+    def set_output_schema(self, output_model: Type[BaseModel]) -> "MobileAgent":
+        """
+        Configure a Pydantic schema and make await agent.run() return that model.
+
+        The constructor-level output_model keeps the existing ResultEvent return
+        shape. This setter enables the concise API requested by users:
+        agent.set_output_schema(MyModel); response = await agent.run().
+        """
+        if not isinstance(output_model, type) or not issubclass(output_model, BaseModel):
+            raise TypeError("output_model must be a Pydantic BaseModel subclass")
+
+        self.output_model = output_model
+        self._return_structured_output_directly = True
+
+        if self.manager_agent is not None:
+            self.manager_agent.output_model = output_model
+
+        return self
+
+    def run(
+        self, *args, **kwargs
+    ) -> Awaitable[ResultEvent | BaseModel] | WorkflowHandler | _StructuredOutputHandler:
         apply_session_context()
         handler = super().run(*args, **kwargs)  # type: ignore[assignment]
+        if self._return_structured_output_directly and self.output_model is not None:
+            return _StructuredOutputHandler(handler, self.output_model)
         return handler
 
     # ========================================================================

@@ -84,6 +84,28 @@ print(f"Invoice {invoice.invoice_number}: ${invoice.total_due}")
 
 ## Working with Results
 
+### Direct Model Return
+
+If you prefer `await agent.run()` to return your Pydantic model directly, configure
+the schema with `set_output_schema()`:
+
+```python
+from pydantic import BaseModel
+
+class AgentResponse(BaseModel):
+    success: bool
+    output: str | None = None
+
+agent = MobileAgent(
+    goal="Check whether the current screen shows a successful login",
+    config=MobileConfig(),
+)
+agent.set_output_schema(AgentResponse)
+
+response = await agent.run()
+print(response.success)
+```
+
 ### Accessing Data
 
 ```python

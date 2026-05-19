@@ -220,12 +220,26 @@ if result.success and result.structured_output:
     print(f"Condition: {weather.condition}")
 ```
 
+You can also use `set_output_schema()` when you want `await agent.run()` to
+return the Pydantic model directly:
+
+```python
+agent = MobileAgent(
+    goal="Open weather app and get current weather",
+    config=config,
+)
+agent.set_output_schema(WeatherInfo)
+
+weather: WeatherInfo = await agent.run()
+print(weather.temperature)
+```
+
 <a id="mobilerun.agent.droid.droid_agent.MobileAgent.run"></a>
 
 #### MobileAgent.run
 
 ```python
-async def run(*args, **kwargs) -> ResultEvent
+async def run(*args, **kwargs) -> ResultEvent | BaseModel
 ```
 
 Run the MobileAgent workflow.
@@ -237,6 +251,7 @@ Run the MobileAgent workflow.
   - `reason` (str): Success message or failure reason
   - `steps` (int): Number of steps executed
   - `structured_output` (Any): Parsed Pydantic model (if output_model provided, otherwise None)
+- The configured Pydantic model directly when `set_output_schema()` was used
 
 **Usage:**
 
