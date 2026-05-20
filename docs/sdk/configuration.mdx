@@ -216,6 +216,8 @@ from mobilerun import CredentialsConfig
 CredentialsConfig(
     enabled=True,                        # Enable credential manager
     file_path="config/credentials.yaml",  # Path to credentials file
+    env_keys=["PASSWORD"],               # Optional environment variable names/secret IDs
+    env_prefix="MOBILERUN_",             # Optional prefix for env-backed secrets
 )
 ```
 
@@ -294,6 +296,7 @@ agent = MobileAgent(
     }
 )
 # Agent can call type_secret("USERNAME", index) and type_secret("PASSWORD", index)
+# Agent can also type "{{USERNAME}}" or "{{PASSWORD}}" in regular type/type_text actions.
 ```
 
 ### Config Format
@@ -303,7 +306,9 @@ from mobilerun import MobileConfig, CredentialsConfig
 config = MobileConfig(
     credentials=CredentialsConfig(
         enabled=True,
-        file_path="config/credentials.yaml"
+        file_path="config/credentials.yaml",
+        env_keys=["PASSWORD"],
+        env_prefix="MOBILERUN_",
     )
 )
 
@@ -571,6 +576,8 @@ logging:
 credentials:
   enabled: false
   file_path: config/credentials.yaml
+  env_keys: []
+  env_prefix: ""
 ```
 
 ---
