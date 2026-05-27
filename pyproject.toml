@@ -13,7 +13,7 @@ dependencies = [
     "arize-phoenix>=12.3.0",
     "httpx>=0.27.0",
     "llama-index-callbacks-arize-phoenix>=0.6.1",
-    "llama-index-workflows==2.8.3",
+    "llama-index-workflows>=2.16.0",
     "aiofiles>=25.1.0",
     "textual>=6.11.0",
     "mcp>=1.26.0",
