@@ -399,6 +399,22 @@ class MobileAgent(Workflow):
         handler = super().run(*args, **kwargs)  # type: ignore[assignment]
         return handler
 
+    def set_output_schema(self, output_model: Type[BaseModel]) -> "MobileAgent":
+        """Configure the Pydantic model used for structured output extraction."""
+        if not isinstance(output_model, type) or not issubclass(
+            output_model, BaseModel
+        ):
+            raise TypeError("output_model must be a Pydantic BaseModel subclass")
+
+        self.output_model = output_model
+
+        if self.structured_output_llm is None:
+            self.structured_output_llm = self.fast_agent_llm
+        if self.manager_agent is not None:
+            self.manager_agent.output_model = output_model
+
+        return self
+
     # ========================================================================
     # start_handler — creates driver, registry, action_ctx
     # ========================================================================
