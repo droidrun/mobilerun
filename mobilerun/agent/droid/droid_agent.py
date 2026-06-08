@@ -554,6 +554,7 @@ class MobileAgent(Workflow):
                 tree_formatter=tree_formatter,
                 use_normalized=self.config.agent.use_normalized_coordinates,
                 stealth=stealth_enabled,
+                vision_enabled=vision_enabled,
             )
 
         # ── 3. Build tool registry ────────────────────────────────────

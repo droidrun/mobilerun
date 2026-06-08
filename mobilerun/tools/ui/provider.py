@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 from mobilerun_core_cli.driver.base import DeviceDisconnectedError
 
+from mobilerun.tools.helpers.images import fit_dimensions_to_max_side
 from mobilerun.tools.ui.state import UIState
 from mobilerun.tools.ui.stealth_state import StealthUIState
 
@@ -161,12 +162,14 @@ class AndroidStateProvider(StateProvider):
         use_normalized: bool = False,
         stealth: bool = False,
         ui_cls: "type[UIState] | None" = None,
+        vision_enabled: bool = False,
     ) -> None:
         super().__init__(driver)
         self.tree_filter = tree_filter
         self.tree_formatter = tree_formatter
         self.use_normalized = use_normalized
         self._ui_cls = ui_cls or (StealthUIState if stealth else UIState)
+        self.vision_enabled = vision_enabled
         # Android screenshots and input taps share device-pixel coordinates,
         # but only when not in normalized mode. ``use_normalized=True`` makes
         # ``UIState.convert_point`` treat inputs as [0-1000] normalized
@@ -243,6 +246,19 @@ class AndroidStateProvider(StateProvider):
             self.tree_formatter.format(filtered, combined_data["phone_state"])
         )
 
+        coordinate_scale_x = 1.0
+        coordinate_scale_y = 1.0
+        if self.vision_enabled and screen_width and screen_height:
+            # When the LLM receives a screenshot, the image is downscaled to
+            # fit MODEL_SCREENSHOT_MAX_SIDE. The LLM outputs coordinates in the
+            # downscaled space, so we must scale them back to device pixels
+            # before sending taps. ScreenshotOnlyStateProvider does the same.
+            display_width, display_height = fit_dimensions_to_max_side(
+                screen_width, screen_height
+            )
+            coordinate_scale_x = screen_width / display_width
+            coordinate_scale_y = screen_height / display_height
+
         return self._ui_cls(
             elements=elements,
             formatted_text=formatted_text,
@@ -251,4 +267,6 @@ class AndroidStateProvider(StateProvider):
             screen_width=screen_width,
             screen_height=screen_height,
             use_normalized=self.use_normalized,
+            coordinate_scale_x=coordinate_scale_x,
+            coordinate_scale_y=coordinate_scale_y,
         )
