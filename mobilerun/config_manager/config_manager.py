@@ -204,6 +204,8 @@ class CredentialsConfig:
 
     enabled: bool = False
     file_path: str = "config/credentials.yaml"
+    env_keys: List[str] = field(default_factory=list)
+    env_prefix: str = ""
 
 
 @dataclass

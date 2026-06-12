@@ -71,6 +71,7 @@ The following secret IDs are available for use with the type_secret action:
 {% endfor %}
 
 When the current subgoal requires typing a secret (password, API key, etc.), use `type_secret` with the appropriate secret_id instead of the regular `type` action.
+You can also type ordinary text that contains secret placeholders like `{% raw %}{{MY_PASSWORD}}{% endraw %}`; placeholders are resolved only during tool execution and logs keep the placeholder, not the secret value.
 {% endif %}
 
 ### Latest Action History ###

@@ -203,6 +203,10 @@ credentials:
   enabled: false
   # Path to credentials file (see config/credentials_example.yaml for format)
   file_path: config/credentials.yaml
+  # Optional environment variables to expose as credentials.
+  # With env_prefix set, PASSWORD reads from MOBILERUN_PASSWORD.
+  env_keys: []
+  env_prefix: ""
 
 # === MCP (Model Context Protocol) Settings ===
 # Connect to MCP servers to extend agent capabilities with external tools

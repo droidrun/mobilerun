@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.oneflows.app_starter_workflow import AppStarter
+from mobilerun.credential_manager.placeholders import resolve_credential_placeholders
 
 logger = logging.getLogger("mobilerun")
 
@@ -309,7 +310,11 @@ async def type_text(
 ) -> ActionResult:
     """Type text into an indexed element or the currently focused input."""
     try:
+        original_text = text
         pre_ui = await _macro_pre_ui(ctx)
+        text = await resolve_credential_placeholders(
+            text, getattr(ctx, "credential_manager", None)
+        )
         if index is not None and index != -1:
             x, y = ctx.ui.get_element_coords(index)
             await ctx.driver.tap(x, y)
@@ -324,7 +329,7 @@ async def type_text(
         if success:
             _record_macro_action(
                 ctx,
-                {"action_type": "input_text", "text": text, "clear": clear},
+                {"action_type": "input_text", "text": original_text, "clear": clear},
                 pre_ui=pre_ui,
             )
             return ActionResult(
@@ -343,12 +348,16 @@ async def type_text_direct(
 ) -> ActionResult:
     """Type text into the currently focused input."""
     try:
+        original_text = text
         pre_ui = await _macro_pre_ui(ctx)
+        text = await resolve_credential_placeholders(
+            text, getattr(ctx, "credential_manager", None)
+        )
         success = await ctx.driver.input_text(text, clear)
         if success:
             _record_macro_action(
                 ctx,
-                {"action_type": "input_text", "text": text, "clear": clear},
+                {"action_type": "input_text", "text": original_text, "clear": clear},
                 pre_ui=pre_ui,
             )
             return ActionResult(
