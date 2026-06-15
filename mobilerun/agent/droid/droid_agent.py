@@ -152,10 +152,10 @@ def _effective_disabled_tools(
                     )
         return [name for name in disabled_tools if name not in _COORDINATE_TOOL_NAMES]
     # Auto-unmask click_at only when (a) the caller didn't supply an explicit
-    # list, and (b) the provider's screenshot pixel space matches the driver's
-    # tap input space. iOS in normal mode is excluded — the screenshot is
-    # physical pixels while taps use XCTest points, so screenshot coords would
-    # tap the wrong location.
+    # list, and (b) the provider maps model-visible coordinates to the
+    # driver's tap input space (directly, or via the vision coordinate
+    # contract's convert_point scaling — both Android and iOS set the flag
+    # accordingly). Normalized mode keeps click_at masked.
     coords_align = getattr(state_provider, "screenshot_matches_input_coords", False)
     if vision_enabled and not explicit and coords_align:
         return [name for name in disabled_tools if name != "click_at"]

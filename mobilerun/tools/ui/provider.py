@@ -129,12 +129,12 @@ class StateProvider:
     """Base class — subclass to support different platforms."""
 
     supported: set[str] = set()
-    # True when raw screenshot pixel coordinates can be sent directly to driver
-    # tap actions without scaling (e.g. Android, where screenshot and input
-    # coords are both device pixels). iOS in normal mode is False — the
-    # screenshot is physical pixels while taps use XCTest points, so a model
-    # picking from the screenshot would tap the wrong location. Screenshot-only
-    # providers handle scaling explicitly via ``coordinate_scale_x/y``.
+    # True when coordinates a model derives from the screenshot map to the
+    # driver's tap input space — either directly (Android: screenshot and
+    # input coords are both device pixels) or via ``convert_point`` scaling
+    # (the vision coordinate contract; iOS sets this only when the contract
+    # is active, since its screenshots are physical pixels while taps use
+    # XCTest points). Gates the click_at auto-unmask with vision.
     screenshot_matches_input_coords: bool = False
     # True when the screenshot attached to LLM messages must first be resized
     # (with a labeled coordinate grid) into the deterministic coordinate space
@@ -320,4 +320,5 @@ class AndroidStateProvider(StateProvider):
             use_normalized=self.use_normalized,
             coordinate_scale_x=coordinate_scale_x,
             coordinate_scale_y=coordinate_scale_y,
+            coordinate_contract_active=bool(display_width and display_height),
         )

@@ -26,6 +26,7 @@ class UIState:
         use_normalized: bool = False,
         coordinate_scale_x: float = 1.0,
         coordinate_scale_y: float = 1.0,
+        coordinate_contract_active: bool = False,
     ) -> None:
         self.elements = elements
         self.formatted_text = formatted_text
@@ -36,6 +37,12 @@ class UIState:
         self.use_normalized = use_normalized
         self.coordinate_scale_x = coordinate_scale_x
         self.coordinate_scale_y = coordinate_scale_y
+        # Whether the vision coordinate contract (resized+grid screenshot,
+        # declared display space) was established for THIS snapshot. Read by
+        # the action-time guards instead of the provider's mutable flag, which
+        # a mid-action get_state() re-probe (e.g. macro pre-state) can change
+        # out of sync with this immutable snapshot.
+        self.coordinate_contract_active = coordinate_contract_active
 
     # -- element lookup ------------------------------------------------------
 

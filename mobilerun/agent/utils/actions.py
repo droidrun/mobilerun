@@ -76,7 +76,10 @@ def _model_space_dimensions(ctx: "ActionContext") -> tuple[float, float] | None:
     """
     if _uses_screenshot_only_coordinates(ctx):
         return None
-    if not getattr(ctx.state_provider, "resize_model_screenshot", False):
+    # Read the contract fact from the immutable UIState snapshot the tap uses,
+    # not the provider's mutable flag (a mid-action get_state re-probe can
+    # desync them).
+    if not getattr(ctx.ui, "coordinate_contract_active", False):
         return None
     if getattr(ctx.ui, "use_normalized", False):
         return None
@@ -116,10 +119,37 @@ def _validate_model_space_point(
         )
 
 
+def _require_active_coordinate_contract(ctx: "ActionContext") -> None:
+    """Reject coordinate actions when a provider needs the vision coordinate
+    contract for them to be safe, but it is inactive for the current state.
+
+    The tool registry is built once at startup, so a provider that exposes
+    ``click_at`` under vision (e.g. iOS) keeps it exposed even on a step where
+    ``get_state`` could not establish the contract (screenshot probe / UI tree
+    failure). On iOS that fallback sends a raw physical-pixel screenshot with a
+    1:1 point-space ``convert_point``, so a coordinate the model reads from the
+    image would tap the wrong location. Refuse it and let the model retry
+    (next step, or via element-index ``click``)."""
+    provider = ctx.state_provider
+    if not getattr(provider, "requires_active_contract_for_coords", False):
+        return
+    # Whether the contract holds is a property of the snapshot the tap uses,
+    # not the provider's mutable flag (a mid-action get_state re-probe — e.g.
+    # macro pre-state capture — can flip the provider attribute out of sync).
+    if getattr(ctx.ui, "coordinate_contract_active", False):
+        return
+    raise ValueError(
+        "Coordinate actions are unavailable for this step — the screen state "
+        "could not be captured fully. Use an element index with `click`, or "
+        "retry to get a fresh screen state."
+    )
+
+
 def _convert_action_point(
     x: int | float, y: int | float, *, ctx: "ActionContext"
 ) -> tuple[int, int]:
     _validate_screenshot_only_point(x, y, ctx=ctx)
+    _require_active_coordinate_contract(ctx)
     _validate_model_space_point(x, y, ctx=ctx)
     abs_x, abs_y = ctx.ui.convert_point(x, y)
     return int(round(abs_x)), int(round(abs_y))
