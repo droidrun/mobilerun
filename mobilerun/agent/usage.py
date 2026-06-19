@@ -13,14 +13,10 @@ SUPPORTED_PROVIDERS = [
     "Gemini",
     "GoogleGenAI",
     "GenAI",
-    "GeminiOAuthCodeAssistLLM",
-    "gemini_oauth_code_assist",
     "OpenAIResponses",
     "OpenAILike",
-    "OpenAIOAuth",
     "Anthropic",
     "Anthropic_LLM",
-    "AnthropicOAuthLLM",
     "Ollama",
 ]
 
@@ -71,14 +67,8 @@ def get_usage_from_response(provider: str, chat_rsp: ChatResponse) -> UsageResul
         "Gemini",
         "GoogleGenAI",
         "GenAI",
-        "GeminiOAuthCodeAssistLLM",
-        "gemini_oauth_code_assist",
     }:
-        usage = (
-            rsp.get("response", {}).get("usageMetadata", {})
-            if provider in ("GeminiOAuthCodeAssistLLM", "gemini_oauth_code_assist")
-            else rsp["usage_metadata"]
-        )
+        usage = rsp["usage_metadata"]
         return UsageResult(
             request_tokens=_usage_field(
                 usage, "promptTokenCount", "prompt_token_count"
@@ -99,7 +89,7 @@ def get_usage_from_response(provider: str, chat_rsp: ChatResponse) -> UsageResul
             total_tokens=usage.total_tokens,
             requests=1,
         )
-    elif provider in ("OpenAIResponses", "OpenAIOAuth"):
+    elif provider == "OpenAIResponses":
         usage = getattr(rsp, "usage", None)
         if usage is None:
             return UsageResult(
@@ -111,7 +101,7 @@ def get_usage_from_response(provider: str, chat_rsp: ChatResponse) -> UsageResul
             total_tokens=getattr(usage, "total_tokens", 0) or 0,
             requests=1,
         )
-    elif provider in {"Anthropic", "Anthropic_LLM", "AnthropicOAuthLLM"}:
+    elif provider in {"Anthropic", "Anthropic_LLM"}:
         usage = rsp["usage"]
         input_tokens = _usage_field(usage, "input_tokens")
         output_tokens = _usage_field(usage, "output_tokens")

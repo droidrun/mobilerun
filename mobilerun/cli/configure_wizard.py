@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import click
 from rich.console import Console
@@ -37,13 +35,6 @@ _ALL_CONFIG_ROLES = (
     "app_opener",
     "structured_output",
 )
-
-
-@dataclass
-class ConfigureWizardCallbacks:
-    run_openai_oauth_login: Callable[..., None]
-    run_anthropic_oauth_login: Callable[..., None]
-    run_gemini_oauth_login: Callable[..., None]
 
 
 @dataclass
@@ -200,51 +191,6 @@ def _prompt_api_key_for_variant(variant: Any) -> tuple[str, str]:
     return text_prompt("API key", secret=True), "file"
 
 
-# OAuth variants share one auth-profiles.json file but store tokens under
-# distinct nested slots. Detection must be slot-aware: the file existing (e.g.
-# from another provider, or the deprecated gemini "geminiOauth" slot) does NOT
-# mean THIS variant has usable credentials.
-_OAUTH_CREDENTIAL_SLOTS = {
-    "gemini_oauth_code_assist": "geminiAntigravityOauth",
-    "openai_oauth": "openaiOauth",
-    "anthropic_oauth": "claudeAiOauth",
-}
-
-
-def _oauth_credentials_present(credential_path: str, variant_id: str) -> bool:
-    path = Path(credential_path).expanduser()
-    if not path.exists():
-        return False
-    slot = _OAUTH_CREDENTIAL_SLOTS.get(variant_id)
-    if not slot:
-        return True  # unknown variant: fall back to file presence
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    nested = data.get(slot) if isinstance(data, dict) else None
-    if not isinstance(nested, dict):
-        return False
-    # Token field names vary by provider: gemini access_token/refresh_token,
-    # anthropic accessToken/refreshToken, openai access/refresh. Accept any.
-    for key, val in nested.items():
-        kl = key.lower()
-        if val and ("token" in kl or kl in ("access", "refresh")):
-            return True
-    return False
-
-
-def _prompt_oauth_credential_action(credential_path: str) -> str:
-    return _select_with_back(
-        "OAuth credentials found",
-        [
-            SelectChoice(value="use_existing", label="Use existing login"),
-            SelectChoice(value="login_again", label="Log in again"),
-        ],
-        default="use_existing",
-    )
-
-
 def _apply_model_selection(
     config,
     *,
@@ -268,25 +214,6 @@ def _apply_model_selection(
         credential_path=credential_path,
     )
     apply_selection_to_roles(config, selection, _ALL_CONFIG_ROLES)
-
-
-def _prepare_variant_auth(
-    *,
-    callbacks: ConfigureWizardCallbacks,
-    variant: Any,
-    credential_path: str | None,
-    selected_model: str,
-) -> None:
-    if variant.id == "openai_oauth" and credential_path:
-        callbacks.run_openai_oauth_login(
-            credential_path=credential_path, model=selected_model
-        )
-    elif variant.id == "anthropic_oauth" and credential_path:
-        callbacks.run_anthropic_oauth_login(credential_path=credential_path)
-    elif variant.id == "gemini_oauth_code_assist" and credential_path:
-        callbacks.run_gemini_oauth_login(
-            credential_path=credential_path, model=selected_model
-        )
 
 
 def _set_profile_max_tokens(profile: Any, value: int) -> None:
@@ -423,7 +350,6 @@ def _configure_advanced_settings(
 def _configure_provider_model(
     console: Console,
     config,
-    callbacks: ConfigureWizardCallbacks,
     state: ConfigureWizardState,
     families,
     family_labels: dict[str, str],
@@ -559,34 +485,8 @@ def _configure_provider_model(
                 state.selected_base_url = text_prompt(
                     "Base URL", default=variant.base_url or "", secret=False
                 )
-        if (
-            credential_path
-            and variant.auth_mode == "oauth"
-            and state.prepared_auth_variant_id != variant.id
-            and _oauth_credentials_present(credential_path, variant.id)
-        ):
-            if non_interactive:
-                state.prepared_auth_variant_id = variant.id
-            else:
-                oauth_action = _prompt_oauth_credential_action(credential_path)
-                if oauth_action == _BACK:
-                    if model_is_fixed:
-                        return False
-                    state.selected_model = None
-                    continue
-                if oauth_action == "use_existing":
-                    state.prepared_auth_variant_id = variant.id
 
         # --- Apply ---
-        if credential_path and state.prepared_auth_variant_id != variant.id:
-            _prepare_variant_auth(
-                callbacks=callbacks,
-                variant=variant,
-                credential_path=credential_path,
-                selected_model=state.selected_model,
-            )
-            state.prepared_auth_variant_id = variant.id
-
         _apply_model_selection(
             config,
             family_id=state.family_id,
@@ -603,7 +503,6 @@ def _configure_provider_model(
 
 def run_configure_wizard(
     console: Console,
-    callbacks: ConfigureWizardCallbacks,
     *,
     provider: str | None,
     auth_mode: str | None,
@@ -643,7 +542,6 @@ def run_configure_wizard(
         provider_configured = _configure_provider_model(
             console,
             config,
-            callbacks,
             state,
             families,
             family_labels,
@@ -690,7 +588,6 @@ def run_configure_wizard(
             completed = _configure_provider_model(
                 console,
                 config,
-                callbacks,
                 state,
                 families,
                 family_labels,

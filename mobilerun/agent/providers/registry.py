@@ -4,11 +4,6 @@ from mobilerun.agent.providers.types import (
     ProviderFamilySpec,
     ProviderVariantSpec,
 )
-from mobilerun.config_manager.credential_paths import (
-    ANTHROPIC_OAUTH_CREDENTIAL_PATH,
-    GEMINI_OAUTH_CREDENTIAL_PATH,
-    OPENAI_OAUTH_CREDENTIAL_PATH,
-)
 
 # Canonical mapping from variant ID to env-key slot name.
 # Imported by setup_service, configure_wizard, config_manager, and TUI.
@@ -40,22 +35,6 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 ),
                 requires_api_key=True,
             ),
-            ProviderVariantSpec(
-                id="gemini_oauth_code_assist",
-                runtime_provider_name="gemini_oauth_code_assist",
-                auth_mode="oauth",
-                # Antigravity consumer entitlement; ids from fetchAvailableModels.
-                default_model="gemini-3.5-flash-low",
-                models=(
-                    "gemini-3.5-flash-low",
-                    "gemini-3.5-flash-extra-low",
-                    "gemini-3-flash-agent",
-                    "gemini-3-flash",
-                    "gemini-pro-agent",
-                    "gemini-3.1-pro-low",
-                ),
-                credential_path=str(GEMINI_OAUTH_CREDENTIAL_PATH),
-            ),
         ),
     ),
     ProviderFamilySpec(
@@ -75,20 +54,7 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 ),
                 requires_api_key=True,
             ),
-            ProviderVariantSpec(
-                id="openai_oauth",
-                runtime_provider_name="openai_oauth",
-                auth_mode="oauth",
-                default_model="gpt-5.5",
-                models=(
-                    "gpt-5.5",
-                    "gpt-5.4",
-                    "gpt-5.4-mini",
-                ),
-                credential_path=str(OPENAI_OAUTH_CREDENTIAL_PATH),
-            ),
         ),
-        notes=("OpenAI OAuth uses a restricted model catalog.",),
     ),
     ProviderFamilySpec(
         id="anthropic",
@@ -106,20 +72,6 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                     "claude-haiku-4-5",
                 ),
                 requires_api_key=True,
-            ),
-            ProviderVariantSpec(
-                id="anthropic_oauth",
-                runtime_provider_name="anthropic_oauth",
-                auth_mode="oauth",
-                default_model="claude-opus-4-7",
-                models=(
-                    "claude-opus-4-7",
-                    "claude-opus-4-8",
-                    "claude-sonnet-4-6",
-                    "claude-opus-4-6",
-                    "claude-haiku-4-5",
-                ),
-                credential_path=str(ANTHROPIC_OAUTH_CREDENTIAL_PATH),
             ),
         ),
     ),
@@ -265,8 +217,6 @@ def normalize_model_id_for_variant(
     alias_prefixes: tuple[str, ...] = ()
     if family_id == "openai" and auth_mode == "api_key":
         alias_prefixes = ("openai/",)
-    elif family_id == "openai" and auth_mode == "oauth":
-        alias_prefixes = ("openai-codex/", "openai/")
 
     for prefix in alias_prefixes:
         if model_id.startswith(prefix):

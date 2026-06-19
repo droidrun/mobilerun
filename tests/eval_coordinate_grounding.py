@@ -36,15 +36,15 @@ from mobilerun.tools.ui.provider import (
 )
 
 PROVIDERS = [
-    ("openai", "openai_oauth", "gpt-5.4-mini"),
-    ("anthropic", "anthropic_oauth", "claude-opus-4-7"),
+    ("openai", "OpenAIResponses", "gpt-5.4-mini"),
+    ("anthropic", "Anthropic", "claude-opus-4-8"),
     # claude-sonnet-4-6 uses Anthropic's standard 1568 visual-token budget, so it
     # downsizes a 2048-declared screenshot and would undershoot ~23% without the
     # per-model resize policy (issue #365). Keep it here so the eval covers an
-    # AFFECTED model, not just the high-res opus-4-7 that masked the bug.
-    ("anthropic", "anthropic_oauth", "claude-sonnet-4-6"),
-    # gemini_oauth_code_assist quota is too tight for repeated vision calls;
-    # add it back when evaluating Gemini support.
+    # AFFECTED model, not just the high-res opus that masked the bug.
+    ("anthropic", "Anthropic", "claude-sonnet-4-6"),
+    # GoogleGenAI Gemini vision quota is tight for repeated calls; add it back
+    # when evaluating Gemini support.
 ]
 MAX_TARGETS = 4
 

@@ -78,16 +78,6 @@ def test_zai_alias_uses_openai_like_transport_defaults() -> None:
     assert llm.api_base == "https://api.z.ai/api/paas/v4"
 
 
-def test_openai_oauth_rejects_unsupported_codex_model() -> None:
-    with pytest.raises(ValueError, match="not supported with OpenAI OAuth"):
-        load_llm("openai_oauth", model="gpt-5.3-codex")
-
-
-def test_gemini_oauth_rejects_unsupported_flash_3_5_model() -> None:
-    with pytest.raises(ValueError, match="deprecated gemini-cli Code Assist"):
-        load_llm("gemini_oauth_code_assist", model="gemini-3.5-flash")
-
-
 @pytest.mark.parametrize("model", ["claude-opus-4-8", "claude-opus-4-6"])
 def test_anthropic_opus_4_omits_default_temperature(model: str) -> None:
     llm = load_llm(
