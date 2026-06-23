@@ -11,10 +11,15 @@ _SUCCESS_ATTR_RE = re.compile(
     r"""\bsuccess\s*=\s*(?P<quote>["'])(?P<value>true|false)(?P=quote)""",
     re.IGNORECASE | re.DOTALL,
 )
+_SUCCESS_ATTR_PRESENT_RE = re.compile(r"\bsuccess\s*=", re.IGNORECASE | re.DOTALL)
 _FINAL_TAG_RE = re.compile(
     r"<(?P<tag>request_accomplished|answer)\b(?P<attrs>[^>]*)>"
     r"(?P<body>.*?)"
     r"</(?P=tag)>",
+    re.IGNORECASE | re.DOTALL,
+)
+_FINAL_OPEN_TAG_RE = re.compile(
+    r"<(?P<tag>request_accomplished|answer)\b(?P<attrs>[^>]*)>",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -24,6 +29,7 @@ class ManagerResponseValidation:
     is_valid: bool
     error_message: str | None = None
     can_continue_with_plan: bool = False
+    can_accept_final_without_success: bool = False
 
 
 class ManagerResponseValidationError(RuntimeError):
@@ -52,6 +58,18 @@ def _success_from_attrs(attrs: str) -> bool | None:
 def strip_manager_final_tags(response: str) -> str:
     """Remove final answer tags while leaving reasoning and plan tags intact."""
     return _FINAL_TAG_RE.sub("", response).strip()
+
+
+def add_default_success_to_final_tag(response: str) -> str:
+    """Add success=true to a final tag that omitted the success attribute."""
+
+    def replace(match: re.Match[str]) -> str:
+        attrs = match.group("attrs")
+        if _SUCCESS_ATTR_PRESENT_RE.search(attrs):
+            return match.group(0)
+        return f'<{match.group("tag")}{attrs} success="true">'
+
+    return _FINAL_OPEN_TAG_RE.sub(replace, response, count=1)
 
 
 def parse_manager_response(response: str) -> dict:
@@ -115,9 +133,12 @@ def parse_manager_response(response: str) -> dict:
     answer = _tag_content(final_match) if final_match else ""
     success = None
     final_tag = None
+    success_attr_present = False
     if final_match:
         final_tag = final_match.group("tag").lower()
-        success = _success_from_attrs(final_match.group("attrs"))
+        final_attrs = final_match.group("attrs")
+        success_attr_present = bool(_SUCCESS_ATTR_PRESENT_RE.search(final_attrs))
+        success = _success_from_attrs(final_attrs)
 
     final_counts = {
         tag: sum(1 for match in final_matches if match.group("tag").lower() == tag)
@@ -161,6 +182,7 @@ def parse_manager_response(response: str) -> dict:
         "current_subgoal": current_subgoal,
         "answer": answer,
         "success": success,
+        "success_attr_present": success_attr_present,
         "progress_summary": progress_summary,
         "final_tag": final_tag,
         "tag_counts": {
@@ -177,6 +199,7 @@ def validate_manager_response(parsed: dict) -> ManagerResponseValidation:
     plan = (parsed.get("plan") or "").strip()
     answer = (parsed.get("answer") or "").strip()
     success = parsed.get("success")
+    success_attr_present = bool(parsed.get("success_attr_present"))
     tag_counts = parsed.get("tag_counts") or {}
     plan_count = tag_counts.get("plan", 1 if plan else 0)
     final_count = tag_counts.get("final", 1 if answer else 0)
@@ -223,6 +246,7 @@ def validate_manager_response(parsed: dict) -> ManagerResponseValidation:
                 is_valid=False,
                 error_message='Final answer tag must include success="true" '
                 'or success="false".',
+                can_accept_final_without_success=not success_attr_present,
             )
         return ManagerResponseValidation(is_valid=True)
 

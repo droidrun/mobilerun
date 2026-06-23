@@ -62,6 +62,7 @@ def test_parse_answer_alias_and_missing_success_stays_none():
 
     assert parsed["answer"] == "Done"
     assert parsed["success"] is None
+    assert parsed["success_attr_present"] is False
     assert parsed["final_tag"] == "answer"
 
 
@@ -79,6 +80,16 @@ def test_validate_rejects_plan_plus_final_answer_but_can_continue_with_plan():
     assert not validation.is_valid
     assert validation.can_continue_with_plan
     assert "exactly one" in validation.error_message
+
+
+def test_validate_missing_success_final_answer_can_fallback_to_success():
+    validation = validate_manager_response(
+        parse_manager_response("<answer>Done</answer>")
+    )
+
+    assert not validation.is_valid
+    assert validation.can_accept_final_without_success
+    assert "success" in validation.error_message
 
 
 @pytest.mark.parametrize(
@@ -228,9 +239,53 @@ def test_stateful_manager_raises_validation_error_after_retry_exception(monkeypa
         _run(
             _stateful_manager()._validate_and_retry(
                 [ChatMessage(role="user", content="prompt")],
-                "<answer>Done</answer>",
+                "<answer success='maybe'>Done</answer>",
             )
         )
+
+
+def test_stateful_manager_normalizes_missing_success_after_retry_exhaustion(
+    monkeypatch,
+):
+    async def fake_acall(llm, messages, stream=False):
+        return _response("<answer>Done</answer>")
+
+    monkeypatch.setattr(
+        "mobilerun.agent.manager.manager_agent.acall_with_retries", fake_acall
+    )
+
+    output = _run(
+        _stateful_manager()._validate_and_retry(
+            [ChatMessage(role="user", content="prompt")],
+            "<answer>Done</answer>",
+        )
+    )
+
+    parsed = parse_manager_response(output)
+    assert parsed["answer"] == "Done"
+    assert parsed["success"] is True
+
+
+def test_stateful_manager_normalizes_missing_success_after_retry_exception(
+    monkeypatch,
+):
+    async def fake_acall(llm, messages, stream=False):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(
+        "mobilerun.agent.manager.manager_agent.acall_with_retries", fake_acall
+    )
+
+    output = _run(
+        _stateful_manager()._validate_and_retry(
+            [ChatMessage(role="user", content="prompt")],
+            "<answer>Done</answer>",
+        )
+    )
+
+    parsed = parse_manager_response(output)
+    assert parsed["answer"] == "Done"
+    assert parsed["success"] is True
 
 
 def test_stateful_manager_strips_final_answer_after_retry_exception(monkeypatch):
@@ -279,7 +334,7 @@ def test_stateless_manager_strips_final_answer_after_retry_exhaustion(monkeypatc
 
 def test_stateless_manager_raises_validation_error_after_retry_exhaustion(monkeypatch):
     async def fake_acall(llm, messages):
-        return _response("<answer>Done</answer>")
+        return _response("<answer success='maybe'>Done</answer>")
 
     monkeypatch.setattr(
         "mobilerun.agent.manager.stateless_manager_agent.acall_with_retries", fake_acall
@@ -289,7 +344,7 @@ def test_stateless_manager_raises_validation_error_after_retry_exhaustion(monkey
         _run(
             _stateless_manager()._validate_and_retry(
                 [{"role": "user", "content": [{"text": "prompt"}]}],
-                "<answer>Done</answer>",
+                "<answer success='maybe'>Done</answer>",
             )
         )
 

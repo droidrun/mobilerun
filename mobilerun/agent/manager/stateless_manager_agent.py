@@ -21,6 +21,7 @@ from mobilerun.agent.manager.events import (
 )
 from mobilerun.agent.manager.prompts import (
     ManagerResponseValidationError,
+    add_default_success_to_final_tag,
     parse_manager_response,
     strip_manager_final_tags,
     validate_manager_response,
@@ -154,6 +155,8 @@ class StatelessManagerAgent(Workflow):
                 logger.error(f"LLM retry failed: {e}")
                 if validation.can_continue_with_plan:
                     return strip_manager_final_tags(output)
+                if validation.can_accept_final_without_success:
+                    return add_default_success_to_final_tag(output)
                 raise ManagerResponseValidationError(error_message) from e
 
         validation = validate_manager_response(parsed)
@@ -165,6 +168,12 @@ class StatelessManagerAgent(Workflow):
                 "and ignoring the conflicting final answer."
             )
             return strip_manager_final_tags(output)
+        if validation.can_accept_final_without_success:
+            logger.warning(
+                "Manager response omitted final success after retries; accepting the "
+                "terminal answer as success for backward compatibility."
+            )
+            return add_default_success_to_final_tag(output)
 
         raise ManagerResponseValidationError(
             validation.error_message or "Invalid manager response."
