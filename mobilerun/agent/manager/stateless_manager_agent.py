@@ -19,7 +19,13 @@ from mobilerun.agent.manager.events import (
     ManagerPlanDetailsEvent,
     ManagerResponseEvent,
 )
-from mobilerun.agent.manager.prompts import parse_manager_response
+from mobilerun.agent.manager.prompts import (
+    ManagerResponseValidationError,
+    add_default_success_to_final_tag,
+    parse_manager_response,
+    strip_manager_final_tags,
+    validate_manager_response,
+)
 from mobilerun.agent.usage import get_usage_from_response
 from mobilerun.agent.utils.chat_utils import to_chat_messages
 from mobilerun.agent.utils.inference import acall_with_retries
@@ -124,54 +130,54 @@ class StatelessManagerAgent(Workflow):
         retry_count = 0
 
         while retry_count < max_retries:
-            error_message = None
+            validation = validate_manager_response(parsed)
+            if validation.is_valid:
+                return output
 
-            if parsed["answer"] and not parsed["plan"]:
-                if parsed["success"] is None:
-                    error_message = (
-                        'You must include success="true" or success="false" attribute '
-                        "in the <answer> or <request_accomplished> tag.\n"
-                        'Example: <answer success="true">Task completed</answer>\n'
-                        "Retry again."
-                    )
-                else:
-                    break
-            elif parsed["plan"] and parsed["answer"]:
-                error_message = (
-                    "You cannot include both <plan> and <answer> tags. "
-                    "Use <answer> only when the task is complete.\n"
-                    "Retry again."
-                )
-            elif not parsed["plan"] and not parsed["answer"]:
-                error_message = (
-                    "You must provide either a <plan> or an <answer>. "
-                    "Please provide a plan with numbered steps."
-                )
-            else:
-                break
+            error_message = f"{validation.error_message}\nRetry again."
+            retry_count += 1
+            logger.warning(
+                f"Manager response invalid (retry {retry_count}/{max_retries}): {error_message}"
+            )
 
-            if error_message:
-                retry_count += 1
-                logger.warning(
-                    f"Manager response invalid (retry {retry_count}/{max_retries}): {error_message}"
-                )
+            retry_messages = messages + [
+                {"role": "assistant", "content": [{"text": output}]},
+                {"role": "user", "content": [{"text": error_message}]},
+            ]
 
-                retry_messages = messages + [
-                    {"role": "assistant", "content": [{"text": output}]},
-                    {"role": "user", "content": [{"text": error_message}]},
-                ]
+            chat_messages = to_chat_messages(retry_messages)
 
-                chat_messages = to_chat_messages(retry_messages)
+            try:
+                response = await acall_with_retries(self.llm, chat_messages)
+                output = response.message.content
+                parsed = parse_manager_response(output)
+            except Exception as e:
+                logger.error(f"LLM retry failed: {e}")
+                if validation.can_continue_with_plan:
+                    return strip_manager_final_tags(output)
+                if validation.can_accept_final_without_success:
+                    return add_default_success_to_final_tag(output)
+                raise ManagerResponseValidationError(error_message) from e
 
-                try:
-                    response = await acall_with_retries(self.llm, chat_messages)
-                    output = response.message.content
-                    parsed = parse_manager_response(output)
-                except Exception as e:
-                    logger.error(f"LLM retry failed: {e}")
-                    break
+        validation = validate_manager_response(parsed)
+        if validation.is_valid:
+            return output
+        if validation.can_continue_with_plan:
+            logger.warning(
+                "Manager response stayed invalid after retries; continuing with the plan "
+                "and ignoring the conflicting final answer."
+            )
+            return strip_manager_final_tags(output)
+        if validation.can_accept_final_without_success:
+            logger.warning(
+                "Manager response omitted final success after retries; accepting the "
+                "terminal answer as success for backward compatibility."
+            )
+            return add_default_success_to_final_tag(output)
 
-        return output
+        raise ManagerResponseValidationError(
+            validation.error_message or "Invalid manager response."
+        )
 
     @step
     async def prepare_context(

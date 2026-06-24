@@ -98,7 +98,7 @@ If an `<external_user_message>` block is present, it contains live corrections o
 Carefully assess the current status and the provided screenshot. Check if the current plan needs to be revised.
 Determine if the user request has been fully completed. If you are confident that no further actions are required and the task succeeded, use the request_accomplished tag with success="true" and a confirmation message. If the task failed and cannot be completed, use success="false" with an explanation. If the user request is not finished, update the plan and don't use the request_accomplished tag. If you are stuck with errors, think step by step about whether the overall plan needs to be revised to address the error.
 NOTE: 1. If the current situation prevents proceeding with the original plan or requires clarification from the user, make reasonable assumptions and revise the plan accordingly. Act as though you are the user in such cases. 2. Please refer to the helpful information and steps in the Guidelines first for planning. 3. If the first subgoal in plan has been completed, please update the plan in time according to the screenshot and progress to ensure that the next subgoal is always the first item in the plan. 4. If the first subgoal is not completed, please copy the previous round's plan or update the plan based on the completion of the subgoal.
-Provide your output in the following format, which contains four or five parts:
+Provide your output in the following format. Include <thought>, optionally include <add_memory>, and then include exactly one of <plan> or <request_accomplished>. Do not include both <plan> and <request_accomplished>.
 
 <thought>
 An explanation of your rationale for the updated plan and current subgoal.
@@ -114,8 +114,10 @@ Store important information here with step context for later reference.
 </add_memory>
 
 <plan>
-Please update or copy the existing plan according to the current page and progress. Please pay close attention to the historical operations. Please do not repeat the plan of completed content unless you can judge from the screen status that a subgoal is indeed not completed.
+Use this tag only when the user request is not finished. Please update or copy the existing plan according to the current page and progress. Please pay close attention to the historical operations. Please do not repeat the plan of completed content unless you can judge from the screen status that a subgoal is indeed not completed.
 </plan>
+
+OR (if the request is complete or cannot proceed, do not include <plan>):
 
 <request_accomplished success="true">
 Use this tag ONLY after successfully completing the user's request through concrete actions, not at the beginning or for planning.

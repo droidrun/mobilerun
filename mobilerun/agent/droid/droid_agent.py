@@ -42,6 +42,7 @@ from mobilerun.agent.external import load_agent
 from mobilerun.agent.fast_agent import FastAgent
 from mobilerun.agent.fast_agent.events import FastAgentOutputEvent
 from mobilerun.agent.manager import ManagerAgent, StatelessManagerAgent
+from mobilerun.agent.manager.prompts import ManagerResponseValidationError
 from mobilerun.agent.oneflows.structured_output_agent import StructuredOutputAgent
 from mobilerun.agent.trajectory import TrajectoryWriter
 from mobilerun.agent.utils.llm_loader import (
@@ -879,6 +880,9 @@ class MobileAgent(Workflow):
         except DeviceDisconnectedError as e:
             logger.error(f"Device disconnected: {e}")
             return FinalizeEvent(success=False, reason=f"Device disconnected: {e}")
+        except ManagerResponseValidationError as e:
+            logger.error(f"Manager response validation failed: {e}")
+            return FinalizeEvent(success=False, reason=str(e))
 
         event = ManagerPlanEvent(
             plan=result["plan"],
@@ -904,7 +908,7 @@ class MobileAgent(Workflow):
                     extra={"color": "cyan"},
                 )
                 return ManagerInputEvent()
-            success = ev.success if ev.success is not None else True
+            success = ev.success if ev.success is not None else False
             self.shared_state.progress_summary = f"Answer: {ev.answer}"
             return FinalizeEvent(success=success, reason=ev.answer)
 

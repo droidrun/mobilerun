@@ -104,6 +104,8 @@ You can reference these custom actions or tell the Executer agent to use them in
 
 ## Output Format
 
+Always include `<thought>`, optionally include `<add_memory>`, and then include exactly one of `<plan>` or `<request_accomplished>`. Do not include both <plan> and <request_accomplished>.
+
 <thought>
 Explain your reasoning for the plan and next subgoal.
 </thought>
@@ -119,6 +121,8 @@ Example: "At step 5, I obtained recipe from recipes.jpg: Chicken Pasta - ingredi
 3. Third subgoal
 ...
 </plan>
+
+OR (if the request is complete or cannot proceed, do not include `<plan>`):
 
 <request_accomplished success="true">
 Use ONLY when request is fully completed successfully. Include confirmation message of what was accomplished.
