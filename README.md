@@ -47,7 +47,7 @@
 </p>
 
 - 🤖 Control Android and iOS devices with natural language commands
-- 🔀 Use OpenAI, Anthropic, Gemini, Ollama, DeepSeek, OpenRouter, and OpenAI-compatible models
+- 🔀 Use OpenAI, Anthropic, Gemini, Ollama, DeepSeek, OpenRouter, LiteLLM, and OpenAI-compatible models
 - 🧠 Run direct tasks or enable reasoning mode for complex multi-step automation
 - 💻 Automate from the CLI, a terminal UI, Docker, or Python code
 - 🐍 Extend agents with custom tools, structured output, app cards, and credentials
@@ -76,6 +76,12 @@ Most LLM providers are included by default. For Anthropic support, install the o
 
 ```bash
 uv tool install "mobilerun[anthropic]"
+```
+
+For LiteLLM support (access to 100+ providers via a unified interface):
+
+```bash
+uv tool install "mobilerun[litellm]"
 ```
 
 ## 🚀 Quickstart

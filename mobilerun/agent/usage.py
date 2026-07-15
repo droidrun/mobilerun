@@ -22,11 +22,13 @@ SUPPORTED_PROVIDERS = [
     "Anthropic_LLM",
     "AnthropicOAuthLLM",
     "Ollama",
+    "LiteLLM",
 ]
 
 PROVIDER_ALIASES = {
     "MobilerunAnthropic": "Anthropic",
     "MobilerunOpenAIResponses": "OpenAIResponses",
+    "MobilerunLiteLLM": "LiteLLM",
     "openai_responses_llm": "OpenAIResponses",
     "Ollama_llm": "Ollama",
 }
@@ -129,6 +131,21 @@ def get_usage_from_response(provider: str, chat_rsp: ChatResponse) -> UsageResul
             request_tokens=prompt_eval_count,
             response_tokens=eval_count,
             total_tokens=prompt_eval_count + eval_count,
+            requests=1,
+        )
+    elif provider == "LiteLLM":
+        usage = getattr(rsp, "usage", None) or (rsp.get("usage") if isinstance(rsp, dict) else None)
+        if usage is None:
+            return UsageResult(
+                request_tokens=0, response_tokens=0, total_tokens=0, requests=1
+            )
+        prompt_tokens = _usage_field(usage, "prompt_tokens")
+        completion_tokens = _usage_field(usage, "completion_tokens")
+        total_tokens = _usage_field(usage, "total_tokens")
+        return UsageResult(
+            request_tokens=prompt_tokens,
+            response_tokens=completion_tokens,
+            total_tokens=total_tokens or (prompt_tokens + completion_tokens),
             requests=1,
         )
     raise ValueError(f"Unsupported provider: {provider}")
