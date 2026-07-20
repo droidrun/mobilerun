@@ -187,6 +187,80 @@ async def _macro_pre_ui_after_focus_tap(ctx: "ActionContext"):
     return await _macro_pre_ui(ctx)
 
 
+def _normalize_input_text(value: object) -> str:
+    return str(value or "").replace("\u200b", "").replace("\ufeff", "")
+
+
+async def _verify_text_input(
+    text: str, clear: bool, *, ctx: "ActionContext"
+) -> bool | None:
+    """Return True/False for observable fields, or None when readback is unavailable."""
+    state_provider = getattr(ctx, "state_provider", None)
+    if state_provider is None or not hasattr(state_provider, "get_state"):
+        return None
+
+    try:
+        post_ui = await state_provider.get_state()
+    except Exception as exc:
+        logger.debug("Text input verification unavailable: %s", exc)
+        return None
+
+    phone_state = getattr(post_ui, "phone_state", None)
+    if not isinstance(phone_state, dict):
+        return None
+    focused = phone_state.get("focusedElement")
+    if not isinstance(focused, dict) or "text" not in focused:
+        return None
+    if focused.get("isPassword") is True:
+        return None
+    if phone_state.get("isEditable") is False:
+        return None
+
+    actual = "" if focused.get("isShowingHintText") is True else focused.get("text")
+    normalized_actual = _normalize_input_text(actual)
+    normalized_expected = _normalize_input_text(text)
+    if clear:
+        return normalized_actual == normalized_expected
+    return normalized_expected in normalized_actual
+
+
+async def _input_text_with_verification(
+    text: str,
+    clear: bool,
+    *,
+    ctx: "ActionContext",
+    pre_ui=None,
+) -> ActionResult:
+    accepted = await ctx.driver.input_text(text, clear)
+    if not accepted:
+        return ActionResult(success=False, summary="Failed to type text: input failed")
+
+    verified = await _verify_text_input(text, clear, ctx=ctx)
+    if verified is False:
+        return ActionResult(
+            success=False,
+            summary=(
+                "Failed to type text: input was accepted but the focused field "
+                "did not contain the expected text"
+            ),
+        )
+
+    _record_macro_action(
+        ctx,
+        {"action_type": "input_text", "text": text, "clear": clear},
+        pre_ui=pre_ui,
+    )
+    if verified is None:
+        return ActionResult(
+            success=True,
+            summary=f"Text input accepted; verification unavailable (clear={clear})",
+        )
+    return ActionResult(
+        success=True,
+        summary=f"Text typed and verified (clear={clear})",
+    )
+
+
 def _driver_log_length(ctx: "ActionContext") -> int | None:
     log = getattr(getattr(ctx, "driver", None), "log", None)
     if isinstance(log, list):
@@ -344,20 +418,12 @@ async def type_text(
             )
             pre_ui = await _macro_pre_ui_after_focus_tap(ctx)
 
-        success = await ctx.driver.input_text(text, clear)
-        if success:
-            _record_macro_action(
-                ctx,
-                {"action_type": "input_text", "text": text, "clear": clear},
-                pre_ui=pre_ui,
-            )
-            return ActionResult(
-                success=True, summary=f"Text typed successfully (clear={clear})"
-            )
-        else:
-            return ActionResult(
-                success=False, summary="Failed to type text: input failed"
-            )
+        return await _input_text_with_verification(
+            text,
+            clear,
+            ctx=ctx,
+            pre_ui=pre_ui,
+        )
     except Exception as e:
         return ActionResult(success=False, summary=f"Failed to type text: {e}")
 
@@ -368,17 +434,12 @@ async def type_text_direct(
     """Type text into the currently focused input."""
     try:
         pre_ui = await _macro_pre_ui(ctx)
-        success = await ctx.driver.input_text(text, clear)
-        if success:
-            _record_macro_action(
-                ctx,
-                {"action_type": "input_text", "text": text, "clear": clear},
-                pre_ui=pre_ui,
-            )
-            return ActionResult(
-                success=True, summary=f"Text typed successfully (clear={clear})"
-            )
-        return ActionResult(success=False, summary="Failed to type text: input failed")
+        return await _input_text_with_verification(
+            text,
+            clear,
+            ctx=ctx,
+            pre_ui=pre_ui,
+        )
     except Exception as e:
         return ActionResult(success=False, summary=f"Failed to type text: {e}")
 

@@ -107,6 +107,15 @@ def test_type_text_with_index_records_input_with_refreshed_pre_state():
             "bounds": "10,20,110,60",
         }
     ]
+    post_ui = FakeUI()
+    post_ui.phone_state = {
+        "isEditable": True,
+        "focusedElement": {
+            "text": "hello",
+            "isPassword": False,
+            "isShowingHintText": False,
+        },
+    }
 
     recorder = MacroRecorder()
     driver = FakeDriver()
@@ -114,7 +123,7 @@ def test_type_text_with_index_records_input_with_refreshed_pre_state():
         driver=driver,
         ui=first_ui,
         macro_recorder=recorder,
-        state_provider=SequencedStateProvider([first_ui, focused_ui]),
+        state_provider=SequencedStateProvider([first_ui, focused_ui, post_ui]),
     )
 
     result = asyncio.run(type_text("hello", index=7, clear=True, ctx=ctx))
@@ -128,6 +137,31 @@ def test_type_text_with_index_records_input_with_refreshed_pre_state():
     assert "target_hint" not in recorder.actions[0]
     assert recorder.actions[1]["pre_state"]["nodes"][0]["focused"] is True
     assert "target_hint" not in recorder.actions[1]
+
+
+def test_type_text_mismatch_does_not_record_input_macro():
+    pre_ui = FakeUI()
+    post_ui = FakeUI()
+    post_ui.phone_state = {
+        "isEditable": True,
+        "focusedElement": {
+            "text": "",
+            "isPassword": False,
+            "isShowingHintText": True,
+        },
+    }
+    recorder = MacroRecorder()
+    ctx = SimpleNamespace(
+        driver=FakeDriver(),
+        ui=pre_ui,
+        macro_recorder=recorder,
+        state_provider=SequencedStateProvider([pre_ui, post_ui]),
+    )
+
+    result = asyncio.run(type_text("hello", clear=True, ctx=ctx))
+
+    assert not result.success
+    assert recorder.actions == []
 
 
 def test_type_secret_records_replayable_secret_action_not_placeholder():
