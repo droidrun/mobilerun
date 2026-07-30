@@ -53,6 +53,7 @@
             "pages": [
               "/guides/overview",
               "/guides/device-setup",
+              "/guides/white-label-device-stream",
               "/guides/cli",
               "/guides/docker"
             ]
