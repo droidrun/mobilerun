@@ -447,7 +447,7 @@ except Exception:
 @click.option(
     "--provider",
     "-p",
-    help="LLM provider (OpenAI, openai_oauth, Ollama, Anthropic, anthropic_oauth, GoogleGenAI, gemini_oauth_code_assist, DeepSeek)",
+    help="LLM provider (OpenAI, openai_oauth, Ollama, Anthropic, anthropic_oauth, GoogleGenAI, gemini_oauth_code_assist, DeepSeek, OrcaRouter)",
     default=None,
 )
 @click.option(
@@ -1012,7 +1012,7 @@ async def doctor(device: str | None, debug: bool | None):
     "--provider",
     type=str,
     default=None,
-    help="Provider family (gemini, openai, anthropic, ollama, openai_like, minimax, zai).",
+    help="Provider family (gemini, openai, anthropic, ollama, openai_like, minimax, zai, orcarouter).",
 )
 @click.option(
     "--auth-mode",

@@ -11,7 +11,7 @@ It enables mobile automation using natural language commands.
 - **GitHub**: https://github.com/droidrun/mobilerun
 - **Docs site**: https://docs.mobilerun.ai
 - **License**: MIT
-- **Install**: `uv tool install mobilerun` (Google Gemini, OpenAI, DeepSeek, Ollama, OpenRouter included by default)
+- **Install**: `uv tool install mobilerun` (Google Gemini, OpenAI, DeepSeek, Ollama, OpenRouter, OrcaRouter included by default)
 - **Optional extras**: `anthropic`, `langfuse`
 - **Requires**: Python 3.11+, ADB, Portal APK on device
 

@@ -4,6 +4,7 @@ from mobilerun.agent.providers.minimax import (
     MINIMAX_LEGACY_BASE_URL,
     warn_if_legacy_minimax_endpoint,
 )
+from mobilerun.agent.providers.orcarouter import ORCAROUTER_BASE_URL
 from mobilerun.agent.providers.registry import (
     VARIANT_ENV_KEY_SLOT,
     get_provider_family,
@@ -22,6 +23,7 @@ __all__ = [
     "MINIMAX_CHINA_BASE_URL",
     "MINIMAX_GLOBAL_BASE_URL",
     "MINIMAX_LEGACY_BASE_URL",
+    "ORCAROUTER_BASE_URL",
     "VARIANT_ENV_KEY_SLOT",
     "ProviderFamilySpec",
     "ProviderVariantSpec",
