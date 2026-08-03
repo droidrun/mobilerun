@@ -34,6 +34,7 @@ SUPPORTED_PROVIDERS = [
     "DeepSeek",
     "OpenRouter",
     "MiniMax",
+    "LiteLLM",
 ]
 
 PROVIDER_ALIASES = {
@@ -49,6 +50,9 @@ PROVIDER_ALIASES = {
     "openai_like": "OpenAILike",
     "zai": "ZAI",
     "z.ai": "ZAI",
+    "litellm": "LiteLLM",
+    "lite_llm": "LiteLLM",
+    "lite-llm": "LiteLLM",
 }
 
 ZAI_GLOBAL_API_BASE = "https://api.z.ai/api/paas/v4"
@@ -412,6 +416,126 @@ def _load_anthropic(**kwargs: Any) -> LLM:
     return MobilerunAnthropic(**filtered_kwargs)
 
 
+def _load_litellm(**kwargs: Any) -> LLM:
+    from llama_index.core.base.llms.types import ChatMessage, ChatResponse, LLMMetadata
+    from llama_index.core.llms import CustomLLM
+    from llama_index.core.llms.callbacks import llm_chat_callback, llm_completion_callback
+
+    class MobilerunLiteLLM(CustomLLM):
+        model: str = ""
+        temperature: float = 0.1
+        max_tokens: int | None = None
+        api_key: str | None = None
+        api_base: str | None = None
+
+        @property
+        def metadata(self) -> LLMMetadata:
+            return LLMMetadata(
+                model_name=self.model,
+                is_chat_model=True,
+            )
+
+        def _get_litellm_kwargs(self) -> dict[str, Any]:
+            kw: dict[str, Any] = {
+                "model": self.model,
+                "temperature": self.temperature,
+                "drop_params": True,
+            }
+            if self.max_tokens is not None:
+                kw["max_tokens"] = self.max_tokens
+            if self.api_key:
+                kw["api_key"] = self.api_key
+            if self.api_base:
+                kw["api_base"] = self.api_base
+            return kw
+
+        @llm_completion_callback()
+        def complete(self, prompt: str, formatted: bool = False, **kw: Any) -> Any:
+            import litellm
+            from llama_index.core.base.llms.types import CompletionResponse
+
+            resp = litellm.completion(
+                messages=[{"role": "user", "content": prompt}],
+                **{**self._get_litellm_kwargs(), **kw},
+            )
+            return CompletionResponse(
+                text=resp.choices[0].message.content or "",
+                raw=resp,
+            )
+
+        @llm_completion_callback()
+        def stream_complete(self, prompt: str, formatted: bool = False, **kw: Any) -> Any:
+            import litellm
+            from llama_index.core.base.llms.types import CompletionResponse
+
+            stream = litellm.completion(
+                messages=[{"role": "user", "content": prompt}],
+                stream=True,
+                **{**self._get_litellm_kwargs(), **kw},
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                yield CompletionResponse(text=delta, delta=delta, raw=chunk)
+
+        @llm_chat_callback()
+        def chat(self, messages: list, **kw: Any) -> ChatResponse:
+            import litellm
+
+            msgs = [{"role": m.role.value, "content": m.content} for m in messages]
+            resp = litellm.completion(
+                messages=msgs,
+                **{**self._get_litellm_kwargs(), **kw},
+            )
+            return ChatResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content=resp.choices[0].message.content or "",
+                ),
+                raw=resp,
+            )
+
+        async def achat(self, messages: list, **kw: Any) -> ChatResponse:
+            import litellm
+
+            msgs = [{"role": m.role.value, "content": m.content} for m in messages]
+            resp = await litellm.acompletion(
+                messages=msgs,
+                **{**self._get_litellm_kwargs(), **kw},
+            )
+            return ChatResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content=resp.choices[0].message.content or "",
+                ),
+                raw=resp,
+            )
+
+        async def astream_chat(self, messages: list, **kw: Any) -> Any:
+            import litellm
+
+            msgs = [{"role": m.role.value, "content": m.content} for m in messages]
+            stream = await litellm.acompletion(
+                messages=msgs,
+                stream=True,
+                **{**self._get_litellm_kwargs(), **kw},
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                yield ChatResponse(
+                    message=ChatMessage(role="assistant", content=delta),
+                    delta=delta,
+                    raw=chunk,
+                )
+
+    if "base_url" in kwargs and "api_base" not in kwargs:
+        kwargs["api_base"] = kwargs.pop("base_url")
+    filtered_kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    logger.debug(
+        f"Initializing MobilerunLiteLLM with kwargs: {list(filtered_kwargs.keys())}"
+    )
+    return MobilerunLiteLLM(**filtered_kwargs)
+
+
 def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM:
     """Load and initialize a configured LLM backend.
 
@@ -526,6 +650,8 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
         from llama_index.llms.openrouter import OpenRouter
 
         llm_class = OpenRouter
+    elif provider_name == "LiteLLM":
+        return _load_litellm(**kwargs)
     else:
         raise ValueError(
             f"Unsupported provider '{provider_name}'. "

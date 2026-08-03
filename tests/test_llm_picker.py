@@ -26,6 +26,9 @@ from mobilerun.config_manager.config_manager import LLMProfile
         ("OpenAI-like", "OpenAILike"),
         ("ZAI", "ZAI"),
         ("Z.AI", "ZAI"),
+        ("litellm", "LiteLLM"),
+        ("lite_llm", "LiteLLM"),
+        ("lite-llm", "LiteLLM"),
     ],
 )
 def test_normalize_provider_name_accepts_user_facing_aliases(
@@ -811,3 +814,74 @@ def test_ollama_wizard_default_includes_context_window() -> None:
     from mobilerun.agent.providers.setup_service import DEFAULT_KWARGS_BY_VARIANT
 
     assert DEFAULT_KWARGS_BY_VARIANT["Ollama"] == {"context_window": 32768}
+
+
+def test_litellm_loads_correct_class() -> None:
+    llm = load_llm(
+        "LiteLLM",
+        model="anthropic/claude-haiku-4-5",
+        api_key="stub",
+    )
+
+    assert type(llm).__name__ == "MobilerunLiteLLM"
+
+
+def test_litellm_alias_resolves() -> None:
+    llm = load_llm(
+        "litellm",
+        model="openai/gpt-4o-mini",
+        api_key="stub",
+    )
+
+    assert type(llm).__name__ == "MobilerunLiteLLM"
+
+
+def test_litellm_base_url_translates_to_api_base() -> None:
+    llm = load_llm(
+        "LiteLLM",
+        model="openai/gpt-4o-mini",
+        api_key="stub",
+        base_url="http://localhost:4000",
+    )
+
+    assert type(llm).__name__ == "MobilerunLiteLLM"
+    assert llm.api_base == "http://localhost:4000"
+
+
+def test_litellm_provider_slash_model_format() -> None:
+    llm = load_llm("LiteLLM", model="anthropic/claude-sonnet-4-6", api_key="stub")
+
+    assert llm.model == "anthropic/claude-sonnet-4-6"
+
+
+def test_litellm_bare_model_name_preserved() -> None:
+    llm = load_llm("LiteLLM", model="gpt-4o-mini", api_key="stub")
+
+    assert llm.model == "gpt-4o-mini"
+
+
+def test_litellm_api_key_forwarded() -> None:
+    llm = load_llm("LiteLLM", model="openai/gpt-4o-mini", api_key="sk-test-key-123")
+
+    assert llm.api_key == "sk-test-key-123"
+
+
+def test_litellm_temperature_forwarded() -> None:
+    llm = load_llm(
+        "LiteLLM", model="openai/gpt-4o-mini", api_key="stub", temperature=0.7
+    )
+
+    assert llm.temperature == 0.7
+
+
+def test_litellm_max_tokens_forwarded() -> None:
+    llm = load_llm(
+        "LiteLLM", model="openai/gpt-4o-mini", api_key="stub", max_tokens=512
+    )
+
+    assert llm.max_tokens == 512
+
+
+def test_litellm_unsupported_provider_raises() -> None:
+    with pytest.raises(ValueError, match="Unsupported provider"):
+        load_llm("NotARealProvider", model="some-model", api_key="stub")
