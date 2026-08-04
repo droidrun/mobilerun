@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.droidrun%2Fmobilerun.svg)](https://mcptoplist.com/server/io.github.droidrun%2Fmobilerun)
+
 <picture align="center">
   <source media="(prefers-color-scheme: dark)" srcset="./static/mobilerun-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="./static/mobilerun.png">
