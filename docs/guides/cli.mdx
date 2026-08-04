@@ -160,6 +160,7 @@ mobilerun run "Enable 2FA" \
 | Anthropic | `uv pip install 'mobilerun[anthropic]'` | `ANTHROPIC_API_KEY` |
 | DeepSeek | Included by default | `DEEPSEEK_API_KEY` |
 | MiniMax | Included by default | `MINIMAX_API_KEY` |
+| OrcaRouter | Included by default | `ORCAROUTER_API_KEY` |
 
 ### MiniMax endpoints and credentials
 
@@ -201,6 +202,25 @@ saved `apiKeys.minimax` entry in `credentials/auth-profiles.json` inside
 Mobilerun's platform configuration directory. Pasting a new key in the wizard
 updates that saved entry. The top-level `credentials.enabled` setting controls
 device secrets and does not configure LLM provider authentication.
+
+### OrcaRouter
+
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible gateway that
+reaches models from several vendors through one key, using `vendor/model` ids.
+It is a first-class provider family, so `mobilerun configure` prefills
+`https://api.orcarouter.ai/v1` and offers a starting model list; any model id the
+account can reach is accepted.
+
+```bash
+export ORCAROUTER_API_KEY=your-key
+mobilerun configure --provider orcarouter --model anthropic/claude-sonnet-5
+```
+
+It can also be selected per run without the wizard:
+
+```bash
+mobilerun run "Open settings and turn on airplane mode"   --provider OrcaRouter   --model openai/gpt-5.6-sol   --base_url https://api.orcarouter.ai/v1
+```
 
   </Tab>
 
@@ -553,6 +573,7 @@ mobilerun ping --tcp
 | `ANTHROPIC_API_KEY` | Anthropic API key | None |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | None |
 | `MINIMAX_API_KEY` | MiniMax API key | None |
+| `ORCAROUTER_API_KEY` | OrcaRouter API key | None |
 | `MOBILERUN_CLOUD_API_KEY` | Mobilerun Cloud API key for `devices --cloud` and cloud device actions | None |
 | `MOBILERUN_CONFIG` | Config file path | `~/.config/mobilerun/config.yaml` |
 

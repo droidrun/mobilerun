@@ -47,7 +47,7 @@
 </p>
 
 - 🤖 Control Android and iOS devices with natural language commands
-- 🔀 Use OpenAI, Anthropic, Gemini, Ollama, DeepSeek, OpenRouter, and OpenAI-compatible models
+- 🔀 Use OpenAI, Anthropic, Gemini, Ollama, DeepSeek, OpenRouter, OrcaRouter, and OpenAI-compatible models
 - 🧠 Run direct tasks or enable reasoning mode for complex multi-step automation
 - 💻 Automate from the CLI, a terminal UI, Docker, or Python code
 - 🐍 Extend agents with custom tools, structured output, app cards, and credentials
@@ -111,7 +111,7 @@ You should see confirmation that the Portal is installed and accessible.
 mobilerun configure
 ```
 
-The wizard walks you through choosing a provider, auth method, and model. You can also use provider environment variables such as `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `MINIMAX_API_KEY`.
+The wizard walks you through choosing a provider, auth method, and model. You can also use provider environment variables such as `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MINIMAX_API_KEY`, or `ORCAROUTER_API_KEY`.
 
 ### 4. Run your first command
 

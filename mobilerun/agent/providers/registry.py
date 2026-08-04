@@ -7,6 +7,7 @@ from mobilerun.agent.providers.anthropic import (
     ANTHROPIC_OAUTH_MODELS,
 )
 from mobilerun.agent.providers.minimax import MINIMAX_GLOBAL_BASE_URL
+from mobilerun.agent.providers.orcarouter import ORCAROUTER_BASE_URL
 from mobilerun.agent.providers.types import (
     ProviderFamilySpec,
     ProviderVariantSpec,
@@ -26,6 +27,7 @@ VARIANT_ENV_KEY_SLOT: dict[str, str] = {
     "ZAI": "zai",
     "ZAI_Coding": "zai",
     "MiniMax": "minimax",
+    "OrcaRouter": "orcarouter",
 }
 
 OPENAI_MODEL_ALIASES: dict[str, str] = {
@@ -221,6 +223,32 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
         notes=(
             "ZAI is exposed as a first-class provider family while reusing the OpenAI-compatible transport.",
             "Use auth mode `coding_api` for the GLM Coding Plan endpoint.",
+        ),
+    ),
+    ProviderFamilySpec(
+        id="orcarouter",
+        display_name="OrcaRouter",
+        variants=(
+            ProviderVariantSpec(
+                id="OrcaRouter",
+                runtime_provider_name="OrcaRouter",
+                runtime_transport_provider_name="OpenAILike",
+                auth_mode="api_key",
+                default_model="anthropic/claude-sonnet-5",
+                models=(
+                    "anthropic/claude-sonnet-5",
+                    "openai/gpt-5.6-sol",
+                    "google/gemini-3.1-pro-preview",
+                    "openai/gpt-5.4-mini",
+                ),
+                requires_api_key=True,
+                requires_base_url=True,
+                base_url=ORCAROUTER_BASE_URL,
+            ),
+        ),
+        notes=(
+            "OrcaRouter is exposed as a first-class provider family while reusing the OpenAI-compatible transport.",
+            "Models use the `vendor/model` ids from the router catalog; any id the account can reach is accepted.",
         ),
     ),
 )

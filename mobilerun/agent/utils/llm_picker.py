@@ -12,6 +12,7 @@ from mobilerun.agent.providers.minimax import (
     MINIMAX_GLOBAL_BASE_URL,
     warn_if_legacy_minimax_endpoint,
 )
+from mobilerun.agent.providers.orcarouter import ORCAROUTER_BASE_URL
 from mobilerun.agent.providers.registry import (
     list_models_for_variant,
     normalize_model_id_for_variant,
@@ -34,6 +35,7 @@ SUPPORTED_PROVIDERS = [
     "DeepSeek",
     "OpenRouter",
     "MiniMax",
+    "OrcaRouter",
 ]
 
 PROVIDER_ALIASES = {
@@ -49,6 +51,8 @@ PROVIDER_ALIASES = {
     "openai_like": "OpenAILike",
     "zai": "ZAI",
     "z.ai": "ZAI",
+    "orcarouter": "OrcaRouter",
+    "orca": "OrcaRouter",
 }
 
 ZAI_GLOBAL_API_BASE = "https://api.z.ai/api/paas/v4"
@@ -488,6 +492,23 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
         if "base_url" in kwargs and "api_base" not in kwargs:
             kwargs["api_base"] = kwargs.pop("base_url")
         kwargs.setdefault("api_base", ZAI_GLOBAL_API_BASE)
+
+    if provider_name == "OrcaRouter":
+        import os
+
+        provider_name = "OpenAILike"
+        kwargs.setdefault("is_chat_model", True)
+        kwargs.setdefault("is_function_calling_model", True)
+        if not str(kwargs.get("api_key") or "").strip():
+            kwargs["api_key"] = os.environ.get("ORCAROUTER_API_KEY")
+        if not str(kwargs.get("api_key") or "").strip():
+            raise ValueError(
+                "OrcaRouter requires an API key. Pass api_key explicitly or set "
+                "ORCAROUTER_API_KEY."
+            )
+        if "base_url" in kwargs and "api_base" not in kwargs:
+            kwargs["api_base"] = kwargs.pop("base_url")
+        kwargs.setdefault("api_base", ORCAROUTER_BASE_URL)
 
     if provider_name == "DeepSeek":
         import os
