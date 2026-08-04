@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.droidrun/mobilerun",
+  "description": "Control real Android and iOS devices with LLM agents — inspect UI, tap, swipe, type, and automate app-only flows via natural language.",
+  "repository": {
+    "url": "https://github.com/droidrun/mobilerun",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.mobilerun.ai/v1/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer token — your Mobilerun API key (format: dr_sk_...). Get it in the Mobilerun app under AI & Agents.",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
