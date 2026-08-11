@@ -110,6 +110,16 @@ def test_openai_api_key_catalog_uses_current_default_model() -> None:
     )
 
 
+def test_litellm_family_resolves_api_key_variant() -> None:
+    variant = resolve_provider_variant("litellm", "api_key")
+
+    assert variant.id == "LiteLLM"
+    assert variant.runtime_provider_name == "LiteLLM"
+    assert variant.requires_api_key is True
+    assert variant.default_model is None
+    assert variant.models == ()
+
+
 def test_default_profiles_use_stable_gemini_flash_lite() -> None:
     config = MobileConfig()
 

@@ -66,6 +66,9 @@ dev = [
     "safety>=3.2.11",
     "mobilerun[langfuse]",
 ]
+litellm = [
+    "litellm>=1.83.0,<2.0.0",
+]
 langfuse = [
     "langfuse==3.12.1",
     "openinference-instrumentation-llama-index>=3.0.0",

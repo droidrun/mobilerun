@@ -64,6 +64,97 @@ def test_openai_responses_class_name_extracts_usage_from_response() -> None:
     assert usage.requests == 1
 
 
+def _litellm_chat_response() -> ChatResponse:
+    return ChatResponse(
+        message=ChatMessage(role=MessageRole.ASSISTANT, content="ok"),
+        raw=SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+            )
+        ),
+    )
+
+
+def test_litellm_extracts_usage_from_response() -> None:
+    usage = get_usage_from_response("LiteLLM", _litellm_chat_response())
+
+    assert usage.request_tokens == 10
+    assert usage.response_tokens == 5
+    assert usage.total_tokens == 15
+    assert usage.requests == 1
+
+
+def test_track_usage_supports_litellm() -> None:
+    llm = load_llm("LiteLLM", model="openai/gpt-4o-mini", api_key="stub")
+
+    tracker = track_usage(llm)
+
+    assert isinstance(tracker, TokenCountingHandler)
+    assert tracker.provider == "LiteLLM"
+
+
+def test_litellm_usage_with_null_usage_returns_zeros() -> None:
+    rsp = ChatResponse(
+        message=ChatMessage(role=MessageRole.ASSISTANT, content="ok"),
+        raw=SimpleNamespace(),
+    )
+
+    usage = get_usage_from_response("LiteLLM", rsp)
+
+    assert usage.request_tokens == 0
+    assert usage.response_tokens == 0
+    assert usage.total_tokens == 0
+    assert usage.requests == 1
+
+
+def test_litellm_usage_with_dict_raw_response() -> None:
+    rsp = ChatResponse(
+        message=ChatMessage(role=MessageRole.ASSISTANT, content="ok"),
+        raw={
+            "usage": {
+                "prompt_tokens": 15,
+                "completion_tokens": 8,
+                "total_tokens": 23,
+            }
+        },
+    )
+
+    usage = get_usage_from_response("LiteLLM", rsp)
+
+    assert usage.request_tokens == 15
+    assert usage.response_tokens == 8
+    assert usage.total_tokens == 23
+
+
+def test_litellm_usage_computes_total_when_missing() -> None:
+    rsp = ChatResponse(
+        message=ChatMessage(role=MessageRole.ASSISTANT, content="ok"),
+        raw=SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5)
+        ),
+    )
+
+    usage = get_usage_from_response("LiteLLM", rsp)
+
+    assert usage.request_tokens == 10
+    assert usage.response_tokens == 5
+    assert usage.total_tokens == 15
+
+
+def test_litellm_no_raw_response_raises() -> None:
+    rsp = ChatResponse(
+        message=ChatMessage(role=MessageRole.ASSISTANT, content="ok"),
+        raw=None,
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="No raw response"):
+        get_usage_from_response("LiteLLM", rsp)
+
+
 def test_track_usage_supports_mobilerun_anthropic_wrapper() -> None:
     llm = load_llm("Anthropic", model="claude-opus-4-8", api_key="stub")
 

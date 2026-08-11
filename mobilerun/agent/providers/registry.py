@@ -26,6 +26,7 @@ VARIANT_ENV_KEY_SLOT: dict[str, str] = {
     "ZAI": "zai",
     "ZAI_Coding": "zai",
     "MiniMax": "minimax",
+    "LiteLLM": "litellm",
 }
 
 OPENAI_MODEL_ALIASES: dict[str, str] = {
@@ -221,6 +222,25 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
         notes=(
             "ZAI is exposed as a first-class provider family while reusing the OpenAI-compatible transport.",
             "Use auth mode `coding_api` for the GLM Coding Plan endpoint.",
+        ),
+    ),
+    ProviderFamilySpec(
+        id="litellm",
+        display_name="LiteLLM",
+        variants=(
+            ProviderVariantSpec(
+                id="LiteLLM",
+                runtime_provider_name="LiteLLM",
+                auth_mode="api_key",
+                default_model=None,
+                models=(),
+                requires_api_key=True,
+            ),
+        ),
+        notes=(
+            "LiteLLM is an AI gateway that provides access to 100+ LLM providers "
+            "(OpenAI, Anthropic, Azure, Bedrock, Vertex, etc.) via a unified interface.",
+            "Use any model in `provider/model` format (e.g. anthropic/claude-sonnet-4-6).",
         ),
     ),
 )
