@@ -54,6 +54,7 @@ The credential manager has the following secret IDs available for use with the `
 {% endfor %}
 
 Use `type_secret` to type these secrets into input fields without exposing their values.
+You may also use placeholders like `{% raw %}{{MY_PASSWORD}}{% endraw %}` in `type` or `type_text` parameters; placeholders are resolved only during tool execution and logs keep the placeholder, not the secret value.
 {% endif %}
 
 ## Response Format
