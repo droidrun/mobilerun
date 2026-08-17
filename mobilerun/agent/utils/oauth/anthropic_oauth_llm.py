@@ -458,8 +458,10 @@ class AnthropicOAuthLLM(CustomLLM):
         active_deadline.check()
 
         # Headless environments: skip local server, use hosted callback page
-        use_headless = _is_headless_environment() or os.environ.get(
-            "DROIDRUN_OAUTH_MANUAL", ""
+        use_headless = _is_headless_environment() or (
+            os.environ.get("MOBILERUN_OAUTH_MANUAL")
+            or os.environ.get("DROIDRUN_OAUTH_MANUAL")
+            or ""
         ).lower() in ("1", "true", "yes")
         if use_headless:
             return self.login_headless(

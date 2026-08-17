@@ -639,7 +639,13 @@ export XAI_API_KEY=your-key
 export DEEPSEEK_API_KEY=your-key
 export MINIMAX_API_KEY=your-key
 export MOBILERUN_CONFIG=/path/to/config.yaml  # Custom config path
+export MOBILERUN_OAUTH_MANUAL=true            # Force the manual/headless OAuth login flow
 ```
+
+`MOBILERUN_OAUTH_MANUAL` is detected automatically for SSH, WSL and
+display-less Linux sessions; set it explicitly when you want the copy/paste
+login flow anywhere else. The legacy `DROIDRUN_OAUTH_MANUAL` spelling is still
+honoured.
 
 MiniMax uses `https://api.minimax.io/v1` for global accounts and
 `https://api.minimaxi.com/v1` for Mainland China accounts. The configure wizard

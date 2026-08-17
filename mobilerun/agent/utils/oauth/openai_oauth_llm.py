@@ -730,8 +730,10 @@ class OpenAIOAuth(OpenAI):
         _tls_preflight(self._oauth_manager.issuer, deadline=login_deadline)
 
         # Headless environments: use device code flow (no local server needed)
-        use_device_code = _is_headless_environment() or os.environ.get(
-            "DROIDRUN_OAUTH_MANUAL", ""
+        use_device_code = _is_headless_environment() or (
+            os.environ.get("MOBILERUN_OAUTH_MANUAL")
+            or os.environ.get("DROIDRUN_OAUTH_MANUAL")
+            or ""
         ).lower() in ("1", "true", "yes")
         if use_device_code:
             return self._login_device_code(

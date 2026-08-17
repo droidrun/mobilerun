@@ -2,7 +2,7 @@
 Anonymous telemetry tracking using PostHog.
 
 This module handles opt-in telemetry collection to help improve Mobilerun.
-All data is anonymized and can be disabled by setting DROIDRUN_TELEMETRY_ENABLED=false.
+All data is anonymized and can be disabled by setting MOBILERUN_TELEMETRY_ENABLED=false.
 """
 
 import asyncio
@@ -24,7 +24,7 @@ USER_ID_PATH = Path.home() / ".droidrun" / "user_id"
 RUN_ID = str(uuid4())
 
 TELEMETRY_ENABLED_MESSAGE = "Anonymized telemetry enabled. See https://docs.mobilerun.ai/v3/guides/telemetry for more information."
-TELEMETRY_DISABLED_MESSAGE = "🛑 Anonymized telemetry disabled. Consider setting the DROIDRUN_TELEMETRY_ENABLED environment variable to 'true' to enable telemetry and help us improve Mobilerun."
+TELEMETRY_DISABLED_MESSAGE = "🛑 Anonymized telemetry disabled. Consider setting the MOBILERUN_TELEMETRY_ENABLED environment variable to 'true' to enable telemetry and help us improve Mobilerun."
 
 # Created lazily on first capture/flush. Constructing the PostHog client spawns
 # a consumer thread and registers a blocking atexit flush, which added ~5s to
@@ -49,7 +49,7 @@ def is_telemetry_enabled():
     Check if telemetry is enabled via environment variable.
 
     Returns:
-        True if DROIDRUN_TELEMETRY_ENABLED is set to true/1/yes/y (case-insensitive),
+        True if MOBILERUN_TELEMETRY_ENABLED is set to true/1/yes/y (case-insensitive),
         or if the environment variable is not set (default is enabled).
     """
     telemetry_enabled = (
@@ -66,7 +66,7 @@ def print_telemetry_message():
     """
     Print telemetry status message to the logger.
 
-    Displays enabled or disabled message based on DROIDRUN_TELEMETRY_ENABLED setting.
+    Displays enabled or disabled message based on MOBILERUN_TELEMETRY_ENABLED setting.
     """
     if is_telemetry_enabled():
         mobilerun_logger.debug(TELEMETRY_ENABLED_MESSAGE)

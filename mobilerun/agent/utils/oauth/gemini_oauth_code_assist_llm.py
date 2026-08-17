@@ -548,8 +548,10 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         active_deadline.check()
 
         # Headless environments: use authcode redirect flow (no local server)
-        use_authcode = _is_headless_environment() or os.environ.get(
-            "DROIDRUN_OAUTH_MANUAL", ""
+        use_authcode = _is_headless_environment() or (
+            os.environ.get("MOBILERUN_OAUTH_MANUAL")
+            or os.environ.get("DROIDRUN_OAUTH_MANUAL")
+            or ""
         ).lower() in ("1", "true", "yes")
         if use_authcode:
             return self.login_headless(
