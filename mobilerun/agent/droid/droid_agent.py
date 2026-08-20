@@ -607,6 +607,7 @@ class MobileAgent(Workflow):
                 stealth=False,
                 vision_enabled=vision_enabled,
                 vision_resize_policy=vision_resize_policy,
+                wait_for_stable_ui=self.config.agent.wait_for_stable_ui,
             )
         elif is_ios:
             self.state_provider = IOSStateProvider(
@@ -626,6 +627,7 @@ class MobileAgent(Workflow):
                 stealth=stealth_enabled,
                 vision_enabled=vision_enabled,
                 vision_resize_policy=vision_resize_policy,
+                wait_for_stable_ui=self.config.agent.wait_for_stable_ui,
             )
 
         # ── 3. Build tool registry ────────────────────────────────────
