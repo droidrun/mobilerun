@@ -38,6 +38,45 @@ _MAX_RETRIES = 7
 # With the schedule above, this fires after ~11s (1+2+3+5).
 _RECOVERY_AFTER_ATTEMPT = 5
 
+# Max number of re-fetches used to confirm the a11y tree has stopped
+# changing. Bounds the extra latency ``wait_for_stable_ui`` can add per
+# get_state() call to roughly max_stability_checks * wait_for_stable_ui.
+_MAX_STABILITY_CHECKS = 3
+
+
+async def _wait_for_stable_ui_tree(
+    fetch: Callable[[], Awaitable[Dict[str, Any]]],
+    initial: Dict[str, Any],
+    wait_for_stable_ui: float,
+    max_checks: int,
+) -> Dict[str, Any]:
+    """Re-fetch state until the a11y tree stops changing between fetches.
+
+    A well-formed dump can still be stale: e.g. a WebView's Chromium
+    accessibility bridge lagging behind a client-side route change reports
+    the previous screen with no error and all required keys present, so
+    ``fetch_state_with_retry``'s error/missing-key checks accept it
+    immediately. Polling until two consecutive fetches agree catches that
+    case instead of handing the agent a screen it already navigated away
+    from.
+    """
+    current = initial
+    for _ in range(max_checks):
+        await asyncio.sleep(wait_for_stable_ui)
+        try:
+            next_data = await fetch()
+        except DeviceDisconnectedError:
+            raise
+        except Exception as e:
+            logger.debug(f"UI-stability re-fetch failed, using last state: {e}")
+            break
+        if "error" in next_data or "a11y_tree" not in next_data:
+            break
+        if next_data["a11y_tree"] == current["a11y_tree"]:
+            return next_data
+        current = next_data
+    return current
+
 
 async def fetch_state_with_retry(
     fetch: Callable[[], Awaitable[Dict[str, Any]]],
@@ -45,6 +84,8 @@ async def fetch_state_with_retry(
     max_retries: int = _MAX_RETRIES,
     retry_delays: Optional[List[float]] = None,
     recovery_after: int = _RECOVERY_AFTER_ATTEMPT,
+    wait_for_stable_ui: float = 0.0,
+    max_stability_checks: int = _MAX_STABILITY_CHECKS,
 ) -> Dict[str, Any]:
     """Fetch raw device state with retries, backoff, and mid-retry recovery.
 
@@ -56,6 +97,12 @@ async def fetch_state_with_retry(
         retry_delays: Per-attempt delays. If shorter than max_retries - 1,
             the last value is reused for remaining delays.
         recovery_after: Trigger *recovery* after this many failures.
+        wait_for_stable_ui: Seconds to wait between re-fetches when
+            confirming the a11y tree has stopped changing. 0 disables the
+            stability check (the first well-formed dump is trusted as-is).
+        max_stability_checks: Cap on re-fetches while waiting for the tree
+            to stabilize, so a screen that never settles (e.g. an animation
+            loop) doesn't hang get_state() indefinitely.
 
     Returns:
         The raw state dict (guaranteed to contain ``a11y_tree``,
@@ -89,6 +136,11 @@ async def fetch_state_with_retry(
             missing = [k for k in required_keys if k not in combined_data]
             if missing:
                 raise Exception(f"Missing data in state: {', '.join(missing)}")
+
+            if wait_for_stable_ui > 0:
+                combined_data = await _wait_for_stable_ui_tree(
+                    fetch, combined_data, wait_for_stable_ui, max_stability_checks
+                )
 
             return combined_data
 
@@ -190,7 +242,10 @@ class AndroidStateProvider(StateProvider):
 
     Includes retry logic with exponential backoff and mid-retry recovery
     (accessibility service restart) for robustness against intermittent
-    Portal/a11y failures.
+    Portal/a11y failures, plus an optional post-fetch stability check
+    (``wait_for_stable_ui``) that re-polls until the a11y tree stops
+    changing, guarding against well-formed but stale dumps (e.g. a WebView
+    a11y bridge lagging behind a client-side route change).
     """
 
     supported = {"element_index", "convert_point"}
@@ -205,11 +260,13 @@ class AndroidStateProvider(StateProvider):
         ui_cls: "type[UIState] | None" = None,
         vision_enabled: bool = False,
         vision_resize_policy: Any = None,
+        wait_for_stable_ui: float = 0.0,
     ) -> None:
         super().__init__(driver)
         self.tree_filter = tree_filter
         self.tree_formatter = tree_formatter
         self.use_normalized = use_normalized
+        self.wait_for_stable_ui = wait_for_stable_ui
         self._ui_cls = ui_cls or (StealthUIState if stealth else UIState)
         self.vision_enabled = vision_enabled
         # Resolves the exact screenshot dims the active vision model grounds on
@@ -291,6 +348,7 @@ class AndroidStateProvider(StateProvider):
         combined_data = await fetch_state_with_retry(
             fetch=self.driver.get_ui_tree,
             recovery=self._recover_portal,
+            wait_for_stable_ui=self.wait_for_stable_ui,
         )
 
         device_context = combined_data["device_context"]
