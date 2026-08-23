@@ -218,6 +218,18 @@ Shows a short recurring mobile workflow that can be automated from a prompt.
 - [Structured output](https://docs.mobilerun.ai/framework/features/structured-output)
 - [Tracing](https://docs.mobilerun.ai/framework/features/tracing)
 
+## Spectator phone (Build Remote Agent)
+
+Mobilerun remains the device-control framework. If you want a **spectator** phone on the **desktop coding-agent host** instead, pair [Build Remote Agent](https://grokbuildremote.com/) through free MIT [`gbr-agent`](https://github.com/LinespottingOrg/GrokBuildRemote-Agents). Protocol `gbr/1`. Phone is spectator + veto, not a replacement for Portal. See [docs/gbr.md](docs/gbr.md).
+
+```bash
+curl -fsSL https://grokbuildremote.com/install.sh | bash
+gbr-agent version && gbr-agent pair && gbr-agent run
+curl -sS http://127.0.0.1:8788/health
+```
+
+Attach only `http://127.0.0.1:8788` or stdio `gbr-mcp`. Never commit mailbox keys. Independent product — not affiliated with xAI or SpaceX.
+
 ## 👥 Contributing
 
 Contributions are welcome. Please feel free to submit a pull request or open an issue.
