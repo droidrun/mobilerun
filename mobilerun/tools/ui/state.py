@@ -114,9 +114,9 @@ class UIState:
         return info
 
     def get_clear_point(self, index: int) -> Tuple[int, int]:
-        """Find a tap point for *index* that avoids overlapping elements.
+        """Find a tap point for *index* that avoids elements drawn on top of it.
 
-        Falls back to the centre if no clear point exists.
+        Raises ``ValueError`` when the element is genuinely covered.
         """
         element = self._find_by_index(self.elements, index)
         if element is None:
@@ -128,15 +128,25 @@ class UIState:
 
         target_bounds = tuple(map(int, bounds_str.split(",")))
 
+        # Indices are assigned by a pre-order walk of the tree, so every
+        # descendant of the target has a higher index than the target itself.
+        # A descendant is painted *inside* its ancestor rather than over the top
+        # of it, so treating one as a blocker would make any container that its
+        # children happen to fill -- an ordinary list row, say -- untappable.
+        descendants = set(self._collect_indices(element.get("children", [])))
+
         all_elements = self._collect_all(self.elements)
         blockers = []
         for el in all_elements:
             el_idx = el.get("index")
             el_bounds_str = el.get("bounds")
-            if el_idx is not None and el_idx > index and el_bounds_str:
-                el_bounds = tuple(map(int, el_bounds_str.split(",")))
-                if rects_overlap(target_bounds, el_bounds):
-                    blockers.append(el_bounds)
+            if el_idx is None or not el_bounds_str:
+                continue
+            if el_idx <= index or el_idx in descendants:
+                continue
+            el_bounds = tuple(map(int, el_bounds_str.split(",")))
+            if rects_overlap(target_bounds, el_bounds):
+                blockers.append(el_bounds)
 
         point = find_clear_point(target_bounds, blockers)
         if point is None:
