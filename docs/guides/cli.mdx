@@ -247,6 +247,9 @@ mobilerun devices
 # Found 2 connected device(s):
 #   • emulator-5554
 #   • 192.168.1.100:5555
+
+# List only Mobilerun Cloud devices
+mobilerun devices --cloud
 ```
 
 ---
@@ -357,7 +360,48 @@ mobilerun device apps --system
 mobilerun device start com.example.app
 ```
 
-All `device` subcommands support `--device`, `--config`, `--tcp`, and `--ios` flags.
+All `device` subcommands support `--device`, `--config`, `--tcp`, `--ios`,
+`--cloud`, `--device-id`, and `--base-url` flags. For cloud devices, omit
+`--ios` even when the selected device is an iPhone; CloudDriver handles the
+platform remotely.
+
+### Cloud login and control
+
+Authenticate once with the Cloud OAuth device flow:
+
+```bash
+mobilerun login
+mobilerun whoami
+mobilerun devices --cloud
+```
+
+Alternatively, set `MOBILERUN_CLOUD_API_KEY`. The environment variable takes
+precedence over the saved login.
+
+Use the UUID printed by `devices --cloud` for direct actions:
+
+```bash
+DEVICE_ID="123e4567-e89b-12d3-a456-426614174000"
+
+mobilerun device ui --cloud -d "$DEVICE_ID"
+mobilerun device screenshot --cloud -d "$DEVICE_ID"
+mobilerun device press home --cloud -d "$DEVICE_ID"
+```
+
+Run the local Mobilerun agent with its tools backed by CloudDriver:
+
+```bash
+mobilerun run \
+  "Open Settings and report the OS version without changing anything" \
+  --cloud \
+  -d "$DEVICE_ID" \
+  --provider OpenAIResponses \
+  --model gpt-5.4-mini
+```
+
+The cloud-device credential and LLM credential are separate. For the example
+above, CloudDriver uses the saved cloud login or `MOBILERUN_CLOUD_API_KEY`, while
+the agent model uses `OPENAI_API_KEY`.
 
   </Tab>
 
