@@ -7,6 +7,7 @@ Architecture:
 - When reasoning=True: Uses Manager (planning) + Executor (action) workflows
 """
 
+import asyncio
 import logging
 import os
 import traceback
@@ -1068,29 +1069,7 @@ class MobileAgent(Workflow):
             or self._stream_screenshots
             or self.config.logging.save_trajectory != "none"
         ):
-            try:
-                screenshot = await self.action_ctx.driver.screenshot()
-                if screenshot:
-                    ctx.write_event_to_stream(ScreenshotEvent(screenshot=screenshot))
-                    parent_span = trace.get_current_span()
-                    record_langfuse_screenshot(
-                        screenshot,
-                        parent_span=parent_span,
-                        screenshots_enabled=self.config.tracing.langfuse_screenshots,
-                        vision_enabled=vision_any,
-                    )
-                    logger.debug("📸 Final screenshot captured")
-            except Exception as e:
-                logger.warning(f"Failed to capture final screenshot: {e}")
-
-            try:
-                ui_state = await self.state_provider.get_state()
-                ctx.write_event_to_stream(
-                    RecordUIStateEvent(ui_state=ui_state.elements)
-                )
-                logger.debug("📋 Final UI state captured")
-            except Exception as e:
-                logger.warning(f"Failed to capture final UI state: {e}")
+            await self._capture_final_telemetry(ctx, vision_any)
 
         # Save trajectory to disk
         if self.config.logging.save_trajectory != "none":
@@ -1114,6 +1093,53 @@ class MobileAgent(Workflow):
                 logger.warning(f"MCP cleanup error: {e}")
 
         return result
+
+    # Final screenshot + UI-state capture share ONE local hard deadline. They are
+    # observation-only telemetry that runs AFTER the agent's decision exists: a
+    # device endpoint that hangs (or keeps retrying inside the SDK) must never
+    # keep the ``finalize`` step active until the workflow-wide timeout cancels
+    # it and turns an already-produced result into a WorkflowTimeoutError.
+    # Class attribute (not config) so tests and embedders can shrink it.
+    final_telemetry_budget_seconds: float = 15.0
+
+    async def _capture_final_telemetry(self, ctx: Context, vision_any: bool) -> None:
+        budget = self.final_telemetry_budget_seconds
+        try:
+            await asyncio.wait_for(
+                self._capture_final_screenshot_and_state(ctx, vision_any),
+                timeout=budget,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Final screenshot/UI-state capture exceeded the %.1fs telemetry "
+                "budget; final telemetry dropped, task result unaffected",
+                budget,
+            )
+
+    async def _capture_final_screenshot_and_state(
+        self, ctx: Context, vision_any: bool
+    ) -> None:
+        try:
+            screenshot = await self.action_ctx.driver.screenshot()
+            if screenshot:
+                ctx.write_event_to_stream(ScreenshotEvent(screenshot=screenshot))
+                parent_span = trace.get_current_span()
+                record_langfuse_screenshot(
+                    screenshot,
+                    parent_span=parent_span,
+                    screenshots_enabled=self.config.tracing.langfuse_screenshots,
+                    vision_enabled=vision_any,
+                )
+                logger.debug("📸 Final screenshot captured")
+        except Exception as e:
+            logger.warning(f"Failed to capture final screenshot: {e}")
+
+        try:
+            ui_state = await self.state_provider.get_state()
+            ctx.write_event_to_stream(RecordUIStateEvent(ui_state=ui_state.elements))
+            logger.debug("📋 Final UI state captured")
+        except Exception as e:
+            logger.warning(f"Failed to capture final UI state: {e}")
 
     # ========================================================================
     # Event streaming
