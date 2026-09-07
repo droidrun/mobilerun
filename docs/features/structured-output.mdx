@@ -52,6 +52,7 @@ asyncio.run(main())
 
 **Stage 2: Extraction (Post-Completion)**
 - `StructuredOutputAgent` receives the final answer text
+- Valid JSON answers are validated locally with Pydantic first
 - Uses LLM's `astructured_predict()` to extract data into your model
 - Validates against schema and returns typed object or `None`
 
@@ -150,6 +151,21 @@ agent = MobileAgent(
     config=config,
     output_model=ContactInfo,
 )
+```
+
+### Setting the Schema After Initialization
+
+You can also attach the schema before the run starts:
+
+```python
+agent = MobileAgent(
+    goal="Find John Smith's contact information",
+    config=MobileConfig(),
+)
+
+agent.set_output_schema(ContactInfo)
+result = await agent.run()
+contact = result.structured_output
 ```
 
 ### Reasoning Mode

@@ -220,6 +220,19 @@ if result.success and result.structured_output:
     print(f"Condition: {weather.condition}")
 ```
 
+You can also configure the schema after initialization, before the workflow starts:
+
+```python
+agent = MobileAgent(
+    goal="Open weather app and get current weather",
+    config=config,
+)
+agent.set_output_schema(WeatherInfo)
+
+result = await agent.run()
+weather = result.structured_output
+```
+
 <a id="mobilerun.agent.droid.droid_agent.MobileAgent.run"></a>
 
 #### MobileAgent.run
