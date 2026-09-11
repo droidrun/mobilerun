@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Set
 
 from mobilerun.agent.action_result import ActionResult
+from mobilerun.credential_manager.placeholders import resolve_credential_placeholders
 
 if TYPE_CHECKING:
     from llama_index.core.workflow import Context as WorkflowContext
@@ -134,10 +135,13 @@ class ToolRegistry:
 
         entry = self.tools[name]
         try:
+            call_args = await resolve_credential_placeholders(
+                args, getattr(ctx, "credential_manager", None)
+            )
             if inspect.iscoroutinefunction(entry.fn):
-                result = await entry.fn(**args, ctx=ctx)
+                result = await entry.fn(**call_args, ctx=ctx)
             else:
-                result = entry.fn(**args, ctx=ctx)
+                result = entry.fn(**call_args, ctx=ctx)
         except TypeError as e:
             result = ActionResult(
                 success=False,

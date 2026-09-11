@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from mobilerun.agent.utils.actions import type_text
 from mobilerun.agent.utils.signatures import build_tool_registry
+from mobilerun.credential_manager.file_credential_manager import FileCredentialManager
 
 
 class FakeDriver:
@@ -64,6 +65,21 @@ class TypeActionTest(unittest.TestCase):
         self.assertEqual(driver.inputs, [("usb c cable", True)])
         self.assertEqual(driver.taps, [])
         self.assertEqual(ui.requested_indices, [])
+
+    def test_type_text_resolves_credential_placeholders_without_leaking_summary(self):
+        driver = FakeDriver()
+        ui = FakeUI()
+        ctx = SimpleNamespace(
+            driver=driver,
+            ui=ui,
+            credential_manager=FileCredentialManager({"PASSWORD": "secret"}),
+        )
+
+        result = asyncio.run(type_text("{{PASSWORD}}", clear=True, ctx=ctx))
+
+        self.assertTrue(result.success)
+        self.assertEqual(driver.inputs, [("secret", True)])
+        self.assertNotIn("secret", result.summary)
 
     def test_type_schema_makes_index_optional_and_explains_focused_input(self):
         async def run():
