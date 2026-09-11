@@ -13,6 +13,11 @@ from mobilerun.agent.providers.grok import (
     normalize_grok_model_id,
 )
 from mobilerun.agent.providers.minimax import MINIMAX_GLOBAL_BASE_URL
+from mobilerun.agent.providers.requesty import (
+    REQUESTY_BASE_URL,
+    REQUESTY_DEFAULT_MODEL,
+    REQUESTY_MODELS,
+)
 from mobilerun.agent.providers.types import (
     ProviderFamilySpec,
     ProviderVariantSpec,
@@ -34,6 +39,7 @@ VARIANT_ENV_KEY_SLOT: dict[str, str] = {
     "ZAI": "zai",
     "ZAI_Coding": "zai",
     "MiniMax": "minimax",
+    "Requesty": "requesty",
 }
 
 OPENAI_MODEL_ALIASES: dict[str, str] = {
@@ -273,6 +279,28 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
         notes=(
             "ZAI is exposed as a first-class provider family while reusing the OpenAI-compatible transport.",
             "Use auth mode `coding_api` for the GLM Coding Plan endpoint.",
+        ),
+    ),
+    ProviderFamilySpec(
+        id="requesty",
+        display_name="Requesty",
+        variants=(
+            ProviderVariantSpec(
+                id="Requesty",
+                runtime_provider_name="Requesty",
+                runtime_transport_provider_name="OpenAILike",
+                auth_mode="api_key",
+                default_model=REQUESTY_DEFAULT_MODEL,
+                models=REQUESTY_MODELS,
+                requires_api_key=True,
+                requires_base_url=True,
+                base_url=REQUESTY_BASE_URL,
+            ),
+        ),
+        notes=(
+            "Requesty is an LLM router with one OpenAI-compatible API across 700+ models.",
+            "Model ids are `<vendor>/<model>` catalog ids or managed policy ids from /v1/models/managed.",
+            "Set base_url to https://router.eu.requesty.ai/v1 to route through the EU region.",
         ),
     ),
 )

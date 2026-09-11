@@ -16,6 +16,7 @@ API_KEY_ENV_VARS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "zai": "ZAI_API_KEY",
     "minimax": "MINIMAX_API_KEY",
+    "requesty": "REQUESTY_API_KEY",
 }
 
 _API_KEYS_SECTION = "apiKeys"

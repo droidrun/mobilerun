@@ -121,6 +121,12 @@ mobilerun run "Open Settings" \
   --model MiniMax-M3 \
   --base_url https://api.minimax.io/v1
 
+# Requesty (one API across 700+ models)
+export REQUESTY_API_KEY=your-key
+mobilerun run "Open Settings" \
+  --provider Requesty \
+  --model openai/gpt-4o-mini
+
 # Local Ollama (free)
 mobilerun run "Turn on dark mode" \
   --provider Ollama \
@@ -163,6 +169,7 @@ mobilerun run "Enable 2FA" \
 | XAI | Included by default | `XAI_API_KEY` |
 | OpenAILike | Included by default | Varies by provider |
 | OpenRouter | Included by default | `OPENROUTER_API_KEY` |
+| Requesty | Included by default | `REQUESTY_API_KEY` |
 | Ollama | Included by default | None (local) |
 | Anthropic | `uv pip install 'mobilerun[anthropic]'` | `ANTHROPIC_API_KEY` |
 | DeepSeek | Included by default | `DEEPSEEK_API_KEY` |
@@ -232,6 +239,38 @@ saved `apiKeys.minimax` entry in `credentials/auth-profiles.json` inside
 Mobilerun's platform configuration directory. Pasting a new key in the wizard
 updates that saved entry. The top-level `credentials.enabled` setting controls
 device secrets and does not configure LLM provider authentication.
+
+### Requesty endpoints and credentials
+
+Requesty is an LLM router that exposes one OpenAI-compatible API across 700+
+models. Get a key at https://app.requesty.ai/api-keys and set `REQUESTY_API_KEY`,
+or run `mobilerun configure`, choose Requesty, and paste the key. Model ids are
+either full `<vendor>/<model>` catalog ids (for example `openai/gpt-4o-mini`) or
+managed policy ids, which are short stable names for Requesty-maintained
+multi-provider routing chains (for example `claude-sonnet-5` or `gpt-5.4-mini`).
+Both lists are public: `GET https://router.requesty.ai/v1/models/managed` and
+`GET https://router.requesty.ai/v1/models`.
+
+| Region | Base URL |
+|--------|----------|
+| Global (default) | `https://router.requesty.ai/v1` |
+| EU (Frankfurt) | `https://router.eu.requesty.ai/v1` |
+| US | `https://router.us.requesty.ai/v1` |
+| AP | `https://router.ap.requesty.ai/v1` |
+
+The same key works on every region. Pick a region with the wizard's base URL
+prompt, with `--base-url`, or by setting `REQUESTY_BASE_URL`:
+
+```bash
+mobilerun configure \
+  --provider requesty \
+  --model openai/gpt-4o-mini \
+  --base-url https://router.eu.requesty.ai/v1
+```
+
+With `api_key_source: auto`, a key saved under `apiKeys.requesty` takes
+precedence over `REQUESTY_API_KEY`. Choose **Use env key** in the wizard to force
+the shell value. See https://docs.requesty.ai for the full API reference.
 
   </Tab>
 
@@ -585,6 +624,8 @@ mobilerun ping --tcp
 | `XAI_API_KEY` | xAI API key for Grok | None |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | None |
 | `MINIMAX_API_KEY` | MiniMax API key | None |
+| `REQUESTY_API_KEY` | Requesty API key | None |
+| `REQUESTY_BASE_URL` | Requesty router URL override (for example the EU region) | `https://router.requesty.ai/v1` |
 | `MOBILERUN_CLOUD_API_KEY` | Mobilerun Cloud API key for `devices --cloud` and cloud device actions | None |
 | `MOBILERUN_CONFIG` | Config file path | `~/.config/mobilerun/config.yaml` |
 
