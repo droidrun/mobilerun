@@ -74,7 +74,11 @@ You can include these secret IDs in your plan when the task requires entering se
 {% if output_schema %}
 
 <output_requirements>
+{% if structured_manager_output %}
+**IMPORTANT:** When you complete this task, include the following information clearly in the `answer` field of the manager JSON response:
+{% else %}
 **IMPORTANT:** When you complete this task and use the `<request_accomplished>` tag, your final answer must include the following information:
+{% endif %}
 
 {{ output_schema.description if output_schema.description else "Information to collect:" }}
 
@@ -86,9 +90,14 @@ You can include these secret IDs in your plan when the task requires entering se
 
 **Important:**
 - Make sure to collect ALL required data before marking the task as complete
+{% if structured_manager_output %}
+- Include this information clearly in `answer`
+- The manager response itself must still follow the JSON contract below
+{% else %}
 - Include this information clearly in your `<request_accomplished>` message
 - Present the data in a natural, readable format - do NOT output JSON or structured data
 - Simply state the information as plain text answers
+{% endif %}
 </output_requirements>
 {% endif %}
 
@@ -96,8 +105,18 @@ You can include these secret IDs in your plan when the task requires entering se
 If an `<external_user_message>` block is present, it contains live corrections or new instructions from the user sent during execution. Treat these as the newest guidance: revise your plan accordingly, but preserve already-completed progress unless the message explicitly changes course.
 
 Carefully assess the current status and the provided screenshot. Check if the current plan needs to be revised.
-Determine if the user request has been fully completed. If you are confident that no further actions are required and the task succeeded, use the request_accomplished tag with success="true" and a confirmation message. If the task failed and cannot be completed, use success="false" with an explanation. If the user request is not finished, update the plan and don't use the request_accomplished tag. If you are stuck with errors, think step by step about whether the overall plan needs to be revised to address the error.
+Determine if the user request has been fully completed. If it is not finished, update the plan. If it succeeded, provide a confirmation; if it is blocked, explain why. If you are stuck with errors, think step by step about whether the overall plan needs to be revised to address the error.
 NOTE: 1. If the current situation prevents proceeding with the original plan or requires clarification from the user, make reasonable assumptions and revise the plan accordingly. Act as though you are the user in such cases. 2. Please refer to the helpful information and steps in the Guidelines first for planning. 3. If the first subgoal in plan has been completed, please update the plan in time according to the screenshot and progress to ensure that the next subgoal is always the first item in the plan. 4. If the first subgoal is not completed, please copy the previous round's plan or update the plan based on the completion of the subgoal.
+{% if structured_manager_output %}
+Return exactly one JSON object matching this schema:
+
+{{ manager_decision_schema }}
+
+For unfinished work, set `plan` to the remaining ordered steps, set `current_subgoal` to the first step, and set `success` and `answer` to null.
+For a completed or blocked request, set `plan` and `current_subgoal` to null, set `success` to true or false, and provide `answer`.
+Use empty strings for optional reasoning metadata when there is no update. Do not wrap the JSON in markdown or add text outside it.
+
+{% else %}
 Use `<plan>` for unfinished work. Use `<request_accomplished success="true">` when the request is complete and `<request_accomplished success="false">` when it is blocked.
 
 <thought>
@@ -121,3 +140,4 @@ Confirmation of the completed request.
 <request_accomplished success="false">
 Explanation of why the request cannot be completed.
 </request_accomplished>
+{% endif %}

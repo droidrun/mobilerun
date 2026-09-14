@@ -70,6 +70,7 @@ async def acall_with_retries(
     timeout: float = 500,
     delay: float = 1.0,
     stream: bool = False,
+    llm_kwargs: Optional[dict] = None,
 ) -> ChatResponse:
     """
     Call LLM with retries and timeout handling.
@@ -81,19 +82,21 @@ async def acall_with_retries(
         timeout: Timeout in seconds for each attempt
         delay: Base delay between retries (multiplied by attempt number)
         stream: If True, stream response chunks to console in real-time
+        llm_kwargs: Provider-specific keyword arguments for the chat call
 
     Returns:
         The LLM ChatResponse object
     """
     last_exception: Optional[Exception] = None
+    llm_kwargs = llm_kwargs or {}
 
     for attempt in range(1, retries + 1):
         try:
             if stream:
-                response = await _stream_response(llm, messages, timeout)
+                response = await _stream_response(llm, messages, timeout, llm_kwargs=llm_kwargs)
             else:
                 response = await asyncio.wait_for(
-                    llm.achat(messages=messages),
+                    llm.achat(messages=messages, **llm_kwargs),
                     timeout=timeout,
                 )
 
@@ -101,7 +104,10 @@ async def acall_with_retries(
             if (
                 response is not None
                 and getattr(response, "message", None) is not None
-                and getattr(response.message, "content", None)
+                and (
+                    getattr(response.message, "content", None)
+                    or response.message.additional_kwargs.get("tool_calls")
+                )
             ):
                 if not stream:
                     logger.info(f"{response.message.content}")
@@ -128,7 +134,9 @@ async def acall_with_retries(
     raise ValueError("All attempts returned empty response content")
 
 
-async def _stream_response(llm, messages: list, timeout: float) -> ChatResponse:
+async def _stream_response(
+    llm, messages: list, timeout: float, llm_kwargs: Optional[dict] = None
+) -> ChatResponse:
     """
     Stream LLM response chunks to console and return accumulated response.
 
@@ -145,7 +153,7 @@ async def _stream_response(llm, messages: list, timeout: float) -> ChatResponse:
 
     async def stream_chunks():
         nonlocal content, last_chunk
-        async for chunk in await llm.astream_chat(messages=messages):
+        async for chunk in await llm.astream_chat(messages=messages, **(llm_kwargs or {})):
             delta = chunk.delta or ""
             if delta:
                 logger.info(delta, extra={"stream": True})
@@ -160,9 +168,7 @@ async def _stream_response(llm, messages: list, timeout: float) -> ChatResponse:
     # that providers accumulate during streaming
     response = ChatResponse(
         message=(
-            last_chunk.message
-            if last_chunk
-            else ChatMessage(role="assistant", content=content)
+            last_chunk.message if last_chunk else ChatMessage(role="assistant", content=content)
         ),
         raw=last_chunk.raw if last_chunk else None,
         additional_kwargs=last_chunk.additional_kwargs if last_chunk else {},
@@ -232,9 +238,7 @@ async def acomplete_with_retries(
     raise ValueError("All attempts returned empty response content")
 
 
-async def _stream_complete_response(
-    llm, prompt: str, timeout: float
-) -> CompletionResponse:
+async def _stream_complete_response(llm, prompt: str, timeout: float) -> CompletionResponse:
     """
     Stream LLM completion response chunks to console and return accumulated response.
 

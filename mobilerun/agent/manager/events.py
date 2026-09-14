@@ -5,7 +5,7 @@ Internal events for streaming to frontend/logging.
 For MobileAgent coordination events, see droid/events.py
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 from llama_index.core.workflow import Event
 
@@ -23,6 +23,9 @@ class ManagerResponseEvent(Event):
 
     response: str
     usage: Optional[UsageResult] = None
+    parsed_response: Optional[dict[str, Any]] = None
+    structured_output_mode: Optional[str] = None
+    semantic_retries: int = 0
 
 
 class ManagerPlanDetailsEvent(Event):

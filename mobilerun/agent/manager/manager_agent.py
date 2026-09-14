@@ -14,10 +14,11 @@ import copy
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Optional, Type
+from typing import TYPE_CHECKING, Any, Optional, Type
 
 from llama_index.core.base.llms.types import (
     ChatMessage,
+    ChatResponse,
     ImageBlock,
     MessageRole,
     TextBlock,
@@ -40,7 +41,13 @@ from mobilerun.agent.manager.prompts import (
     parse_manager_response,
     validate_manager_response,
 )
-from mobilerun.agent.usage import get_usage_from_response
+from mobilerun.agent.manager.structured_output import (
+    ManagerDecision,
+    manager_output_schema_json,
+    parse_structured_response,
+    structured_chat_options,
+)
+from mobilerun.agent.usage import UsageResult, get_usage_from_response
 from mobilerun.agent.utils.chat_utils import filter_empty_messages
 from mobilerun.agent.utils.inference import acall_with_retries
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
@@ -124,9 +131,7 @@ class ManagerAgent(Workflow):
         if not self.app_card_config.enabled:
 
             class DisabledProvider(AppCardProvider):
-                async def load_app_card(
-                    self, package_name: str, instruction: str = ""
-                ) -> str:
+                async def load_app_card(self, package_name: str, instruction: str = "") -> str:
                     return ""
 
             return DisabledProvider()
@@ -134,15 +139,11 @@ class ManagerAgent(Workflow):
         mode = self.app_card_config.mode.lower()
 
         if mode == "local":
-            return LocalAppCardProvider(
-                app_cards_dir=self.app_card_config.app_cards_dir
-            )
+            return LocalAppCardProvider(app_cards_dir=self.app_card_config.app_cards_dir)
         elif mode == "server":
             if not self.app_card_config.server_url:
                 logger.warning("Server mode but no server_url, falling back to local")
-                return LocalAppCardProvider(
-                    app_cards_dir=self.app_card_config.app_cards_dir
-                )
+                return LocalAppCardProvider(app_cards_dir=self.app_card_config.app_cards_dir)
             return ServerAppCardProvider(
                 server_url=self.app_card_config.server_url,
                 timeout=self.app_card_config.server_timeout,
@@ -150,12 +151,8 @@ class ManagerAgent(Workflow):
             )
         elif mode == "composite":
             if not self.app_card_config.server_url:
-                logger.warning(
-                    "Composite mode but no server_url, falling back to local"
-                )
-                return LocalAppCardProvider(
-                    app_cards_dir=self.app_card_config.app_cards_dir
-                )
+                logger.warning("Composite mode but no server_url, falling back to local")
+                return LocalAppCardProvider(app_cards_dir=self.app_card_config.app_cards_dir)
             return CompositeAppCardProvider(
                 server_url=self.app_card_config.server_url,
                 app_cards_dir=self.app_card_config.app_cards_dir,
@@ -164,9 +161,7 @@ class ManagerAgent(Workflow):
             )
         else:
             logger.warning(f"Unknown app_card mode '{mode}', falling back to local")
-            return LocalAppCardProvider(
-                app_cards_dir=self.app_card_config.app_cards_dir
-            )
+            return LocalAppCardProvider(app_cards_dir=self.app_card_config.app_cards_dir)
 
     async def _build_system_prompt(self) -> str:
         """Build system prompt with all context."""
@@ -204,9 +199,7 @@ class ManagerAgent(Workflow):
         custom_tools_descriptions = ""
         if self.registry:
             _standard = self.standard_tool_names or set()
-            custom_tools_descriptions = self.registry.get_tool_descriptions_text(
-                exclude=_standard
-            )
+            custom_tools_descriptions = self.registry.get_tool_descriptions_text(exclude=_standard)
 
         variables = {
             "instruction": self.shared_state.instruction,
@@ -219,6 +212,8 @@ class ManagerAgent(Workflow):
             "variables": self.shared_state.custom_variables,
             "output_schema": output_schema,
             "platform": self.shared_state.platform,
+            "structured_manager_output": self._uses_structured_output(),
+            "manager_decision_schema": manager_output_schema_json(),
         }
 
         custom_prompt = self.prompt_resolver.get_prompt("manager_system")
@@ -229,6 +224,13 @@ class ManagerAgent(Workflow):
                 self.agent_config.get_manager_system_prompt_path(),
                 variables,
             )
+
+    def _uses_structured_output(self) -> bool:
+        """Use the new contract only for the auto-selected stateful prompt."""
+
+        return self.config.system_prompt is None and not self.prompt_resolver.has_custom_prompt(
+            "manager_system"
+        )
 
     def _build_user_message_content(self) -> str:
         """Build user message content with last action context."""
@@ -272,9 +274,7 @@ class ManagerAgent(Workflow):
         messages.extend(copy.deepcopy(self.shared_state.message_history))
 
         # Find last user message
-        user_indices = [
-            i for i, msg in enumerate(messages) if msg.role == MessageRole.USER
-        ]
+        user_indices = [i for i, msg in enumerate(messages) if msg.role == MessageRole.USER]
 
         if user_indices:
             last_user_idx = user_indices[-1]
@@ -290,17 +290,13 @@ class ManagerAgent(Workflow):
             current_state = self.shared_state.formatted_device_state.strip()
             if current_state:
                 messages[last_user_idx].blocks.append(
-                    TextBlock(
-                        text=f"\n<device_state>\n{current_state}\n</device_state>\n"
-                    )
+                    TextBlock(text=f"\n<device_state>\n{current_state}\n</device_state>\n")
                 )
 
             # Add screenshot if vision enabled
             if screenshot and self.vision:
                 if should_resize_model_screenshot(self.state_provider):
-                    screenshot = resize_model_screenshot_with_grid(
-                        self.state_provider, screenshot
-                    )
+                    screenshot = resize_model_screenshot_with_grid(self.state_provider, screenshot)
                 messages[last_user_idx].blocks.append(ImageBlock(image=screenshot))
 
             # Add previous device state to second-to-last user message
@@ -317,9 +313,7 @@ class ManagerAgent(Workflow):
         messages = filter_empty_messages(messages)
         return messages
 
-    async def _validate_and_retry(
-        self, messages: list[ChatMessage], initial_response: str
-    ) -> str:
+    async def _validate_and_retry(self, messages: list[ChatMessage], initial_response: str) -> str:
         """Validate LLM response and retry if needed."""
         output = initial_response
         parsed = parse_manager_response(output)
@@ -348,7 +342,7 @@ class ManagerAgent(Workflow):
                 response = await acall_with_retries(
                     self.llm, retry_messages, stream=self.agent_config.streaming
                 )
-                output = response.message.content
+                output = response.message.content or ""
                 parsed = parse_manager_response(output)
             except Exception as e:
                 logger.error(f"LLM retry failed: {e}")
@@ -361,14 +355,78 @@ class ManagerAgent(Workflow):
             validation.error_message or "Invalid manager response."
         )
 
+    async def _validate_structured_and_retry(
+        self,
+        messages: list[ChatMessage],
+        response: ChatResponse,
+        enforcement_mode: str,
+        llm_kwargs: dict[str, object],
+    ) -> tuple[ManagerDecision, ChatResponse | None, int]:
+        """Validate once and make at most one schema-repair call."""
+
+        try:
+            return parse_structured_response(response, enforcement_mode), None, 0
+        except Exception as initial_error:
+            invalid_output = response.message.content or json.dumps(
+                response.message.additional_kwargs.get("tool_calls", []), default=str
+            )
+            repair_messages = messages + [
+                ChatMessage(role="assistant", content=invalid_output),
+                ChatMessage(
+                    role="user",
+                    content=(
+                        "The response did not satisfy the required manager JSON schema. "
+                        f"Validation error: {initial_error}. Return one corrected response."
+                    ),
+                ),
+            ]
+            logger.warning(
+                "Manager structured response invalid; requesting one repair",
+                extra={
+                    "structured_output_mode": enforcement_mode,
+                    "semantic_retries": 1,
+                },
+            )
+            try:
+                repair_response = await acall_with_retries(
+                    self.llm,
+                    repair_messages,
+                    stream=False,
+                    llm_kwargs=llm_kwargs,
+                )
+                decision = parse_structured_response(repair_response, enforcement_mode)
+                return decision, repair_response, 1
+            except Exception as repair_error:
+                raise ManagerResponseValidationError(
+                    f"Manager returned invalid structured output: {repair_error}"
+                ) from repair_error
+
+    def _response_usage(self, response: ChatResponse) -> UsageResult | None:
+        try:
+            return get_usage_from_response(self.llm.class_name(), response)
+        except Exception as error:
+            logger.warning(f"Could not get usage: {error}")
+            return None
+
+    @staticmethod
+    def _merge_usage(first: UsageResult | None, second: UsageResult | None) -> UsageResult | None:
+        if first is None:
+            return second
+        if second is None:
+            return first
+        return UsageResult(
+            request_tokens=first.request_tokens + second.request_tokens,
+            response_tokens=first.response_tokens + second.response_tokens,
+            total_tokens=first.total_tokens + second.total_tokens,
+            requests=first.requests + second.requests,
+        )
+
     # ========================================================================
     # Workflow Steps
     # ========================================================================
 
     @step
-    async def prepare_context(
-        self, ctx: Context, ev: StartEvent
-    ) -> ManagerContextEvent:
+    async def prepare_context(self, ctx: Context, ev: StartEvent) -> ManagerContextEvent:
         """Gather context and prepare manager prompt."""
         logger.debug("💬 Preparing manager context...")
 
@@ -385,8 +443,7 @@ class ManagerAgent(Workflow):
                         screenshot,
                         parent_span=parent_span,
                         screenshots_enabled=bool(
-                            self.tracing_config
-                            and self.tracing_config.langfuse_screenshots
+                            self.tracing_config and self.tracing_config.langfuse_screenshots
                         ),
                         vision_enabled=self.vision,
                     )
@@ -401,9 +458,7 @@ class ManagerAgent(Workflow):
         self.action_ctx.ui = ui_state
 
         # Update shared state (previous ← current, current ← new)
-        self.shared_state.previous_formatted_device_state = (
-            self.shared_state.formatted_device_state
-        )
+        self.shared_state.previous_formatted_device_state = self.shared_state.formatted_device_state
         self.shared_state.formatted_device_state = ui_state.formatted_text
         self.shared_state.focused_text = ui_state.focused_text
         self.shared_state.a11y_tree = ui_state.elements
@@ -439,8 +494,7 @@ class ManagerAgent(Workflow):
         drained = self.shared_state.drain_user_messages()
         if drained:
             external_block = "\n".join(
-                f"<external_user_message>\n{m.message}\n</external_user_message>"
-                for m in drained
+                f"<external_user_message>\n{m.message}\n</external_user_message>" for m in drained
             )
             user_content += "\n" + external_block + "\n"
             logger.info(
@@ -455,18 +509,14 @@ class ManagerAgent(Workflow):
                 )
             )
 
-        self.shared_state.message_history.append(
-            ChatMessage(role="user", content=user_content)
-        )
+        self.shared_state.message_history.append(ChatMessage(role="user", content=user_content))
 
         event = ManagerContextEvent()
         ctx.write_event_to_stream(event)
         return event
 
     @step
-    async def get_response(
-        self, ctx: Context, ev: ManagerContextEvent
-    ) -> ManagerResponseEvent:
+    async def get_response(self, ctx: Context, ev: ManagerContextEvent) -> ManagerResponseEvent:
         """Get LLM response."""
         logger.debug("🧠 Manager thinking about the plan...")
 
@@ -480,26 +530,59 @@ class ManagerAgent(Workflow):
             system_prompt=system_prompt, screenshot=screenshot
         )
 
+        structured_output_mode: str | None = None
+        llm_kwargs: dict[str, Any] = {}
+        use_structured_output = self._uses_structured_output()
+        if use_structured_output:
+            structured_output_mode, llm_kwargs = structured_chat_options(self.llm)
+
         try:
             logger.info("📋 Manager response:", extra={"color": "cyan"})
             response = await acall_with_retries(
-                self.llm, messages, stream=self.agent_config.streaming
+                self.llm,
+                messages,
+                stream=self.agent_config.streaming and not use_structured_output,
+                llm_kwargs=llm_kwargs,
             )
-            output = response.message.content
+            output = response.message.content or ""
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise RuntimeError(f"Error calling LLM in manager: {e}") from e
 
         # Extract usage
-        usage = None
-        try:
-            usage = get_usage_from_response(self.llm.class_name(), response)
-        except Exception as e:
-            logger.warning(f"Could not get usage: {e}")
+        usage = self._response_usage(response)
+        parsed_response = None
+        semantic_retries = 0
+        if use_structured_output:
+            assert structured_output_mode is not None
+            decision, repair_response, semantic_retries = await self._validate_structured_and_retry(
+                messages,
+                response,
+                structured_output_mode,
+                llm_kwargs,
+            )
+            if repair_response is not None:
+                usage = self._merge_usage(usage, self._response_usage(repair_response))
+                response = repair_response
+            output = decision.model_dump_json()
+            parsed_response = decision.as_manager_fields()
+            logger.info(
+                "Manager structured output accepted",
+                extra={
+                    "structured_output_mode": structured_output_mode,
+                    "semantic_retries": semantic_retries,
+                },
+            )
+        else:
+            output = await self._validate_and_retry(messages, output)
 
-        output = await self._validate_and_retry(messages, output)
-
-        event = ManagerResponseEvent(response=output, usage=usage)
+        event = ManagerResponseEvent(
+            response=output,
+            usage=usage,
+            parsed_response=parsed_response,
+            structured_output_mode=structured_output_mode,
+            semantic_retries=semantic_retries,
+        )
         ctx.write_event_to_stream(event)
         return event
 
@@ -511,7 +594,7 @@ class ManagerAgent(Workflow):
         logger.debug("⚙️ Processing manager response...")
 
         output = ev.response
-        parsed = parse_manager_response(output)
+        parsed = ev.parsed_response or parse_manager_response(output)
 
         # Update memory (append)
         memory_update = parsed.get("memory", "").strip()
@@ -519,9 +602,7 @@ class ManagerAgent(Workflow):
             self.shared_state.append_memory(memory_update)
 
         # Append assistant response to message history
-        self.shared_state.message_history.append(
-            ChatMessage(role="assistant", content=output)
-        )
+        self.shared_state.message_history.append(ChatMessage(role="assistant", content=output))
 
         # Update unified state fields
         self.shared_state.previous_plan = self.shared_state.plan
