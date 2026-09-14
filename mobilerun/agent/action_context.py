@@ -6,7 +6,7 @@ previously received.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from mobilerun_core_local.driver.base import DeviceDriver
@@ -40,3 +40,6 @@ class ActionContext:
         self.credential_manager = credential_manager
         self.streaming = streaming
         self.macro_recorder = macro_recorder
+        # ActionContext is created for each workflow run. Keep the inventory
+        # stable within that run; a subsequent run receives a fresh context.
+        self.installed_apps_cache: list[dict[str, Any]] | None = None

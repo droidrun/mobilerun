@@ -50,8 +50,10 @@ class AppStarter(Workflow):
         """
         app_description = ev.app_description
 
-        # Get list of installed apps
-        apps = await self.driver.get_apps(include_system=True)
+        # Reuse the task-scoped inventory when the caller already fetched it.
+        apps = getattr(ev, "installed_apps", None)
+        if apps is None:
+            apps = await self.driver.get_apps(include_system=True)
 
         # Format apps list for LLM
         apps_list = "\n".join(
@@ -94,9 +96,7 @@ Choose the most appropriate app based on the description. Return the package nam
             result_json = json.loads(json_str)
             package_name = result_json["package"]
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            return StopEvent(
-                result=f"Error parsing LLM response: {e}. Response: {response_text}"
-            )
+            return StopEvent(result=f"Error parsing LLM response: {e}. Response: {response_text}")
 
         if not package_name:
             logger.warning(f"No matching app found for: {app_description}")

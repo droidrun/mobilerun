@@ -7,7 +7,8 @@ interacts with the device via ``ctx.driver``, resolves UI elements via
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, List
+import re
+from typing import TYPE_CHECKING, Any, List
 
 if TYPE_CHECKING:
     from mobilerun.agent.action_context import ActionContext
@@ -59,9 +60,7 @@ def _validate_screenshot_only_point(
     except ValueError as exc:
         raise ValueError(_screenshot_only_coordinate_error(ctx)) from exc
 
-    out_of_range = (
-        width <= 0 or height <= 0 or px < 0 or px >= width or py < 0 or py >= height
-    )
+    out_of_range = width <= 0 or height <= 0 or px < 0 or px >= width or py < 0 or py >= height
     if out_of_range:
         raise ValueError(_screenshot_only_coordinate_error(ctx))
 
@@ -93,9 +92,7 @@ def _model_space_dimensions(ctx: "ActionContext") -> tuple[float, float] | None:
     return width, height
 
 
-def _validate_model_space_point(
-    x: int | float, y: int | float, *, ctx: "ActionContext"
-) -> None:
+def _validate_model_space_point(x: int | float, y: int | float, *, ctx: "ActionContext") -> None:
     dims = _model_space_dimensions(ctx)
     if dims is None:
         return
@@ -194,9 +191,7 @@ def _driver_log_length(ctx: "ActionContext") -> int | None:
     return None
 
 
-def _record_driver_log_delta(
-    ctx: "ActionContext", before: int | None, *, pre_ui=None
-) -> None:
+def _record_driver_log_delta(ctx: "ActionContext", before: int | None, *, pre_ui=None) -> None:
     if before is None:
         return
     log = getattr(getattr(ctx, "driver", None), "log", None)
@@ -228,13 +223,9 @@ async def click(index: int, *, ctx: "ActionContext") -> ActionResult:
             detail_parts.append(f"Contains text: {' | '.join(info['child_texts'])}")
         detail_parts.append(f"Coordinates: ({x}, {y})")
 
-        return ActionResult(
-            success=True, summary=f"Clicked on {' | '.join(detail_parts)}"
-        )
+        return ActionResult(success=True, summary=f"Clicked on {' | '.join(detail_parts)}")
     except ValueError as e:
-        return ActionResult(
-            success=False, summary=f"Failed to click element at index {index}: {e}"
-        )
+        return ActionResult(success=False, summary=f"Failed to click element at index {index}: {e}")
 
 
 async def long_press(index: int, *, ctx: "ActionContext") -> ActionResult:
@@ -284,9 +275,7 @@ async def long_press_at(x: int, y: int, *, ctx: "ActionContext") -> ActionResult
         )
         return ActionResult(success=True, summary=f"Long pressed at ({abs_x}, {abs_y})")
     except Exception as e:
-        return ActionResult(
-            success=False, summary=f"Failed to long press at ({x}, {y}): {e}"
-        )
+        return ActionResult(success=False, summary=f"Failed to long press at ({x}, {y}): {e}")
 
 
 async def click_at(x: int, y: int, *, ctx: "ActionContext") -> ActionResult:
@@ -305,9 +294,7 @@ async def click_at(x: int, y: int, *, ctx: "ActionContext") -> ActionResult:
         return ActionResult(success=False, summary=f"Failed to tap at ({x}, {y}): {e}")
 
 
-async def click_area(
-    x1: int, y1: int, x2: int, y2: int, *, ctx: "ActionContext"
-) -> ActionResult:
+async def click_area(x1: int, y1: int, x2: int, y2: int, *, ctx: "ActionContext") -> ActionResult:
     """Click center of area."""
     try:
         pre_ui = await _macro_pre_ui(ctx)
@@ -321,9 +308,7 @@ async def click_area(
             {"action_type": "tap", "x": abs_x, "y": abs_y},
             pre_ui=pre_ui,
         )
-        return ActionResult(
-            success=True, summary=f"Tapped center of area at ({abs_x}, {abs_y})"
-        )
+        return ActionResult(success=True, summary=f"Tapped center of area at ({abs_x}, {abs_y})")
     except Exception as e:
         return ActionResult(success=False, summary=f"Failed to tap area center: {e}")
 
@@ -351,20 +336,14 @@ async def type_text(
                 {"action_type": "input_text", "text": text, "clear": clear},
                 pre_ui=pre_ui,
             )
-            return ActionResult(
-                success=True, summary=f"Text typed successfully (clear={clear})"
-            )
+            return ActionResult(success=True, summary=f"Text typed successfully (clear={clear})")
         else:
-            return ActionResult(
-                success=False, summary="Failed to type text: input failed"
-            )
+            return ActionResult(success=False, summary="Failed to type text: input failed")
     except Exception as e:
         return ActionResult(success=False, summary=f"Failed to type text: {e}")
 
 
-async def type_text_direct(
-    text: str, clear: bool = False, *, ctx: "ActionContext"
-) -> ActionResult:
+async def type_text_direct(text: str, clear: bool = False, *, ctx: "ActionContext") -> ActionResult:
     """Type text into the currently focused input."""
     try:
         pre_ui = await _macro_pre_ui(ctx)
@@ -375,9 +354,7 @@ async def type_text_direct(
                 {"action_type": "input_text", "text": text, "clear": clear},
                 pre_ui=pre_ui,
             )
-            return ActionResult(
-                success=True, summary=f"Text typed successfully (clear={clear})"
-            )
+            return ActionResult(success=True, summary=f"Text typed successfully (clear={clear})")
         return ActionResult(success=False, summary="Failed to type text: input failed")
     except Exception as e:
         return ActionResult(success=False, summary=f"Failed to type text: {e}")
@@ -450,6 +427,16 @@ async def swipe(
 
 async def open_app(text: str, *, ctx: "ActionContext") -> ActionResult:
     """Open an app by its name."""
+    apps = getattr(ctx, "installed_apps_cache", None)
+    get_apps = getattr(ctx.driver, "get_apps", None)
+    if apps is None and callable(get_apps):
+        apps = await ctx.driver.get_apps(include_system=True)
+        ctx.installed_apps_cache = apps
+
+    package_name = _resolve_installed_app(text, apps or [])
+    if package_name is not None:
+        return await open_bundle_id(app_id=package_name, ctx=ctx)
+
     if ctx.app_opener_llm is None:
         return ActionResult(
             success=False,
@@ -466,13 +453,47 @@ async def open_app(text: str, *, ctx: "ActionContext") -> ActionResult:
 
     pre_ui = await _macro_pre_ui(ctx)
     driver_log_before = _driver_log_length(ctx)
-    result = await workflow.run(app_description=text)
+    run_kwargs: dict[str, Any] = {"app_description": text}
+    if apps is not None:
+        run_kwargs["installed_apps"] = apps
+    result: Any = await workflow.run(**run_kwargs)
     await asyncio.sleep(1)
 
     if isinstance(result, str) and "could not open app" in result.lower():
         return ActionResult(success=False, summary=result)
     _record_driver_log_delta(ctx, driver_log_before, pre_ui=pre_ui)
     return ActionResult(success=True, summary=str(result))
+
+
+def _resolve_installed_app(text: str, apps: list[dict]) -> str | None:
+    """Resolve only exact package or unambiguous normalized-label matches."""
+
+    query = text.strip()
+    package_matches = {
+        package for app in apps if (package := _app_package(app)) is not None and package == query
+    }
+    if len(package_matches) == 1:
+        return next(iter(package_matches))
+
+    normalized_query = _normalize_app_label(query)
+    if not normalized_query:
+        return None
+    label_matches = {
+        package
+        for app in apps
+        if (package := _app_package(app)) is not None
+        and _normalize_app_label(str(app.get("label", ""))) == normalized_query
+    }
+    return next(iter(label_matches)) if len(label_matches) == 1 else None
+
+
+def _app_package(app: dict) -> str | None:
+    package = app.get("package_name", app.get("package"))
+    return package.strip() if isinstance(package, str) and package.strip() else None
+
+
+def _normalize_app_label(label: str) -> str:
+    return " ".join(re.sub(r"[^\w]+", " ", label.casefold()).split())
 
 
 async def open_bundle_id(
@@ -542,9 +563,7 @@ async def complete(
     return ActionResult(success=True, summary=ctx.shared_state.answer)
 
 
-async def type_secret(
-    secret_id: str, index: int, *, ctx: "ActionContext"
-) -> ActionResult:
+async def type_secret(secret_id: str, index: int, *, ctx: "ActionContext") -> ActionResult:
     """Type a secret credential into an input field without exposing the value."""
     if ctx.credential_manager is None:
         return ActionResult(
@@ -589,9 +608,7 @@ async def type_secret(
             )
     except Exception as e:
         logger.error(f"Failed to type secret '{secret_id}': {e}")
-        available = (
-            await ctx.credential_manager.get_keys() if ctx.credential_manager else []
-        )
+        available = await ctx.credential_manager.get_keys() if ctx.credential_manager else []
         return ActionResult(
             success=False,
             summary=f"Failed to type secret '{secret_id}': not found. Available: {available}",
