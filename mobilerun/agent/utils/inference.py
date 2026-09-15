@@ -17,14 +17,87 @@ T = TypeVar("T", bound=BaseModel)
 _RETRYABLE_HTTP_CLIENT_STATUS_CODES = {408, 409, 425, 429}
 
 
-def _empty_response_diagnostics(response: object, llm: object) -> dict[str, object]:
-    """Return redacted metadata for an unusable provider response."""
+_BLOCKED_FINISH_REASONS = {
+    "safety",
+    "recitation",
+    "blocklist",
+    "prohibited_content",
+    "spii",
+    "content_filter",
+    "refusal",
+}
+_TRUNCATED_FINISH_REASONS = {"max_tokens", "length"}
+
+
+def _empty_response_category(
+    *,
+    response: object,
+    message: object,
+    is_completion: bool,
+    content: object,
+    non_text_block_count: int,
+    has_tool_calls: bool,
+    has_thinking: bool,
+    finish_reason: object,
+    stop_reason: object,
+    stream: bool,
+) -> str:
+    """Classify why a provider response carried no usable text content."""
+    if response is None:
+        return "no_response"
+    if message is None and not is_completion:
+        return "no_message"
+    reason = str(finish_reason or stop_reason or "").lower()
+    if reason in _BLOCKED_FINISH_REASONS:
+        return "provider_blocked"
+    if reason in _TRUNCATED_FINISH_REASONS:
+        return "truncated"
+    if has_tool_calls:
+        return "tool_calls_only"
+    if has_thinking:
+        return "thinking_only"
+    if non_text_block_count > 0:
+        return "blocks_without_text"
+    if stream:
+        return "empty_stream"
+    return "empty_content"
+
+
+def _as_metadata_dict(value: object) -> dict | None:
+    """Coerce a provider payload (dict or pydantic model) into a plain dict, else None."""
+    if isinstance(value, dict):
+        return value
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        try:
+            dumped = dump()
+        except Exception:
+            return None
+        return dumped if isinstance(dumped, dict) else None
+    return None
+
+
+def _empty_response_diagnostics(
+    response: object, llm: object, *, stream: bool = False
+) -> dict[str, object]:
+    """Return redacted metadata for an unusable provider response.
+
+    Only types, key names, and scalar provider metadata are returned. Prompt text,
+    message content, and full raw payloads are never included.
+    """
     message = getattr(response, "message", None) if response is not None else None
     additional = (
         getattr(response, "additional_kwargs", None) if response is not None else None
     )
-    raw = getattr(response, "raw", None) if response is not None else None
-    content = getattr(message, "content", None)
+    raw = _as_metadata_dict(
+        getattr(response, "raw", None) if response is not None else None
+    )
+    # CompletionResponse carries `text` directly instead of a message.
+    is_completion = message is None and hasattr(response, "text")
+    if is_completion:
+        content = getattr(response, "text", None)
+    else:
+        content = getattr(message, "content", None)
     blocks = getattr(message, "blocks", None) or getattr(response, "blocks", None)
     metadata = getattr(llm, "metadata", None)
     model = getattr(metadata, "model_name", None) or getattr(llm, "model", None)
@@ -41,6 +114,16 @@ def _empty_response_diagnostics(response: object, llm: object) -> dict[str, obje
     else:
         raw_keys = []
     metadata_sources = [value for value in (raw, additional) if isinstance(value, dict)]
+    # OpenAI/LiteLLM nest finish_reason under choices[0]; Gemini under candidates[0].
+    for container_key in ("choices", "candidates"):
+        entries = raw.get(container_key) if isinstance(raw, dict) else None
+        first = (
+            _as_metadata_dict(entries[0])
+            if isinstance(entries, list) and entries
+            else None
+        )
+        if first is not None:
+            metadata_sources.append(first)
 
     def scalar_meta(*names: str) -> object | None:
         for source in metadata_sources:
@@ -50,17 +133,39 @@ def _empty_response_diagnostics(response: object, llm: object) -> dict[str, obje
                     return value
         return None
 
+    has_tool_calls = bool(getattr(message, "tool_calls", None)) or bool(
+        isinstance(additional, dict) and additional.get("tool_calls")
+    )
+    has_thinking = any("think" in name.lower() for name in block_types)
+    non_text_block_count = sum(1 for name in block_types if name != "TextBlock")
+    finish_reason = scalar_meta("finish_reason", "finishReason")
+    stop_reason = scalar_meta("stop_reason", "stopReason")
+
     return {
+        "category": _empty_response_category(
+            response=response,
+            message=message,
+            is_completion=is_completion,
+            content=content,
+            non_text_block_count=non_text_block_count,
+            has_tool_calls=has_tool_calls,
+            has_thinking=has_thinking,
+            finish_reason=finish_reason,
+            stop_reason=stop_reason,
+            stream=stream,
+        ),
+        "stream": stream,
         "model": model,
         "response_type": type(response).__name__ if response is not None else None,
         "message_type": type(message).__name__ if message is not None else None,
         "content_type": type(content).__name__ if content is not None else None,
         "content_empty": not bool(content),
+        "block_count": len(block_types),
         "block_types": block_types,
-        "has_tool_calls": bool(getattr(message, "tool_calls", None)),
-        "has_thinking": any("think" in name.lower() for name in block_types),
-        "finish_reason": scalar_meta("finish_reason", "finishReason"),
-        "stop_reason": scalar_meta("stop_reason", "stopReason"),
+        "has_tool_calls": has_tool_calls,
+        "has_thinking": has_thinking,
+        "finish_reason": finish_reason,
+        "stop_reason": stop_reason,
         "provider_request_id": scalar_meta("request_id", "requestId", "id"),
         "http_status": scalar_meta("status_code", "statusCode", "status"),
         "additional_kwargs_keys": additional_keys,
@@ -68,12 +173,14 @@ def _empty_response_diagnostics(response: object, llm: object) -> dict[str, obje
     }
 
 
-def _log_empty_response(response: object, llm: object, attempt: int) -> None:
+def _log_empty_response(
+    response: object, llm: object, attempt: int, *, stream: bool = False
+) -> None:
     try:
         logger.warning(
             "LLM response unusable: attempt=%s diagnostics=%s",
             attempt,
-            _empty_response_diagnostics(response, llm),
+            _empty_response_diagnostics(response, llm, stream=stream),
         )
     except Exception:
         # Diagnostics must never turn a recoverable provider response into a task error.
@@ -171,7 +278,7 @@ async def acall_with_retries(
                 return response
             else:
                 logger.warning(f"Attempt {attempt} returned empty content")
-                _log_empty_response(response, llm, attempt)
+                _log_empty_response(response, llm, attempt, stream=stream)
                 last_exception = ValueError("Empty response content")
 
         except asyncio.TimeoutError:
@@ -276,7 +383,7 @@ async def acomplete_with_retries(
                 return response
             else:
                 logger.warning(f"Attempt {attempt} returned empty content")
-                _log_empty_response(response, llm, attempt)
+                _log_empty_response(response, llm, attempt, stream=stream)
                 last_exception = ValueError("Empty response content")
 
         except asyncio.TimeoutError:
