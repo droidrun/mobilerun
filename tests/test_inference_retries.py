@@ -6,11 +6,39 @@ from llama_index.core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from mobilerun.agent.utils.inference import (
+    _empty_response_diagnostics,
     _http_status_code,
     acall_with_retries,
     acomplete_with_retries,
     astructured_predict_with_retries,
 )
+
+
+def test_empty_response_diagnostics_are_metadata_only() -> None:
+    response = SimpleNamespace(
+        message=SimpleNamespace(
+            content="",
+            blocks=[SimpleNamespace(), SimpleNamespace()],
+            tool_calls=[{"name": "tap"}],
+        ),
+        raw={"finish_reason": "SAFETY", "secret": "must-not-log"},
+        additional_kwargs={"request_id": "req-1", "prompt": "secret"},
+    )
+    llm = SimpleNamespace(
+        model="google/gemini-3.5-flash",
+        metadata=SimpleNamespace(model_name="google/gemini-3.5-flash"),
+    )
+
+    diagnostics = _empty_response_diagnostics(response, llm)
+
+    assert diagnostics["model"] == "google/gemini-3.5-flash"
+    assert diagnostics["content_empty"] is True
+    assert diagnostics["has_tool_calls"] is True
+    assert diagnostics["finish_reason"] == "SAFETY"
+    assert diagnostics["provider_request_id"] == "req-1"
+    assert diagnostics["raw_keys"] == ["finish_reason", "secret"]
+    assert "must-not-log" not in str(diagnostics)
+    assert "prompt" in diagnostics["additional_kwargs_keys"]
 
 
 class StatusError(Exception):

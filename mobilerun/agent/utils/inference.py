@@ -17,6 +17,69 @@ T = TypeVar("T", bound=BaseModel)
 _RETRYABLE_HTTP_CLIENT_STATUS_CODES = {408, 409, 425, 429}
 
 
+def _empty_response_diagnostics(response: object, llm: object) -> dict[str, object]:
+    """Return redacted metadata for an unusable provider response."""
+    message = getattr(response, "message", None) if response is not None else None
+    additional = (
+        getattr(response, "additional_kwargs", None) if response is not None else None
+    )
+    raw = getattr(response, "raw", None) if response is not None else None
+    content = getattr(message, "content", None)
+    blocks = getattr(message, "blocks", None) or getattr(response, "blocks", None)
+    metadata = getattr(llm, "metadata", None)
+    model = getattr(metadata, "model_name", None) or getattr(llm, "model", None)
+    if isinstance(blocks, (list, tuple)):
+        block_types = [type(block).__name__ for block in blocks]
+    else:
+        block_types = []
+    if isinstance(additional, dict):
+        additional_keys = sorted(str(key) for key in additional)
+    else:
+        additional_keys = []
+    if isinstance(raw, dict):
+        raw_keys = sorted(str(key) for key in raw)
+    else:
+        raw_keys = []
+    metadata_sources = [value for value in (raw, additional) if isinstance(value, dict)]
+
+    def scalar_meta(*names: str) -> object | None:
+        for source in metadata_sources:
+            for name in names:
+                value = source.get(name)
+                if isinstance(value, (str, int, float, bool)):
+                    return value
+        return None
+
+    return {
+        "model": model,
+        "response_type": type(response).__name__ if response is not None else None,
+        "message_type": type(message).__name__ if message is not None else None,
+        "content_type": type(content).__name__ if content is not None else None,
+        "content_empty": not bool(content),
+        "block_types": block_types,
+        "has_tool_calls": bool(getattr(message, "tool_calls", None)),
+        "has_thinking": any("think" in name.lower() for name in block_types),
+        "finish_reason": scalar_meta("finish_reason", "finishReason"),
+        "stop_reason": scalar_meta("stop_reason", "stopReason"),
+        "provider_request_id": scalar_meta("request_id", "requestId", "id"),
+        "http_status": scalar_meta("status_code", "statusCode", "status"),
+        "additional_kwargs_keys": additional_keys,
+        "raw_keys": raw_keys,
+    }
+
+
+def _log_empty_response(response: object, llm: object, attempt: int) -> None:
+    try:
+        logger.warning(
+            "LLM response unusable: attempt=%s diagnostics=%s",
+            attempt,
+            _empty_response_diagnostics(response, llm),
+        )
+    except Exception:
+        # Diagnostics must never turn a recoverable provider response into a task error.
+        logger.warning("LLM response unusable: diagnostics unavailable")
+
+
 def _http_status_code(error: Exception) -> int | None:
     def read_attribute(value: object, name: str) -> object | None:
         try:
@@ -108,6 +171,7 @@ async def acall_with_retries(
                 return response
             else:
                 logger.warning(f"Attempt {attempt} returned empty content")
+                _log_empty_response(response, llm, attempt)
                 last_exception = ValueError("Empty response content")
 
         except asyncio.TimeoutError:
@@ -212,6 +276,7 @@ async def acomplete_with_retries(
                 return response
             else:
                 logger.warning(f"Attempt {attempt} returned empty content")
+                _log_empty_response(response, llm, attempt)
                 last_exception = ValueError("Empty response content")
 
         except asyncio.TimeoutError:
@@ -310,6 +375,7 @@ async def astructured_predict_with_retries(
                 return result
             else:
                 logger.warning(f"Attempt {attempt} returned None")
+                _log_empty_response(None, llm, attempt)
                 last_exception = ValueError("Empty response")
 
         except asyncio.TimeoutError:
