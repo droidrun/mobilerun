@@ -611,11 +611,11 @@ mobilerun run "Task" --config /path/to/config.yaml
 - `--config PATH` - Custom config file
 - `--device SERIAL` - Device serial/IP
 - `--agent NAME` - External agent to use. Not yet supported — reserved for future use.
-- `--provider PROVIDER` - LLM provider (OpenAI, XAI, Ollama, Anthropic, GoogleGenAI, DeepSeek, MiniMax)
+- `--provider PROVIDER` - LLM provider (OpenAI, XAI, Ollama, Anthropic, GoogleGenAI, DeepSeek, MiniMax, Requesty)
 - `--model MODEL` - LLM model name
 - `--temperature FLOAT` - LLM temperature
 - `--steps INT` - Max steps
-- `--base_url URL` - API base URL (for Ollama/OpenRouter/MiniMax)
+- `--base_url URL` - API base URL (for Ollama/OpenRouter/Requesty/MiniMax)
 - `--api_base URL` - API base URL (for OpenAI-like)
 - `--vision/--no-vision` - Enable/disable vision for all agents
 - `--reasoning/--no-reasoning` - Enable/disable reasoning mode
@@ -638,6 +638,7 @@ export ANTHROPIC_API_KEY=your-key
 export XAI_API_KEY=your-key
 export DEEPSEEK_API_KEY=your-key
 export MINIMAX_API_KEY=your-key
+export REQUESTY_API_KEY=your-key
 export MOBILERUN_CONFIG=/path/to/config.yaml  # Custom config path
 ```
 
@@ -663,6 +664,18 @@ entry. Keys pasted into the wizard are stored in the `apiKeys.minimax` entry of
 `credentials/auth-profiles.json` in the platform configuration directory; this
 file is separate from the device secrets file controlled by
 `credentials.enabled`.
+
+Requesty routes one OpenAI-compatible API across 700+ models. It uses
+`https://router.requesty.ai/v1` by default; set `REQUESTY_BASE_URL` or pass
+`--base-url https://router.eu.requesty.ai/v1` to route through the EU region.
+Model ids are `<vendor>/<model>` catalog ids or managed policy ids from
+`https://router.requesty.ai/v1/models/managed`:
+
+```bash
+mobilerun configure \
+  --provider requesty \
+  --model openai/gpt-4o-mini
+```
 
 ## Manual OAuth login
 

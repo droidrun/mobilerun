@@ -32,6 +32,11 @@ from mobilerun.agent.providers.registry import (
     list_models_for_variant,
     normalize_model_id_for_variant,
 )
+from mobilerun.agent.providers.requesty import (
+    REQUESTY_API_KEY_ENV_VAR,
+    REQUESTY_DEFAULT_MODEL,
+    resolve_requesty_base_url,
+)
 from mobilerun.agent.usage import track_usage
 
 if TYPE_CHECKING:
@@ -49,6 +54,7 @@ SUPPORTED_PROVIDERS = [
     "Anthropic",
     "DeepSeek",
     "OpenRouter",
+    "Requesty",
     "MiniMax",
     "XAI",
 ]
@@ -67,6 +73,7 @@ PROVIDER_ALIASES = {
     "zai": "ZAI",
     "z.ai": "ZAI",
     "xai": "XAI",
+    "requesty": "Requesty",
 }
 
 ZAI_GLOBAL_API_BASE = "https://api.z.ai/api/paas/v4"
@@ -795,6 +802,27 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
         if "base_url" in kwargs and "api_base" not in kwargs:
             kwargs["api_base"] = kwargs.pop("base_url")
         kwargs.setdefault("api_base", "https://api.deepseek.com")
+
+    if provider_name == "Requesty":
+        import os
+
+        api_key = kwargs.get("api_key")
+        if not isinstance(api_key, str) or not api_key.strip():
+            api_key = os.environ.get(REQUESTY_API_KEY_ENV_VAR)
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError(
+                "Requesty requires an API key. Pass api_key explicitly or set "
+                f"{REQUESTY_API_KEY_ENV_VAR}."
+            )
+
+        provider_name = "OpenAILike"
+        kwargs["api_key"] = api_key
+        kwargs.setdefault("model", REQUESTY_DEFAULT_MODEL)
+        kwargs.setdefault("is_chat_model", True)
+        kwargs.setdefault("is_function_calling_model", True)
+        base_url = kwargs.pop("base_url", None)
+        if not kwargs.get("api_base"):
+            kwargs["api_base"] = resolve_requesty_base_url(base_url)
 
     # --- Standard providers (inline dispatch) ---
     if provider_name == "OpenAIResponses":
