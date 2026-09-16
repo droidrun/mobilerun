@@ -38,6 +38,24 @@ def _as_dict(value: object) -> dict:
         return {}
 
 
+def _first_choice(mapping: dict, key: str) -> dict:
+    value = mapping.get(key)
+    if isinstance(value, list) and value:
+        return _as_dict(value[0])
+    return {}
+
+
+def _content_block_types(message_extra: dict) -> list[str]:
+    blocks = message_extra.get("content_blocks")
+    if not isinstance(blocks, list):
+        return []
+    types: list[str] = []
+    for block in blocks:
+        if isinstance(block, dict) and isinstance(block.get("type"), str):
+            types.append(block["type"])
+    return types
+
+
 def _empty_response_diagnostics(
     response: object, llm: object, *, stream: bool = False
 ) -> dict[str, object]:
@@ -45,11 +63,20 @@ def _empty_response_diagnostics(
     message = getattr(response, "message", None)
     raw = _as_dict(getattr(response, "raw", None))
     extra = _as_dict(getattr(response, "additional_kwargs", None))
-    # finish_reason lives at top level, under LiteLLM choices[0], or Gemini candidates[0]
-    sources = [raw, extra] + [
-        _as_dict(raw[k][0])
-        for k in ("choices", "candidates")
-        if isinstance(raw.get(k), list) and raw[k]
+    message_extra = _as_dict(getattr(message, "additional_kwargs", None))
+    # Gemini OAuth stores the generateContent payload under raw["response"].
+    nested = _as_dict(raw.get("response"))
+    # finish_reason lives at top level, under LiteLLM choices[0], Gemini
+    # candidates[0], or the nested Code Assist envelope.
+    sources = [
+        raw,
+        extra,
+        message_extra,
+        nested,
+        _first_choice(raw, "choices"),
+        _first_choice(raw, "candidates"),
+        _first_choice(nested, "choices"),
+        _first_choice(nested, "candidates"),
     ]
 
     def scalar(*names: str) -> object | None:
@@ -60,8 +87,19 @@ def _empty_response_diagnostics(
         return None
 
     blocks = [type(b).__name__ for b in getattr(message, "blocks", None) or []]
-    tool_calls = bool(getattr(message, "tool_calls", None) or extra.get("tool_calls"))
-    thinking = any("think" in b.lower() for b in blocks)
+    block_types = _content_block_types(message_extra)
+    tool_calls = bool(
+        getattr(message, "tool_calls", None)
+        or extra.get("tool_calls")
+        or message_extra.get("tool_calls")
+        or "ToolCallBlock" in blocks
+        or "tool_use" in block_types
+    )
+    thinking = bool(
+        any("think" in b.lower() for b in blocks)
+        or message_extra.get("thinking")
+        or "thinking" in block_types
+    )
     reason = str(
         scalar("finish_reason", "finishReason", "stop_reason", "stopReason") or ""
     ).lower()

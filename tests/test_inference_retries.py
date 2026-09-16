@@ -10,6 +10,7 @@ from llama_index.core.base.llms.types import (
     ChatResponse,
     CompletionResponse,
     ThinkingBlock,
+    ToolCallBlock,
 )
 from llama_index.core.prompts import PromptTemplate
 from pydantic import BaseModel
@@ -63,7 +64,67 @@ def _chat(content: str = "", **kwargs) -> ChatResponse:
         (
             ChatResponse(
                 message=ChatMessage(
+                    role="assistant",
+                    content="",
+                    additional_kwargs={
+                        "tool_calls": [{"id": "toolu_1", "name": "harmless"}]
+                    },
+                )
+            ),
+            False,
+            "tool_calls_only",
+            None,
+        ),
+        (
+            ChatResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    blocks=[
+                        ToolCallBlock(tool_name="harmless", tool_call_id="c1"),
+                    ],
+                )
+            ),
+            False,
+            "tool_calls_only",
+            None,
+        ),
+        (
+            ChatResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content="",
+                    additional_kwargs={
+                        "content_blocks": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_1",
+                                "name": "harmless",
+                                "input": {},
+                            }
+                        ]
+                    },
+                )
+            ),
+            False,
+            "tool_calls_only",
+            None,
+        ),
+        (
+            ChatResponse(
+                message=ChatMessage(
                     role="assistant", blocks=[ThinkingBlock(content="t")]
+                )
+            ),
+            False,
+            "thinking_only",
+            None,
+        ),
+        (
+            ChatResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content="",
+                    additional_kwargs={"thinking": {"type": "thinking"}},
                 )
             ),
             False,
@@ -75,6 +136,12 @@ def _chat(content: str = "", **kwargs) -> ChatResponse:
             False,
             "truncated",
             "length",
+        ),
+        (
+            _chat(raw={"response": {"candidates": [{"finishReason": "MAX_TOKENS"}]}}),
+            False,
+            "truncated",
+            "max_tokens",
         ),
     ],
 )
@@ -89,7 +156,12 @@ def test_empty_response_category(response, stream, category, finish_reason) -> N
 def test_empty_response_diagnostics_never_leak_content() -> None:
     response = ChatResponse(
         message=ChatMessage(
-            role="assistant", blocks=[ThinkingBlock(content="private reasoning")]
+            role="assistant",
+            blocks=[ThinkingBlock(content="private reasoning")],
+            additional_kwargs={
+                "thinking": {"content": "hidden thought"},
+                "tool_calls": [{"input": "secret arg"}],
+            },
         ),
         raw=RawModel(id="req-1", choices=[{"message": {"content": "leaked"}}]),
         additional_kwargs={"prompt": "user prompt"},
@@ -101,7 +173,13 @@ def test_empty_response_diagnostics_never_leak_content() -> None:
     assert diagnostics["provider_request_id"] == "req-1"
     assert diagnostics["raw_keys"] == ["choices", "id"]
     assert diagnostics["additional_kwargs_keys"] == ["prompt"]
-    for secret in ("private reasoning", "leaked", "user prompt"):
+    for secret in (
+        "private reasoning",
+        "leaked",
+        "user prompt",
+        "hidden thought",
+        "secret arg",
+    ):
         assert secret not in rendered
 
 
@@ -180,6 +258,52 @@ def test_empty_responses_log_category_and_still_retry(call, category) -> None:
         pytest.raises(ValueError, match="Empty response"),
     ):
         asyncio.run(call(llm))
+
+    diagnostics = [m for m in messages if "LLM response unusable" in m]
+    assert llm.calls == 3
+    assert len(diagnostics) == 3
+    assert f"'category': '{category}'" in diagnostics[0]
+    assert "hello" not in diagnostics[0]
+
+
+class ScriptedChatLLM:
+    def __init__(self, response: ChatResponse) -> None:
+        self.calls = 0
+        self._response = response
+
+    async def achat(self, *, messages):
+        self.calls += 1
+        return self._response
+
+
+@pytest.mark.parametrize(
+    ("response", "category"),
+    [
+        (
+            ChatResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content="",
+                    additional_kwargs={
+                        "tool_calls": [{"id": "toolu_1", "name": "harmless"}]
+                    },
+                )
+            ),
+            "tool_calls_only",
+        ),
+        (
+            _chat(raw={"response": {"candidates": [{"finishReason": "MAX_TOKENS"}]}}),
+            "truncated",
+        ),
+    ],
+)
+def test_adapter_empty_shapes_log_category_and_still_retry(response, category) -> None:
+    llm = ScriptedChatLLM(response)
+    with (
+        _captured_logs() as messages,
+        pytest.raises(ValueError, match="Empty response"),
+    ):
+        asyncio.run(acall_with_retries(llm, ["hello"], retries=3, delay=0))
 
     diagnostics = [m for m in messages if "LLM response unusable" in m]
     assert llm.calls == 3
