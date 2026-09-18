@@ -69,6 +69,7 @@ The executor has access to the following secret IDs via the type_secret custom a
 {% endfor %}
 
 You can include these secret IDs in your plan when the task requires entering sensitive information (passwords, API keys, etc.). The executor will use `type_secret(secret_id, index)` to type them securely without exposing values.
+For mixed text, you may plan placeholders like `{% raw %}{{MY_PASSWORD}}{% endraw %}` inside `type` text; placeholders are resolved only during tool execution and logs keep the placeholder, not the secret value.
 </available_secrets>
 {% endif %}
 {% if output_schema %}

@@ -67,6 +67,17 @@ class FakeCredentialManager:
         return "super-secret-password"
 
 
+class MappingCredentialManager:
+    def __init__(self, values):
+        self.values = values
+
+    async def get_keys(self):
+        return self.values.keys()
+
+    async def resolve_key(self, secret_id):
+        return self.values[secret_id]
+
+
 def test_wait_records_first_class_macro_action():
     recorder = MacroRecorder()
     ctx = SimpleNamespace(macro_recorder=recorder, ui=FakeUI())
@@ -128,6 +139,42 @@ def test_type_text_with_index_records_input_with_refreshed_pre_state():
     assert "target_hint" not in recorder.actions[0]
     assert recorder.actions[1]["pre_state"]["nodes"][0]["focused"] is True
     assert "target_hint" not in recorder.actions[1]
+
+
+def test_type_text_credential_placeholder_records_placeholder_not_secret():
+    first_ui = FakeUI()
+    focused_ui = FakeUI()
+    focused_ui.elements = [
+        {
+            "index": 7,
+            "resourceId": "com.example:id/name",
+            "className": "android.widget.EditText",
+            "text": "",
+            "focused": True,
+            "bounds": "10,20,110,60",
+        }
+    ]
+
+    recorder = MacroRecorder()
+    driver = FakeDriver()
+    ctx = SimpleNamespace(
+        driver=driver,
+        ui=first_ui,
+        macro_recorder=recorder,
+        credential_manager=MappingCredentialManager(
+            {"PASSWORD": "super-secret-password"}
+        ),
+        state_provider=SequencedStateProvider([first_ui, focused_ui]),
+    )
+
+    result = asyncio.run(type_text("{{PASSWORD}}", index=7, clear=True, ctx=ctx))
+
+    assert result.success
+    assert driver.inputs == [("super-secret-password", True)]
+    input_action = recorder.actions[1]
+    assert input_action["action_type"] == "input_text"
+    assert input_action["text"] == "{{PASSWORD}}"
+    assert "super-secret-password" not in str(recorder.actions)
 
 
 def test_type_secret_records_replayable_secret_action_not_placeholder():
