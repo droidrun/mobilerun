@@ -134,6 +134,8 @@ async def run_command(
     tracing: bool | None = None,
     debug: bool | None = None,
     tcp: bool | None = None,
+    cloud: bool = False,
+    cloud_base_url: str | None = None,
     control_backend: str | None = None,
     device_id: str | None = None,
     save_trajectory: str | None = None,
@@ -219,6 +221,51 @@ async def run_command(
         if device_id is not None:
             config.device.device_id = device_id
 
+        injected_driver = None
+        if cloud:
+            if ios:
+                raise ValueError("--cloud and --ios are mutually exclusive")
+            if tcp:
+                raise ValueError("--cloud and --tcp are mutually exclusive")
+            if config.device.control_backend:
+                raise ValueError("--cloud and --control-backend are mutually exclusive")
+
+            cloud_device_id = device_id or device
+            if not cloud_device_id:
+                configured_id = (config.device.device_id or "").strip()
+                if configured_id and configured_id != "auto":
+                    cloud_device_id = configured_id
+            if not cloud_device_id:
+                raise ValueError(
+                    "Cloud device id required: pass -d <uuid> or --device-id <uuid>"
+                )
+
+            cloud_api_key = resolve_cloud_api_key()
+            if not cloud_api_key:
+                raise ValueError(
+                    f"No cloud credential found. Set {CLOUD_API_KEY_ENV} or run `mobilerun login`."
+                )
+
+            from mobilerun_core_local.driver.cloud import CloudDriver
+
+            injected_driver = CloudDriver(
+                device_id=cloud_device_id,
+                api_key=cloud_api_key,
+                base_url=cloud_base_url or DEFAULT_CLOUD_BASE_URL,
+            )
+            await injected_driver.connect()
+
+            # CloudDriver returns the cloud API's Android-shaped accessibility
+            # payload for Android and iOS devices, so pair it with the framework's
+            # AndroidStateProvider. The driver still sends all actions to the
+            # selected cloud device.
+            config.device.platform = "android"
+            config.device.serial = None
+            config.device.device_id = cloud_device_id
+            config.device.use_tcp = False
+            config.device.auto_setup = False
+            logger.info(f"☁️  Cloud device: {cloud_device_id}")
+
         if (
             config.device.control_backend or ""
         ).strip().lower() == VISUAL_REMOTE_CONNECTION:
@@ -292,6 +339,7 @@ async def run_command(
             goal=command,
             llms=llm,
             config=config,
+            driver=injected_driver,
             timeout=1000,
             **droid_agent_kwargs,
         )
@@ -335,7 +383,8 @@ async def run_command(
             logger.debug(traceback.format_exc())
         return False
     finally:
-        await _cleanup_android_keyboard(config)
+        if not cloud:
+            await _cleanup_android_keyboard(config)
 
 
 async def _cleanup_android_keyboard(config: MobileConfig) -> None:
@@ -457,7 +506,12 @@ except Exception:
 @cli.command()
 @click.argument("command", type=str)
 @click.option("--config", "-c", help="Path to custom config file", default=None)
-@click.option("--device", "-d", help="Device serial number or IP address", default=None)
+@click.option(
+    "--device",
+    "-d",
+    help="Local device serial/IP or cloud device UUID with --cloud",
+    default=None,
+)
 @click.option(
     "--agent",
     "-a",
@@ -523,6 +577,17 @@ except Exception:
     help="Use TCP communication for device control",
 )
 @click.option(
+    "--cloud",
+    is_flag=True,
+    default=False,
+    help="Run the local Mobilerun agent against a Mobilerun Cloud device",
+)
+@click.option(
+    "--cloud-base-url",
+    default=None,
+    help=f"Cloud API base URL (default {DEFAULT_CLOUD_BASE_URL})",
+)
+@click.option(
     "--control-backend",
     type=click.Choice([VISUAL_REMOTE_CONNECTION]),
     default=None,
@@ -531,7 +596,7 @@ except Exception:
 @click.option(
     "--device-id",
     default=None,
-    help="Device id for backends that expose multiple devices.",
+    help="Cloud device UUID or id for backends that expose multiple devices.",
 )
 @click.option(
     "--save-trajectory",
@@ -559,6 +624,8 @@ async def run(
     tracing: bool | None,
     debug: bool | None,
     tcp: bool | None,
+    cloud: bool,
+    cloud_base_url: str | None,
     control_backend: str | None,
     device_id: str | None,
     save_trajectory: str | None,
@@ -583,6 +650,8 @@ async def run(
         tracing=tracing,
         debug=debug,
         tcp=tcp,
+        cloud=cloud,
+        cloud_base_url=cloud_base_url,
         control_backend=control_backend,
         device_id=device_id,
         temperature=temperature,
