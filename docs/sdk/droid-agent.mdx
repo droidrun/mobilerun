@@ -98,21 +98,19 @@ result = await agent.run()
 **Custom LLM dictionary pattern:**
 
 ```python
-from mobilerun import MobileAgent
+from mobilerun import MobileAgent, load_llm
 from mobilerun.config_manager import MobileConfig
-from llama_index.llms.openai import OpenAI
-from llama_index.llms.anthropic import Anthropic
 
 # Initialize config
 config = MobileConfig()
 
 # Create custom LLMs
 llms = {
-    "manager": Anthropic(model="claude-sonnet-4-5-latest", temperature=0.2),
-    "executor": Anthropic(model="claude-sonnet-4-5-latest", temperature=0.1),
-    "fast_agent": OpenAI(model="gpt-4o", temperature=0.2),
-    "app_opener": OpenAI(model="gpt-4o-mini", temperature=0.0),
-    "structured_output": OpenAI(model="gpt-4o-mini", temperature=0.0),
+    "manager": load_llm("Anthropic", model="claude-sonnet-5"),
+    "executor": load_llm("Anthropic", model="claude-sonnet-5"),
+    "fast_agent": load_llm("OpenAIResponses", model="gpt-6-astra"),
+    "app_opener": load_llm("OpenAIResponses", model="gpt-6-sol"),
+    "structured_output": load_llm("OpenAIResponses", model="gpt-6-sol"),
 }
 
 # Create agent with custom LLMs
@@ -128,15 +126,14 @@ result = await agent.run()
 **Single LLM pattern:**
 
 ```python
-from mobilerun import MobileAgent
+from mobilerun import MobileAgent, load_llm
 from mobilerun.config_manager import MobileConfig
-from llama_index.llms.openai import OpenAI
 
 # Initialize config
 config = MobileConfig()
 
 # Use same LLM for all agents
-llm = OpenAI(model="gpt-4o", temperature=0.2)
+llm = load_llm("OpenAIResponses", model="gpt-6-astra")
 
 agent = MobileAgent(
     goal="Take a screenshot and save it",

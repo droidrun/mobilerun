@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from llama_index.core.types import PydanticProgramMode
 
 from mobilerun.agent.utils.llm_picker import (
     load_llm,
@@ -38,6 +39,8 @@ def test_normalize_provider_name_accepts_user_facing_aliases(
     "model",
     [
         "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "gpt-5.5",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -68,6 +71,8 @@ def test_openai_responses_current_reasoning_models_omit_sampling_params(
     "model",
     [
         "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "gpt-5.5",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -128,8 +133,9 @@ def test_openai_structured_predict_omits_per_call_sampling_params(
     assert async_result.value == "OK"
     for payload in (sync_payload, async_payload):
         assert {"temperature", "top_p"}.isdisjoint(payload)
-        if model == "gpt-6-astra":
+        if model.startswith("gpt-6-"):
             assert {"top_logprobs", "logprobs"}.isdisjoint(payload)
+        if model == "gpt-6-astra":
             assert payload["reasoning"] == {"effort": "low"}
         assert payload["max_output_tokens"] == 32
 
@@ -138,6 +144,8 @@ def test_openai_structured_predict_omits_per_call_sampling_params(
     ("model", "context_window"),
     [
         ("gpt-6-astra", 1_050_000),
+        ("gpt-6-sol", 1_050_000),
+        ("gpt-6-luna", 1_050_000),
         ("gpt-5.5", 1_050_000),
         ("gpt-5.6-sol", 1_050_000),
         ("gpt-5.6-terra", 1_050_000),
@@ -448,10 +456,13 @@ def test_gemini_oauth_allows_live_unadvertised_2_5_ids(model: str) -> None:
         "gemini-3.8-flash",
         "gemini-3.7-flash",
         "gemini-3.6-flash",
+        "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
     ],
 )
-def test_new_google_genai_models_omit_sampling_configuration(model: str) -> None:
+def test_gemini_3_google_genai_models_omit_sampling_configuration(model: str) -> None:
     from google.genai import types
 
     llm = load_llm(
@@ -817,10 +828,10 @@ def test_google_async_structured_paths_strip_sampling_payload(model: str) -> Non
     asyncio.run(run())
 
 
-def test_existing_google_genai_model_keeps_sampling_configuration() -> None:
+def test_pre_gemini_3_google_genai_model_keeps_sampling_configuration() -> None:
     llm = load_llm(
         "GoogleGenAI",
-        model="gemini-3.5-flash",
+        model="gemini-2.5-flash",
         api_key="stub",
         max_tokens=64,
         context_window=1_000_000,
@@ -850,11 +861,13 @@ def test_explicit_retired_default_google_profile_remains_loadable() -> None:
 
 
 def test_gemini_oauth_supported_choices_come_from_registry() -> None:
-    with pytest.raises(ValueError, match="gemini-3.6-flash-high"):
+    with pytest.raises(ValueError, match="gemini-3.8-flash-high"):
         load_llm("gemini_oauth_code_assist", model="gemini-3.5-flash")
 
 
-@pytest.mark.parametrize("model", ["claude-opus-4-8", "claude-fable-5-1"])
+@pytest.mark.parametrize(
+    "model", ["claude-opus-4-8", "claude-fable-5-1", "claude-opus-5-5"]
+)
 def test_anthropic_opus_4_omits_default_temperature(model: str) -> None:
     llm = load_llm(
         "Anthropic",
@@ -951,8 +964,9 @@ def test_anthropic_profile_uses_the_shared_2048_token_default() -> None:
     assert llm.max_tokens == 2048
 
 
-def test_anthropic_fable_5_1_uses_text_structured_output_fallback(
-    monkeypatch,
+@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5"])
+def test_anthropic_forced_tool_choice_models_use_text_structured_output(
+    monkeypatch, model: str
 ) -> None:
     from llama_index.core.base.llms.types import ChatMessage, ChatResponse
     from llama_index.core.prompts import PromptTemplate
@@ -964,7 +978,7 @@ def test_anthropic_fable_5_1_uses_text_structured_output_fallback(
 
     llm = load_llm(
         "Anthropic",
-        model="claude-fable-5-1",
+        model=model,
         api_key="stub",
     )
     monkeypatch.setattr(
@@ -985,12 +999,15 @@ def test_anthropic_fable_5_1_uses_text_structured_output_fallback(
     assert result == StructuredResult(value="OK")
 
 
-def test_anthropic_fable_5_1_overrides_unsupported_function_program_mode() -> None:
+@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5"])
+def test_anthropic_forced_tool_choice_models_override_function_program_mode(
+    model: str,
+) -> None:
     from llama_index.core.types import PydanticProgramMode
 
     llm = load_llm(
         "Anthropic",
-        model="claude-fable-5-1",
+        model=model,
         api_key="stub",
         pydantic_program_mode=PydanticProgramMode.FUNCTION,
     )
@@ -1015,6 +1032,7 @@ def test_anthropic_preserves_explicit_max_tokens(max_tokens: int) -> None:
     ("model", "context_window"),
     [
         ("claude-fable-5-1", 1_000_000),
+        ("claude-opus-5-5", 1_000_000),
         ("claude-opus-5", 1_000_000),
         ("claude-sonnet-5", 1_000_000),
         ("claude-fable-5", 1_000_000),
@@ -1043,6 +1061,7 @@ def test_anthropic_current_catalog_models_have_metadata(
     "model",
     [
         "claude-fable-5-1",
+        "claude-opus-5-5",
         "claude-opus-5",
         "claude-sonnet-5",
         "claude-fable-5",
@@ -1219,3 +1238,129 @@ def test_ollama_wizard_default_includes_context_window() -> None:
     from mobilerun.agent.providers.setup_service import DEFAULT_KWARGS_BY_VARIANT
 
     assert DEFAULT_KWARGS_BY_VARIANT["Ollama"] == {"context_window": 32768}
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+def test_gpt_6_sol_and_luna_forward_reasoning_without_a_default(model: str) -> None:
+    configured = load_llm(
+        "OpenAIResponses",
+        model=model,
+        api_key="stub",
+        reasoning_options={"effort": "none"},
+    )
+    unconfigured = load_llm("OpenAIResponses", model=model, api_key="stub")
+
+    assert configured._get_model_kwargs()["reasoning"] == {"effort": "none"}
+    assert "reasoning" not in unconfigured._get_model_kwargs()
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [("gpt-6-astra", "none"), ("gpt-6-sol", "minimal"), ("gpt-6-luna", "minimal")],
+)
+def test_gpt_6_models_reject_unsupported_reasoning_effort(
+    model: str, effort: str
+) -> None:
+    llm = load_llm(
+        "OpenAIResponses",
+        model=model,
+        api_key="stub",
+        reasoning_options={"effort": effort},
+    )
+
+    with pytest.raises(ValueError, match=f"{model} does not support reasoning"):
+        llm._get_model_kwargs()
+
+
+@pytest.mark.parametrize(
+    ("model", "context_window"),
+    [("MiniMax-M3", 1_000_000), ("MiniMax-M2.7", 204_800)],
+)
+@pytest.mark.parametrize("provider", ["MiniMax", "OpenAILike"])
+def test_minimax_endpoint_gets_capabilities_and_split_reasoning(
+    provider: str, model: str, context_window: int
+) -> None:
+    llm = load_llm(
+        provider,
+        model=model,
+        api_key="stub",
+        api_base="https://api.minimax.io/v1",
+        additional_kwargs={"extra_body": {"custom": 1}},
+    )
+
+    assert llm.metadata.is_function_calling_model is True
+    assert llm.metadata.context_window == context_window
+    assert llm.pydantic_program_mode is PydanticProgramMode.LLM
+    assert llm.additional_kwargs["extra_body"] == {
+        "custom": 1,
+        "reasoning_split": True,
+    }
+
+
+def test_minimax_explicit_reasoning_split_is_preserved() -> None:
+    llm = load_llm(
+        "OpenAILike",
+        model="MiniMax-M3",
+        api_key="stub",
+        api_base="https://api.minimaxi.com/v1/",
+        additional_kwargs={"extra_body": {"reasoning_split": False}},
+    )
+
+    assert llm.additional_kwargs["extra_body"] == {"reasoning_split": False}
+
+
+def test_openai_like_non_minimax_endpoint_is_unchanged() -> None:
+    llm = load_llm(
+        "OpenAILike",
+        model="MiniMax-M3",
+        api_key="stub",
+        api_base="https://openrouter.example/v1",
+    )
+
+    assert "extra_body" not in (llm.additional_kwargs or {})
+    assert llm.metadata.is_function_calling_model is False
+
+
+@pytest.mark.parametrize("model", [None, "deepseek-flash", "deepseek-chat"])
+def test_deepseek_uses_current_model_metadata(model: str | None) -> None:
+    kwargs = {"model": model} if model else {}
+    llm = load_llm("DeepSeek", api_key="stub", **kwargs)
+
+    assert llm.model == (model or "deepseek-flash")
+    assert llm.metadata.is_function_calling_model is True
+    assert llm.metadata.context_window == 1_048_576
+    assert llm.pydantic_program_mode is PydanticProgramMode.LLM
+
+
+@pytest.mark.parametrize("base_url", [None, "https://minimax-proxy.example/v1"])
+def test_minimax_alias_always_gets_minimax_defaults(base_url: str | None) -> None:
+    kwargs = {"base_url": base_url} if base_url else {}
+    llm = load_llm("MiniMax", api_key="stub", **kwargs)
+
+    assert llm.model == "MiniMax-M3"
+    assert llm.metadata.context_window == 1_000_000
+    assert llm.additional_kwargs["extra_body"] == {"reasoning_split": True}
+
+
+def test_responses_parser_keeps_each_message_once() -> None:
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    def message(text: str) -> ResponseOutputMessage:
+        return ResponseOutputMessage(
+            id=f"msg-{text}",
+            type="message",
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+        )
+
+    llm = load_llm("OpenAIResponses", model="gpt-6-sol", api_key="stub")
+    parsed = type(llm)._parse_response_output(
+        [message("first"), message("second"), message("third")]
+    )
+
+    assert [block.text for block in parsed.message.blocks] == [
+        "first",
+        "second",
+        "third",
+    ]

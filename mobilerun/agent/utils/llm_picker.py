@@ -3,32 +3,46 @@ import logging
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
-from llama_index.core.base.llms.types import LLMMetadata
+from llama_index.core.base.llms.types import (
+    ChatMessage,
+    ChatResponse,
+    LLMMetadata,
+    MessageRole,
+)
 from llama_index.core.llms.llm import LLM
+from llama_index.core.types import PydanticProgramMode
 
 from mobilerun.agent.providers.anthropic import (
     ANTHROPIC_API_DEFAULT_MODEL,
-    ANTHROPIC_FABLE_5_1_MODEL,
+    ANTHROPIC_MODELS_WITHOUT_FORCED_TOOL_CHOICE,
     ANTHROPIC_UNSUPPORTED_SAMPLING_PARAMS,
     anthropic_model_context_window,
     anthropic_model_omits_sampling_params,
 )
 from mobilerun.agent.providers.grok import (
+    GROK_API_DEFAULT_MODEL,
     GROK_CONTEXT_WINDOW,
-    GROK_DEFAULT_MODEL,
     XAI_API_BASE,
     normalize_grok_model_id,
     sanitize_grok_responses_kwargs,
 )
 from mobilerun.agent.providers.minimax import (
+    MINIMAX_DEFAULT_MODEL,
     MINIMAX_GLOBAL_BASE_URL,
+    apply_minimax_defaults,
+    is_minimax_base_url,
     warn_if_legacy_minimax_endpoint,
 )
 from mobilerun.agent.providers.registry import (
     GEMINI_API_DEFAULT_MODEL,
+    GEMINI_UNSUPPORTED_SAMPLING_PARAMS,
     OPENAI_API_DEFAULT_MODEL,
     OPENAI_ASTRA_DEFAULT_REASONING_EFFORT,
+    OPENAI_GPT6_CONTEXT_WINDOW,
+    OPENAI_GPT6_MODELS,
     OPENAI_OAUTH_UNSUPPORTED_MODELS,
+    OPENAI_REASONING_EFFORTS,
+    gemini_model_omits_sampling_params,
     list_models_for_variant,
     normalize_model_id_for_variant,
 )
@@ -83,6 +97,8 @@ GEMINI_OAUTH_UNSUPPORTED_MODELS = {
 }
 OPENAI_RESPONSES_MODELS_WITHOUT_SAMPLING_PARAMS = {
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.5",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
@@ -93,17 +109,17 @@ OPENAI_RESPONSES_MODELS_WITHOUT_SAMPLING_PARAMS = {
 }
 OPENAI_RESPONSES_UNSUPPORTED_SAMPLING_PARAMS = {"temperature", "top_p"}
 OPENAI_ASTRA_MODEL = "gpt-6-astra"
-OPENAI_ASTRA_CONTEXT_WINDOW = 1_050_000
-OPENAI_ASTRA_UNSUPPORTED_PARAMS = {"logprobs", "top_logprobs"}
-OPENAI_ASTRA_UNSUPPORTED_INCLUDE = "message.output_text.logprobs"
-OPENAI_ASTRA_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
-GOOGLE_GENAI_MODELS_WITHOUT_SAMPLING_PARAMS = {
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite",
+OPENAI_GPT6_UNSUPPORTED_PARAMS = {"logprobs", "top_logprobs"}
+OPENAI_GPT6_UNSUPPORTED_INCLUDE = "message.output_text.logprobs"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
+DEEPSEEK_CONTEXT_WINDOW = 1_048_576
+# deepseek-chat and deepseek-reasoner are server aliases for deepseek-flash.
+DEEPSEEK_FUNCTION_CALLING_MODELS = {
+    "deepseek-flash",
+    "deepseek-v4-pro",
+    "deepseek-chat",
+    "deepseek-reasoner",
 }
-GOOGLE_GENAI_UNSUPPORTED_SAMPLING_PARAMS = {"temperature", "top_p", "top_k"}
 
 
 def normalize_provider_name(provider_name: str) -> str:
@@ -210,33 +226,65 @@ def _prepare_ollama_kwargs(kwargs: dict[str, Any], llm_class: Any) -> dict[str, 
     return kwargs
 
 
+def _patch_responses_output_parser(responses_cls: Any) -> None:
+    """Parse Responses output items one at a time.
+
+    llama-index-llms-openai re-appends earlier message text for every message
+    item, so multi-message outputs repeat text.
+    """
+    original = responses_cls._parse_response_output
+    if getattr(original, "_mobilerun_patched", False):
+        return
+
+    def parse_response_output(output: list[Any]) -> ChatResponse:
+        message = ChatMessage(role=MessageRole.ASSISTANT, blocks=[])
+        additional_kwargs: dict[str, Any] = {"built_in_tool_calls": []}
+        for item in output:
+            parsed = original([item])
+            message.blocks.extend(parsed.message.blocks)
+            item_kwargs = dict(parsed.additional_kwargs)
+            additional_kwargs["built_in_tool_calls"].extend(
+                item_kwargs.pop("built_in_tool_calls", [])
+            )
+            additional_kwargs.update(item_kwargs)
+        return ChatResponse(message=message, additional_kwargs=additional_kwargs)
+
+    parse_response_output._mobilerun_patched = True  # type: ignore[attr-defined]
+    responses_cls._parse_response_output = staticmethod(parse_response_output)
+
+
 def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
     from llama_index.llms.openai.responses import OpenAIResponses
     from llama_index.llms.openai.utils import to_openai_message_dicts
 
+    # Upstream calls the parser through the class, so patch it there.
+    _patch_responses_output_parser(OpenAIResponses)
+
     class MobilerunOpenAIResponses(OpenAIResponses):
         @staticmethod
-        def _validate_astra_reasoning(reasoning: object) -> None:
+        def _validate_gpt6_reasoning(model: str, reasoning: object) -> None:
             if reasoning is None:
                 return
             if not isinstance(reasoning, dict):
                 raise ValueError(
-                    "gpt-6-astra reasoning must be a mapping with an optional "
+                    f"{model} reasoning must be a mapping with an optional "
                     "'effort' value."
                 )
             effort = reasoning.get("effort")
             if effort is None:
                 return
-            if effort not in OPENAI_ASTRA_REASONING_EFFORTS:
-                supported = ", ".join(sorted(OPENAI_ASTRA_REASONING_EFFORTS))
+            supported_efforts = OPENAI_REASONING_EFFORTS[model]
+            if effort not in supported_efforts:
+                supported = ", ".join(sorted(supported_efforts))
                 raise ValueError(
-                    f"gpt-6-astra does not support reasoning effort {effort!r}; "
+                    f"{model} does not support reasoning effort {effort!r}; "
                     f"use one of: {supported}."
                 )
 
         @classmethod
-        def _sanitize_astra_payload_fields(
+        def _sanitize_gpt6_payload_fields(
             cls,
+            model: str,
             payload: dict[str, Any],
             *,
             drop_model: bool = False,
@@ -244,7 +292,7 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
             sanitized = dict(payload)
             unsupported = (
                 OPENAI_RESPONSES_UNSUPPORTED_SAMPLING_PARAMS
-                | OPENAI_ASTRA_UNSUPPORTED_PARAMS
+                | OPENAI_GPT6_UNSUPPORTED_PARAMS
             )
             for param in unsupported:
                 sanitized.pop(param, None)
@@ -254,14 +302,21 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
                 filtered_include = [
                     value
                     for value in include
-                    if value != OPENAI_ASTRA_UNSUPPORTED_INCLUDE
+                    if value != OPENAI_GPT6_UNSUPPORTED_INCLUDE
                 ]
                 sanitized["include"] = filtered_include or None
 
-            cls._validate_astra_reasoning(sanitized.get("reasoning"))
+            cls._validate_gpt6_reasoning(model, sanitized.get("reasoning"))
             if drop_model:
                 sanitized.pop("model", None)
             return sanitized
+
+        def _gpt6_model(self, effective_model: object) -> str | None:
+            if self.model in OPENAI_GPT6_MODELS:
+                return self.model
+            if effective_model in OPENAI_GPT6_MODELS:
+                return str(effective_model)
+            return None
 
         def _sanitize_call_kwargs(
             self,
@@ -285,33 +340,32 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
             if _openai_responses_model_omits_sampling_params(effective_model):
                 for param in OPENAI_RESPONSES_UNSUPPORTED_SAMPLING_PARAMS:
                     sanitized.pop(param, None)
-            if (
-                self.model == OPENAI_ASTRA_MODEL
-                or effective_model == OPENAI_ASTRA_MODEL
-            ):
-                sanitized = self._sanitize_astra_payload_fields(sanitized)
-                # Apply the default after configured and per-call overrides.
-                sanitized.setdefault(
-                    "reasoning", {"effort": OPENAI_ASTRA_DEFAULT_REASONING_EFFORT}
-                )
+            gpt6_model = self._gpt6_model(effective_model)
+            if gpt6_model is not None:
+                sanitized = self._sanitize_gpt6_payload_fields(gpt6_model, sanitized)
+                if gpt6_model == OPENAI_ASTRA_MODEL:
+                    # Apply the default after configured and per-call overrides.
+                    sanitized.setdefault(
+                        "reasoning",
+                        {"effort": OPENAI_ASTRA_DEFAULT_REASONING_EFFORT},
+                    )
                 extra_body = sanitized.get("extra_body")
                 if isinstance(extra_body, dict):
-                    sanitized["extra_body"] = self._sanitize_astra_payload_fields(
+                    sanitized["extra_body"] = self._sanitize_gpt6_payload_fields(
+                        gpt6_model,
                         extra_body,
                         drop_model=True,
                     )
-                if self.model == OPENAI_ASTRA_MODEL:
+                if self.model in OPENAI_GPT6_MODELS:
                     sanitized["model"] = self.model
             return sanitized
 
         def _get_model_kwargs(self, **kwargs: Any) -> dict[str, Any]:
             model_kwargs = super()._get_model_kwargs(**kwargs)
             effective_model = model_kwargs.get("model", self.model)
+            # llama-index forwards reasoning_options only for ids it knows.
             if (
-                (
-                    self.model == OPENAI_ASTRA_MODEL
-                    or effective_model == OPENAI_ASTRA_MODEL
-                )
+                self._gpt6_model(effective_model) is not None
                 and "reasoning" not in model_kwargs
                 and self.reasoning_options is not None
             ):
@@ -320,10 +374,10 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
 
         @property
         def metadata(self) -> LLMMetadata:
-            if self.model != OPENAI_ASTRA_MODEL:
+            if self.model not in OPENAI_GPT6_MODELS:
                 return super().metadata
             return LLMMetadata(
-                context_window=self.context_window or OPENAI_ASTRA_CONTEXT_WINDOW,
+                context_window=self.context_window or OPENAI_GPT6_CONTEXT_WINDOW,
                 num_output=self.max_output_tokens or -1,
                 is_chat_model=True,
                 is_function_calling_model=True,
@@ -334,7 +388,7 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
             self, call_kwargs: dict[str, Any]
         ) -> dict[str, Any]:
             merged = dict(call_kwargs)
-            if not grok and self.model == OPENAI_ASTRA_MODEL:
+            if not grok and self.model in OPENAI_GPT6_MODELS:
                 configured: dict[str, Any] = {}
                 if self.include is not None:
                     configured["include"] = self.include
@@ -354,7 +408,7 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
                 sanitized.pop("store", None)
                 sanitized.pop("model", None)
                 sanitized.pop("tool_choice", None)
-            elif self.model == OPENAI_ASTRA_MODEL:
+            elif self.model in OPENAI_GPT6_MODELS:
                 # The upstream structured adapter supplies these explicitly.
                 sanitized.pop("model", None)
                 sanitized.pop("store", None)
@@ -450,16 +504,16 @@ def _load_google_genai(**kwargs: Any) -> LLM:
     class MobilerunGoogleGenAI(GoogleGenAI):
         def __init__(self, **init_kwargs: Any) -> None:
             super().__init__(**init_kwargs)
-            if self.model in GOOGLE_GENAI_MODELS_WITHOUT_SAMPLING_PARAMS:
-                for param in GOOGLE_GENAI_UNSUPPORTED_SAMPLING_PARAMS:
+            if gemini_model_omits_sampling_params(self.model):
+                for param in GEMINI_UNSUPPORTED_SAMPLING_PARAMS:
                     self._generation_config.pop(param, None)
 
         def _sanitize_call_kwargs(self, call_kwargs: dict[str, Any]) -> dict[str, Any]:
-            if self.model not in GOOGLE_GENAI_MODELS_WITHOUT_SAMPLING_PARAMS:
+            if not gemini_model_omits_sampling_params(self.model):
                 return call_kwargs
 
             sanitized = dict(call_kwargs)
-            for param in GOOGLE_GENAI_UNSUPPORTED_SAMPLING_PARAMS:
+            for param in GEMINI_UNSUPPORTED_SAMPLING_PARAMS:
                 sanitized.pop(param, None)
 
             generation_config = sanitized.get("generation_config")
@@ -470,7 +524,7 @@ def _load_google_genai(**kwargs: Any) -> LLM:
                     generation_config = dict(generation_config)
                 else:
                     return sanitized
-                for param in GOOGLE_GENAI_UNSUPPORTED_SAMPLING_PARAMS:
+                for param in GEMINI_UNSUPPORTED_SAMPLING_PARAMS:
                     generation_config.pop(param, None)
                 sanitized["generation_config"] = generation_config
             return sanitized
@@ -572,7 +626,6 @@ def _load_google_genai(**kwargs: Any) -> LLM:
 
 
 def _load_anthropic(**kwargs: Any) -> LLM:
-    from llama_index.core.types import PydanticProgramMode
     from llama_index.llms.anthropic import Anthropic
 
     class MobilerunAnthropic(Anthropic):
@@ -654,10 +707,10 @@ def _load_anthropic(**kwargs: Any) -> LLM:
     if kwargs.get("max_tokens") is None:
         kwargs["max_tokens"] = 2048
 
-    # Fable 5.1 currently rejects the tool_choice payload produced by the
-    # locked Anthropic adapter for function-based Pydantic programs. Its text
-    # path returns the same validated Pydantic result without that field.
-    if kwargs.get("model") == ANTHROPIC_FABLE_5_1_MODEL:
+    # These models reject the forced tool_choice payload produced by the locked
+    # Anthropic adapter for function-based Pydantic programs. Their text path
+    # returns the same validated Pydantic result without that field.
+    if kwargs.get("model") in ANTHROPIC_MODELS_WITHOUT_FORCED_TOOL_CHOICE:
         kwargs["pydantic_program_mode"] = PydanticProgramMode.LLM
 
     filtered_kwargs = {k: v for k, v in kwargs.items() if v is not None}
@@ -672,7 +725,7 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
 
     Args:
         provider_name: Case-sensitive provider name (e.g. "OpenAIResponses", "Ollama").
-        model: Model name (e.g. "gpt-5.5", "gemini-3.7-flash").
+        model: Model name (e.g. "gpt-6-astra", "gemini-3.8-flash").
         **kwargs: Keyword arguments for the LLM class constructor.
 
     Returns:
@@ -739,11 +792,13 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
 
         provider_name = "OpenAILike"
         kwargs["api_key"] = api_key
+        kwargs.setdefault("model", MINIMAX_DEFAULT_MODEL)
         kwargs.setdefault("is_chat_model", True)
         base_url = kwargs.pop("base_url", None)
         if not kwargs.get("api_base"):
             kwargs["api_base"] = base_url or MINIMAX_GLOBAL_BASE_URL
         warn_if_legacy_minimax_endpoint(kwargs.get("api_base"))
+        kwargs = apply_minimax_defaults(kwargs)
 
     if provider_name == "ZAI":
         provider_name = "OpenAILike"
@@ -770,7 +825,7 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
         kwargs["api_key"] = api_key
         # The lowercase runtime alias should be useful without a separately
         # generated profile. Keep its implicit model aligned with the catalog.
-        kwargs.setdefault("model", GROK_DEFAULT_MODEL)
+        kwargs.setdefault("model", GROK_API_DEFAULT_MODEL)
         # XAI_API_KEY must only ever be sent to xAI's pinned endpoint. Ignore
         # generic CLI/profile URL overrides rather than allowing a malicious
         # config to redirect the bearer credential to another host.
@@ -787,11 +842,15 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
 
         provider_name = "OpenAILike"
         kwargs.setdefault("api_key", os.environ.get("DEEPSEEK_API_KEY"))
+        kwargs.setdefault("model", DEEPSEEK_DEFAULT_MODEL)
         kwargs.setdefault("is_chat_model", True)
         kwargs.setdefault(
-            "is_function_calling_model", kwargs.get("model") == "deepseek-chat"
+            "is_function_calling_model",
+            kwargs.get("model") in DEEPSEEK_FUNCTION_CALLING_MODELS,
         )
-        kwargs.setdefault("context_window", 64000)
+        kwargs.setdefault("context_window", DEEPSEEK_CONTEXT_WINDOW)
+        # Thinking mode rejects the forced tool_choice of function programs.
+        kwargs.setdefault("pydantic_program_mode", PydanticProgramMode.LLM)
         if "base_url" in kwargs and "api_base" not in kwargs:
             kwargs["api_base"] = kwargs.pop("base_url")
         kwargs.setdefault("api_base", "https://api.deepseek.com")
@@ -807,6 +866,8 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
         kwargs.setdefault("is_chat_model", True)
         if "base_url" in kwargs and "api_base" not in kwargs:
             kwargs["api_base"] = kwargs.pop("base_url")
+        if is_minimax_base_url(kwargs.get("api_base")):
+            kwargs = apply_minimax_defaults(kwargs)
     elif provider_name == "GoogleGenAI":
         kwargs.setdefault("model", GEMINI_API_DEFAULT_MODEL)
         return _load_google_genai(**kwargs)
@@ -906,24 +967,22 @@ if __name__ == "__main__":
     #   llama-index-llms-gemini \
     #   llama-index-llms-openai
 
-    from llama_index.core.base.llms.types import ChatMessage
-
     providers = [
         {
             "name": "Anthropic",
-            "model": "claude-3-7-sonnet-latest",
+            "model": "claude-sonnet-5",
         },
         {
             "name": "DeepSeek",
-            "model": "deepseek-reasoner",
+            "model": "deepseek-flash",
         },
         {
             "name": "GoogleGenAI",
-            "model": "gemini-3.7-flash",
+            "model": "gemini-3.8-flash",
         },
         {
             "name": "OpenAIResponses",
-            "model": "gpt-4",
+            "model": "gpt-6-astra",
         },
         {
             "name": "Ollama",

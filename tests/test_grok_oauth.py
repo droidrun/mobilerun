@@ -23,7 +23,7 @@ from llama_index.core.base.llms.types import (
     ToolCallBlock,
 )
 
-from mobilerun.agent.providers.grok import GROK_DEFAULT_MODEL
+from mobilerun.agent.providers.grok import GROK_OAUTH_DEFAULT_MODEL
 from mobilerun.agent.usage import get_usage_from_response
 from mobilerun.agent.utils.oauth.grok_oauth_llm import (
     DEFAULT_GROK_CONTEXT_WINDOW,
@@ -62,7 +62,7 @@ class _AcceptingIDTokenValidator:
 
 
 def test_oauth_default_uses_shared_xai_catalog_default() -> None:
-    assert DEFAULT_GROK_MODEL == GROK_DEFAULT_MODEL == "grok-4.6"
+    assert DEFAULT_GROK_MODEL == GROK_OAUTH_DEFAULT_MODEL == "grok-4.7"
 
 
 class _FakeClock:
@@ -1425,7 +1425,7 @@ def test_oauth_adapter_sync_and_async_stream_emit_completed_usage(
         assert {"temperature", "top_p", "reasoning"}.isdisjoint(payload)
 
 
-@pytest.mark.parametrize("model", ("grok-4.6", "grok-4.5"))
+@pytest.mark.parametrize("model", ("grok-4.7", "grok-4.6", "grok-4.5"))
 def test_oauth_adapter_async_responses_request_uses_exact_model_in_header_and_body(
     tmp_path: Path, model: str
 ):
@@ -1674,3 +1674,26 @@ def test_grok_integration_source_does_not_bridge_to_external_credentials():
         "subprocess" + ".run",
     )
     assert not any(value in source for value in forbidden)
+
+
+@pytest.mark.parametrize("model", ("grok-4.5", "grok-4.5-latest", "xai/grok-4.5"))
+def test_oauth_saved_grok_4_5_profiles_still_load(model: str, tmp_path) -> None:
+    llm = GrokOAuth(
+        model=model,
+        oauth_access_token="stub",
+        credential_path=str(tmp_path / "auth-profiles.json"),
+    )
+    try:
+        assert llm.model == "grok-4.5"
+    finally:
+        llm._client.close()
+        asyncio.run(llm._aclient.close())
+
+
+def test_oauth_rejects_unknown_grok_models(tmp_path) -> None:
+    with pytest.raises(ValueError, match="not supported with XAI OAuth"):
+        GrokOAuth(
+            model="grok-4.7-build-fast",
+            oauth_access_token="stub",
+            credential_path=str(tmp_path / "auth-profiles.json"),
+        )

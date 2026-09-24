@@ -115,15 +115,16 @@ async def main():
     """
     Example of how to use the OpenAppWorkflow.
     """
-    from llama_index.llms.openai import OpenAI
     from mobilerun_core_local.driver.android import AndroidDriver
+
+    from mobilerun.agent.utils.llm_picker import load_llm
 
     # Initialize driver with device serial (None for default device)
     driver = AndroidDriver(serial=None)
     await driver.connect()
 
     # Initialize LLM
-    llm = OpenAI(model="gpt-4o-mini")
+    llm = load_llm("OpenAIResponses", model="gpt-6-sol")
 
     # Create workflow instance
     workflow = AppStarter(driver=driver, llm=llm, timeout=60, verbose=True)

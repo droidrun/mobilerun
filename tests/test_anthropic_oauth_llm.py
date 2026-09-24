@@ -75,6 +75,7 @@ def test_opus_4_8_payload_sends_max_tokens_without_temperature():
 @pytest.mark.parametrize(
     ("model", "context_window"),
     [
+        ("claude-opus-5-5", 1_000_000),
         ("claude-opus-5", 1_000_000),
         ("claude-sonnet-5", 1_000_000),
         ("claude-fable-5-1", 1_000_000),
@@ -96,6 +97,7 @@ def test_current_model_metadata_has_verified_context_window(model, context_windo
 @pytest.mark.parametrize(
     "model",
     [
+        "claude-opus-5-5",
         "claude-opus-5",
         "claude-sonnet-5",
         "claude-fable-5-1",
@@ -126,22 +128,24 @@ def test_models_without_sampling_strip_all_final_payload_overrides(model):
     assert {"temperature", "top_p", "top_k"}.isdisjoint(session.payload)
 
 
-def test_fable_5_1_uses_high_resolution_vision_budget():
-    assert "claude-fable-5-1" in ANTHROPIC_HIGHRES_MODELS
+@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5"])
+def test_current_models_use_high_resolution_vision_budget(model):
+    assert model in ANTHROPIC_HIGHRES_MODELS
 
 
 def test_fable_5_1_uses_current_claude_code_identity_defaults():
     session = _session_for(model="claude-fable-5-1")
 
-    assert DEFAULT_CLAUDE_CODE_VERSION == "2.1.259"
-    assert DEFAULT_USER_AGENT == "claude-cli/2.1.259"
-    assert DEFAULT_CC_VERSION == "2.1.259.000"
+    assert DEFAULT_CLAUDE_CODE_VERSION == "2.1.281"
+    assert DEFAULT_USER_AGENT == "claude-cli/2.1.281"
+    assert DEFAULT_CC_VERSION == "2.1.281.000"
     assert session.headers["User-Agent"] == DEFAULT_USER_AGENT
     assert f"cc_version={DEFAULT_CC_VERSION};" in session.payload["system"][0]["text"]
 
 
 @pytest.mark.parametrize(
-    "model", ["claude-fable-5-1", "claude-opus-4-7", "claude-haiku-4-5"]
+    "model",
+    ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-4-7", "claude-haiku-4-5"],
 )
 def test_oauth_structured_predict_uses_text_pydantic_extraction(monkeypatch, model):
     from llama_index.core.base.llms.types import ChatResponse
@@ -293,3 +297,7 @@ def test_system_message_text_reaches_system_blocks():
     system_texts = [block["text"] for block in payload["system"]]
     assert "be terse" in system_texts
     assert all(m["role"] != "system" for m in payload["messages"])
+
+
+def test_default_timeout_covers_unstreamed_thinking_replies():
+    assert AnthropicOAuthLLM(credential_path=None).timeout == 180.0

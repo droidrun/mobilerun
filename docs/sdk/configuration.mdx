@@ -240,24 +240,23 @@ CredentialsConfig(
 ```python
 from mobilerun import MobileAgent, load_llm
 
-llm = load_llm("GoogleGenAI", model="gemini-3.7-flash")
+llm = load_llm("GoogleGenAI", model="gemini-3.8-flash")
 agent = MobileAgent(goal="...", llms=llm)
 ```
 
 ### Per-Agent LLMs
 
 ```python
-from mobilerun import load_llm
-from llama_index.llms.openai import OpenAI
+from mobilerun import MobileAgent, load_llm
 
 agent = MobileAgent(
     goal="...",
     llms={
-        "manager": OpenAI(model="gpt-4o"),                    # Planning
-        "executor": load_llm("GoogleGenAI", model="gemini-3.7-flash"),  # Action selection
-        "fast_agent": load_llm("GoogleGenAI", model="gemini-3.7-flash"),   # Fast Agent: Direct execution (XML tool-calling)
-        "app_opener": OpenAI(model="gpt-4o-mini"),            # App launching
-        "structured_output": load_llm("GoogleGenAI", model="gemini-3.7-flash"),  # Output extraction
+        "manager": load_llm("OpenAIResponses", model="gpt-6-astra"),  # Planning
+        "executor": load_llm("GoogleGenAI", model="gemini-3.8-flash"),  # Action selection
+        "fast_agent": load_llm("GoogleGenAI", model="gemini-3.8-flash"),   # Fast Agent: Direct execution (XML tool-calling)
+        "app_opener": load_llm("OpenAIResponses", model="gpt-6-sol"),  # App launching
+        "structured_output": load_llm("GoogleGenAI", model="gemini-3.8-flash"),  # Output extraction
     }
 )
 ```
@@ -400,7 +399,6 @@ from mobilerun import (
     AgentConfig, FastAgentConfig, DeviceConfig, LoggingConfig, TracingConfig,
     load_llm,
 )
-from llama_index.llms.openai import OpenAI
 from pydantic import BaseModel
 
 # Structured output
@@ -440,11 +438,11 @@ agent = MobileAgent(
 
     # LLMs
     llms={
-        "manager": OpenAI(model="gpt-4o"),                    # Planning
-        "executor": load_llm("GoogleGenAI", model="gemini-3.7-flash"),  # Action selection
-        "fast_agent": load_llm("GoogleGenAI", model="gemini-3.7-flash"),   # Fast Agent: Direct execution (XML tool-calling)
-        "app_opener": OpenAI(model="gpt-4o-mini"),            # App launching
-        "structured_output": load_llm("GoogleGenAI", model="gemini-3.7-flash"),  # Output extraction
+        "manager": load_llm("OpenAIResponses", model="gpt-6-astra"),  # Planning
+        "executor": load_llm("GoogleGenAI", model="gemini-3.8-flash"),  # Action selection
+        "fast_agent": load_llm("GoogleGenAI", model="gemini-3.8-flash"),   # Fast Agent: Direct execution (XML tool-calling)
+        "app_opener": load_llm("OpenAIResponses", model="gpt-6-sol"),  # App launching
+        "structured_output": load_llm("GoogleGenAI", model="gemini-3.8-flash"),  # Output extraction
     },
 
     # Custom tools
@@ -517,33 +515,33 @@ agent:
 llm_profiles:
   manager:
     provider: GoogleGenAI
-    model: gemini-3.7-flash
+    model: gemini-3.8-flash
     temperature: 0.2
     kwargs:
       max_tokens: 8192
 
   executor:
     provider: GoogleGenAI
-    model: gemini-3.7-flash
+    model: gemini-3.8-flash
     temperature: 0.1
     kwargs:
       max_tokens: 4096
 
   fast_agent:  # Fast Agent: Direct execution (XML tool-calling)
     provider: GoogleGenAI
-    model: gemini-3.7-flash
+    model: gemini-3.8-flash
     temperature: 0.2
     kwargs:
       max_tokens: 8192
 
   app_opener:
     provider: OpenAI
-    model: gpt-4o-mini
+    model: gpt-6-sol
     temperature: 0.0
 
   structured_output:
     provider: GoogleGenAI
-    model: gemini-3.7-flash
+    model: gemini-3.8-flash
     temperature: 0.0
 
 device:
@@ -598,7 +596,7 @@ mobilerun run "Task" --steps 30 --reasoning --vision
 mobilerun run "Task" --device emulator-5554 --tcp
 
 # Override LLM (applies to ALL agents)
-mobilerun run "Task" --provider GoogleGenAI --model gemini-3.7-flash
+mobilerun run "Task" --provider GoogleGenAI --model gemini-3.8-flash
 
 # Override logging
 mobilerun run "Task" --debug --save-trajectory action --tracing
@@ -654,7 +652,8 @@ mobilerun configure \
 
 The Mainland China model catalog can lag behind the global platform. If
 `MiniMax-M3` is not available for a China account, explicitly use the supported
-`MiniMax-M2.7` model with `https://api.minimaxi.com/v1`.
+`MiniMax-M2.7` model with `https://api.minimaxi.com/v1`. `MiniMax-M3` is the only
+MiniMax model that reads screenshots; the M2.x models ignore image input.
 
 With `api_key_source: auto`, the saved
 `apiKeys.minimax` value takes precedence over `MINIMAX_API_KEY`. Select **Use env

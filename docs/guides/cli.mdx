@@ -94,13 +94,13 @@ In screenshot-only mode, Mobilerun does not read an accessibility tree. The agen
 export GOOGLE_API_KEY=your-key
 mobilerun run "Archive old emails" \
   --provider GoogleGenAI \
-  --model gemini-3.7-flash
+  --model gemini-3.8-flash
 
 # OpenAI
 export OPENAI_API_KEY=your-key
 mobilerun run "Create shopping list" \
   --provider OpenAI \
-  --model gpt-4o
+  --model gpt-6-astra
 
 # xAI Grok
 export XAI_API_KEY=your-key
@@ -112,7 +112,7 @@ mobilerun run "Open Settings" \
 export ANTHROPIC_API_KEY=your-key
 mobilerun run "Reply to latest email" \
   --provider Anthropic \
-  --model claude-sonnet-4-5-latest
+  --model claude-sonnet-5
 
 # MiniMax (global API)
 export MINIMAX_API_KEY=your-key
@@ -180,7 +180,7 @@ mobilerun configure \
   --model grok-4.6
 
 # OAuth through provider options
-mobilerun configure --provider XAI --auth-mode oauth --model grok-4.6
+mobilerun configure --provider XAI --auth-mode oauth --model grok-4.7
 
 # OAuth shortcut
 mobilerun configure xai
@@ -189,8 +189,8 @@ mobilerun configure xai
 mobilerun configure xai --device-code --no-browser
 ```
 
-Grok 4.6 is the default; Grok 4.5 remains available by selecting
-`--model grok-4.5` explicitly.
+With an API key, Grok 4.6 is the model. With OAuth, Grok 4.7 is the default and
+Grok 4.6 remains available by selecting `--model grok-4.6` explicitly.
 
 ### MiniMax endpoints and credentials
 
@@ -215,7 +215,8 @@ mobilerun configure \
 
 The Mainland China model catalog can lag behind the global platform. If
 `MiniMax-M3` is not available for your China account, explicitly select the
-still-supported `MiniMax-M2.7` model:
+still-supported `MiniMax-M2.7` model. M2.x models ignore screenshots, so use
+them without vision mode:
 
 ```bash
 mobilerun configure \

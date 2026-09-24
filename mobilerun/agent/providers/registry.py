@@ -7,12 +7,18 @@ from mobilerun.agent.providers.anthropic import (
     ANTHROPIC_OAUTH_MODELS,
 )
 from mobilerun.agent.providers.grok import (
-    GROK_DEFAULT_MODEL,
-    GROK_MODELS,
+    GROK_API_DEFAULT_MODEL,
+    GROK_API_MODELS,
+    GROK_OAUTH_DEFAULT_MODEL,
+    GROK_OAUTH_LEGACY_MODELS,
+    GROK_OAUTH_MODELS,
     XAI_API_BASE,
     normalize_grok_model_id,
 )
-from mobilerun.agent.providers.minimax import MINIMAX_GLOBAL_BASE_URL
+from mobilerun.agent.providers.minimax import (
+    MINIMAX_DEFAULT_MODEL,
+    MINIMAX_GLOBAL_BASE_URL,
+)
 from mobilerun.agent.providers.types import (
     ProviderFamilySpec,
     ProviderVariantSpec,
@@ -43,8 +49,26 @@ OPENAI_API_DEFAULT_MODEL = "gpt-6-astra"
 OPENAI_OAUTH_DEFAULT_MODEL = OPENAI_API_DEFAULT_MODEL
 OPENAI_ASTRA_DEFAULT_REASONING_EFFORT = "low"
 OPENAI_OAUTH_UNSUPPORTED_MODELS = frozenset(
-    {"gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini"}
+    {"gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
 )
+# No longer offered, but still recognized when normalizing saved model ids.
+OPENAI_LEGACY_MODELS = frozenset(
+    {"gpt-6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
+)
+# GPT-6 ids are missing from llama-index's static OpenAI metadata.
+OPENAI_GPT6_MODELS = frozenset({"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"})
+OPENAI_GPT6_CONTEXT_WINDOW = 1_050_000
+_OPENAI_NONE_TO_MAX_EFFORTS = frozenset(
+    {"none", "low", "medium", "high", "xhigh", "max"}
+)
+OPENAI_REASONING_EFFORTS: dict[str, frozenset[str]] = {
+    "gpt-6-astra": frozenset({"low", "medium", "high", "xhigh", "max"}),
+    "gpt-6-sol": _OPENAI_NONE_TO_MAX_EFFORTS,
+    "gpt-6-luna": _OPENAI_NONE_TO_MAX_EFFORTS,
+    "gpt-5.6-sol": _OPENAI_NONE_TO_MAX_EFFORTS,
+    "gpt-5.6-terra": _OPENAI_NONE_TO_MAX_EFFORTS,
+    "gpt-5.6-luna": _OPENAI_NONE_TO_MAX_EFFORTS,
+}
 
 GEMINI_API_DEFAULT_MODEL = "gemini-3.8-flash"
 GEMINI_OAUTH_DEFAULT_MODEL = "gemini-3.8-flash-tiered"
@@ -56,16 +80,23 @@ GEMINI_OAUTH_RETIRED_MODELS = frozenset(
 GEMINI_API_MODELS: tuple[str, ...] = (
     GEMINI_API_DEFAULT_MODEL,
     "gemini-3.7-flash",
-    "gemini-3.5-flash",
-    "gemini-3.6-flash",
     "gemini-3.5-flash-lite",
-    "gemini-3-flash-preview",
     "gemini-3.1-pro-preview",
 )
 _GEMINI_OAUTH_MODEL_DISPLAY_NAMES: dict[str, str] = {
     "gemini-3.8-flash-tiered": "gemini-3.8-flash",
     "gemini-3.7-flash-tiered": "gemini-3.7-flash",
 }
+GEMINI_UNSUPPORTED_SAMPLING_PARAMS = frozenset({"temperature", "top_p", "top_k"})
+
+
+def gemini_model_omits_sampling_params(model: object) -> bool:
+    """Whether mobilerun should leave sampling at Google's default.
+
+    Google recommends the default temperature for Gemini 3 models.
+    """
+    model_id = str(model or "").strip()
+    return model_id.startswith("gemini-3") or model_id == "gemini-pro-agent"
 
 
 PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
@@ -89,14 +120,13 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 default_model=GEMINI_OAUTH_DEFAULT_MODEL,
                 models=(
                     GEMINI_OAUTH_DEFAULT_MODEL,
+                    "gemini-3.8-flash-low",
+                    "gemini-3.8-flash-medium",
+                    "gemini-3.8-flash-high",
                     "gemini-3.7-flash-tiered",
                     "gemini-3.5-flash-lite",
-                    "gemini-3-flash",
                     "gemini-pro-agent",
                     "gemini-3.1-pro-low",
-                    "gemini-3.6-flash-low",
-                    "gemini-3.6-flash-medium",
-                    "gemini-3.6-flash-high",
                 ),
                 credential_path=str(GEMINI_OAUTH_CREDENTIAL_PATH),
             ),
@@ -113,13 +143,10 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 default_model=OPENAI_API_DEFAULT_MODEL,
                 models=(
                     OPENAI_API_DEFAULT_MODEL,
-                    "gpt-5.5",
+                    "gpt-6-sol",
                     "gpt-5.6-sol",
                     "gpt-5.6-terra",
                     "gpt-5.6-luna",
-                    "gpt-5.4",
-                    "gpt-5.4-mini",
-                    "gpt-5.4-nano",
                 ),
                 requires_api_key=True,
             ),
@@ -130,7 +157,7 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 default_model=OPENAI_OAUTH_DEFAULT_MODEL,
                 models=(
                     OPENAI_OAUTH_DEFAULT_MODEL,
-                    "gpt-5.5",
+                    "gpt-6-sol",
                     "gpt-5.6-sol",
                     "gpt-5.6-terra",
                     "gpt-5.6-luna",
@@ -170,8 +197,8 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 id="XAI",
                 runtime_provider_name="XAI",
                 auth_mode="api_key",
-                default_model=GROK_DEFAULT_MODEL,
-                models=GROK_MODELS,
+                default_model=GROK_API_DEFAULT_MODEL,
+                models=GROK_API_MODELS,
                 requires_api_key=True,
                 base_url=XAI_API_BASE,
             ),
@@ -179,8 +206,8 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 id="xai_oauth",
                 runtime_provider_name="xai_oauth",
                 auth_mode="oauth",
-                default_model=GROK_DEFAULT_MODEL,
-                models=GROK_MODELS,
+                default_model=GROK_OAUTH_DEFAULT_MODEL,
+                models=GROK_OAUTH_MODELS,
                 credential_path=str(GROK_OAUTH_CREDENTIAL_PATH),
             ),
         ),
@@ -227,11 +254,11 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 runtime_provider_name="MiniMax",
                 runtime_transport_provider_name="OpenAILike",
                 auth_mode="api_key",
-                default_model="MiniMax-M3",
+                default_model=MINIMAX_DEFAULT_MODEL,
                 models=(
-                    "MiniMax-M3",
+                    MINIMAX_DEFAULT_MODEL,
                     "MiniMax-M2.7",
-                    "MiniMax-M2.5-highspeed",
+                    "MiniMax-M2.7-highspeed",
                 ),
                 requires_api_key=True,
                 requires_base_url=True,
@@ -332,6 +359,12 @@ def normalize_model_id_for_variant(
     """Normalize accepted model aliases to the canonical model id for a variant."""
     variant = resolve_provider_variant(family_id, auth_mode)
     known_model_ids = set(variant.models)
+    if family_id == "openai":
+        known_model_ids.update(OPENAI_LEGACY_MODELS)
+    elif family_id == "xai":
+        known_model_ids.update(
+            GROK_API_MODELS, GROK_OAUTH_MODELS, GROK_OAUTH_LEGACY_MODELS
+        )
     if family_id == "openai" and auth_mode == "oauth":
         # Normalize unsupported OAuth ids with prefixes, so they reach the local
         # unsupported-model error instead of bypassing validation.

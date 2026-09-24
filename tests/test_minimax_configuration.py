@@ -36,7 +36,7 @@ def test_minimax_registry_uses_current_global_endpoint() -> None:
     assert variant.models == (
         "MiniMax-M3",
         "MiniMax-M2.7",
-        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.7-highspeed",
     )
     assert MINIMAX_CHINA_BASE_URL == "https://api.minimaxi.com/v1"
     assert MINIMAX_LEGACY_BASE_URL == "https://api.minimaxi.chat/v1"

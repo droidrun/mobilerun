@@ -1437,7 +1437,7 @@ if __name__ == "__main__":
     command = "use open_app to open the settings and search for the battery and enter the first result"
     device = None
     provider = "OpenAIResponses"
-    model = "gpt-5.4-pro"
+    model = "gpt-6-astra"
     temperature = 1
     api_key = os.getenv("OPENAI_API_KEY")
     steps = 15
