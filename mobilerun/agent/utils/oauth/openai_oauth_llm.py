@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import os
 import secrets
@@ -34,6 +35,8 @@ import httpx
 from llama_index.core.base.llms.types import (
     ChatMessage,
     ChatResponse,
+    ChatResponseAsyncGen,
+    ChatResponseGen,
     LLMMetadata,
     MessageRole,
 )
@@ -78,6 +81,15 @@ _GPT_6_UNSUPPORTED_PARAMS = frozenset(
 _GPT_6_UNSUPPORTED_INCLUDE = "message.output_text.logprobs"
 # Codex reports this context window for ChatGPT-account models.
 _CODEX_CONTEXT_WINDOW = 272_000
+
+
+async def _aclose_events(events: Any) -> None:
+    # openai.AsyncStream exposes an async close(), not aclose().
+    close = getattr(events, "aclose", None) or getattr(events, "close", None)
+    if callable(close):
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
 
 def _b64_no_pad(raw: bytes) -> str:
@@ -1166,9 +1178,7 @@ class OpenAIOAuth(OpenAI):
                 elif event_type == "response.completed":
                     final_response = getattr(event, "response", None)
         finally:
-            aclose = getattr(events, "aclose", None)
-            if callable(aclose):
-                await aclose()
+            await _aclose_events(events)
 
         collected = "".join(text_parts)
         if collected:
@@ -1191,12 +1201,10 @@ class OpenAIOAuth(OpenAI):
             return True
         return "404" in str(exc) and "not found" in str(exc).lower()
 
-    @llm_retry_decorator
-    def _chat(self, messages: list[ChatMessage], **kwargs: Any) -> ChatResponse:
+    def _codex_request_kwargs(
+        self, messages: list[ChatMessage], kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
         kwargs = self._sanitize_reasoning_kwargs(kwargs)
-        self._ensure_access_token()
-        client = self._get_client()
-        payload = self._build_responses_payload(messages)
         request_kwargs: dict[str, Any] = {
             "model": self.model,
             "instructions": self._resolve_codex_instructions(messages),
@@ -1209,19 +1217,56 @@ class OpenAIOAuth(OpenAI):
         for key in ("reasoning", "include", "service_tier", "text"):
             if key in kwargs and kwargs[key] is not None:
                 request_kwargs[key] = kwargs[key]
+        return request_kwargs
+
+    def _should_fall_back_to_backend_api(self, exc: Exception) -> bool:
+        return self._responses_api_base == DEFAULT_CODEX_API_BASE and (
+            self._is_not_found_error(exc)
+        )
+
+    def _use_backend_api_base(self) -> None:
+        self._responses_api_base = DEFAULT_BACKEND_API_BASE
+        self.api_base = self._responses_api_base
+        self._client = None
+        self._aclient = None
+
+    @staticmethod
+    def _stream_chunk(text: str, delta: str, raw: Any = None) -> ChatResponse:
+        return ChatResponse(
+            message=ChatMessage(role=MessageRole.ASSISTANT, content=text),
+            delta=delta,
+            raw=raw,
+            additional_kwargs={},
+        )
+
+    @classmethod
+    def _stream_event_chunk(cls, event: Any, text: str) -> ChatResponse | None:
+        event_type = getattr(event, "type", "")
+        if event_type == "response.output_text.delta":
+            delta = getattr(event, "delta", None)
+            if isinstance(delta, str) and delta:
+                return cls._stream_chunk(text + delta, delta)
+        elif event_type == "response.completed":
+            response = getattr(event, "response", None)
+            final_text = getattr(response, "output_text", None)
+            if not text and isinstance(final_text, str) and final_text:
+                return cls._stream_chunk(final_text, final_text, raw=response)
+            return cls._stream_chunk(text, "", raw=response)
+        return None
+
+    @llm_retry_decorator
+    def _chat(self, messages: list[ChatMessage], **kwargs: Any) -> ChatResponse:
+        request_kwargs = self._codex_request_kwargs(messages, kwargs)
+        self._ensure_access_token()
+        client = self._get_client()
+        payload = self._build_responses_payload(messages)
 
         try:
             events = client.responses.create(input=payload, **request_kwargs)
             text, response = self._collect_stream_text_sync(events)
         except Exception as exc:
-            if (
-                self._responses_api_base == DEFAULT_CODEX_API_BASE
-                and self._is_not_found_error(exc)
-            ):
-                self._responses_api_base = DEFAULT_BACKEND_API_BASE
-                self.api_base = self._responses_api_base
-                self._client = None
-                self._aclient = None
+            if self._should_fall_back_to_backend_api(exc):
+                self._use_backend_api_base()
                 client = self._get_client()
                 events = client.responses.create(input=payload, **request_kwargs)
                 text, response = self._collect_stream_text_sync(events)
@@ -1236,35 +1281,17 @@ class OpenAIOAuth(OpenAI):
 
     @llm_retry_decorator
     async def _achat(self, messages: list[ChatMessage], **kwargs: Any) -> ChatResponse:
-        kwargs = self._sanitize_reasoning_kwargs(kwargs)
+        request_kwargs = self._codex_request_kwargs(messages, kwargs)
         self._ensure_access_token()
         aclient = self._get_aclient()
         payload = self._build_responses_payload(messages)
-        request_kwargs: dict[str, Any] = {
-            "model": self.model,
-            "instructions": self._resolve_codex_instructions(messages),
-            "tools": [],
-            "tool_choice": "auto",
-            "parallel_tool_calls": True,
-            "store": False,
-            "stream": True,
-        }
-        for key in ("reasoning", "include", "service_tier", "text"):
-            if key in kwargs and kwargs[key] is not None:
-                request_kwargs[key] = kwargs[key]
 
         try:
             events = await aclient.responses.create(input=payload, **request_kwargs)
             text, response = await self._collect_stream_text_async(events)
         except Exception as exc:
-            if (
-                self._responses_api_base == DEFAULT_CODEX_API_BASE
-                and self._is_not_found_error(exc)
-            ):
-                self._responses_api_base = DEFAULT_BACKEND_API_BASE
-                self.api_base = self._responses_api_base
-                self._client = None
-                self._aclient = None
+            if self._should_fall_back_to_backend_api(exc):
+                self._use_backend_api_base()
                 aclient = self._get_aclient()
                 events = await aclient.responses.create(input=payload, **request_kwargs)
                 text, response = await self._collect_stream_text_async(events)
@@ -1276,3 +1303,70 @@ class OpenAIOAuth(OpenAI):
             raw=response,
             additional_kwargs={},
         )
+
+    # The base class streams through Chat Completions, which Codex rejects.
+    @llm_retry_decorator
+    def _stream_chat(
+        self, messages: list[ChatMessage], **kwargs: Any
+    ) -> ChatResponseGen:
+        request_kwargs = self._codex_request_kwargs(messages, kwargs)
+        self._ensure_access_token()
+        payload = self._build_responses_payload(messages)
+        try:
+            events = self._get_client().responses.create(
+                input=payload, **request_kwargs
+            )
+        except Exception as exc:
+            if not self._should_fall_back_to_backend_api(exc):
+                raise
+            self._use_backend_api_base()
+            events = self._get_client().responses.create(
+                input=payload, **request_kwargs
+            )
+
+        def gen() -> ChatResponseGen:
+            text = ""
+            try:
+                for event in events:
+                    chunk = self._stream_event_chunk(event, text)
+                    if chunk is not None:
+                        text = chunk.message.content or ""
+                        yield chunk
+            finally:
+                close = getattr(events, "close", None)
+                if callable(close):
+                    close()
+
+        return gen()
+
+    @llm_retry_decorator
+    async def _astream_chat(
+        self, messages: list[ChatMessage], **kwargs: Any
+    ) -> ChatResponseAsyncGen:
+        request_kwargs = self._codex_request_kwargs(messages, kwargs)
+        self._ensure_access_token()
+        payload = self._build_responses_payload(messages)
+        try:
+            events = await self._get_aclient().responses.create(
+                input=payload, **request_kwargs
+            )
+        except Exception as exc:
+            if not self._should_fall_back_to_backend_api(exc):
+                raise
+            self._use_backend_api_base()
+            events = await self._get_aclient().responses.create(
+                input=payload, **request_kwargs
+            )
+
+        async def gen() -> ChatResponseAsyncGen:
+            text = ""
+            try:
+                async for event in events:
+                    chunk = self._stream_event_chunk(event, text)
+                    if chunk is not None:
+                        text = chunk.message.content or ""
+                        yield chunk
+            finally:
+                await _aclose_events(events)
+
+        return gen()

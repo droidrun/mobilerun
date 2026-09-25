@@ -20,8 +20,11 @@ from mobilerun.agent.utils.oauth.openai_oauth_llm import OpenAIOAuth
 
 
 class _AsyncEvents:
+    """Mirrors openai.AsyncStream: async iteration and an async close()."""
+
     def __init__(self, events):
         self._events = iter(events)
+        self.closed = False
 
     def __aiter__(self):
         return self
@@ -32,8 +35,8 @@ class _AsyncEvents:
         except StopIteration:
             raise StopAsyncIteration from None
 
-    async def aclose(self):
-        return None
+    async def close(self):
+        self.closed = True
 
 
 def _offline_oauth_llm(tmp_path, model: str = "gpt-5.6-sol") -> OpenAIOAuth:
@@ -474,3 +477,233 @@ def test_oauth_saved_gpt_5_5_profile_still_loads(tmp_path) -> None:
     llm = _offline_oauth_llm(tmp_path, model="openai-codex/gpt-5.5")
 
     assert llm.model == "gpt-5.5"
+
+
+def _stream_events(*deltas: str, usage: object | None = None) -> list:
+    final = SimpleNamespace(output_text="".join(deltas), usage=usage)
+    return [
+        *(SimpleNamespace(type="response.output_text.delta", delta=d) for d in deltas),
+        SimpleNamespace(type="response.completed", response=final),
+    ]
+
+
+def _streaming_oauth_llm(tmp_path, model: str, **kwargs) -> OpenAIOAuth:
+    return OpenAIOAuth(
+        model=model,
+        oauth_access_token="stub-access-token",
+        oauth_expires_at_ms=4_102_444_800_000,
+        oauth_credential_path=str(tmp_path / "auth-profiles.json"),
+        **kwargs,
+    )
+
+
+def _sync_client(events):
+    return SimpleNamespace(
+        responses=SimpleNamespace(create=Mock(return_value=events)),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=Mock())),
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "reasoning_effort", "expected_reasoning"),
+    (
+        ("gpt-6-astra", None, {"effort": "low"}),
+        ("gpt-6-sol", "high", {"effort": "high"}),
+        ("gpt-5.6-sol", None, None),
+    ),
+)
+def test_stream_chat_uses_codex_responses_stream(
+    tmp_path, monkeypatch, model, reasoning_effort, expected_reasoning
+) -> None:
+    llm = _streaming_oauth_llm(tmp_path, model, reasoning_effort=reasoning_effort)
+    client = _sync_client(_stream_events("Hel", "lo"))
+    monkeypatch.setattr(OpenAIOAuth, "_get_client", lambda _self: client)
+
+    chunks = list(
+        llm.stream_chat(
+            [ChatMessage(role=MessageRole.USER, content="Say hello.")],
+            temperature=0.7,
+        )
+    )
+
+    assert [chunk.delta for chunk in chunks] == ["Hel", "lo", ""]
+    assert [chunk.message.content for chunk in chunks] == ["Hel", "Hello", "Hello"]
+    assert chunks[-1].raw.output_text == "Hello"
+    client.chat.completions.create.assert_not_called()
+    request = client.responses.create.call_args.kwargs
+    assert request["model"] == model
+    assert request["stream"] is True
+    assert request["tools"] == []
+    assert request["store"] is False
+    assert request.get("reasoning") == expected_reasoning
+    assert "temperature" not in request
+
+
+@pytest.mark.parametrize(
+    ("model", "reasoning_effort", "expected_reasoning"),
+    (
+        ("gpt-6-astra", None, {"effort": "low"}),
+        ("gpt-6-sol", "none", {"effort": "none"}),
+    ),
+)
+def test_astream_chat_uses_codex_responses_stream(
+    tmp_path, monkeypatch, model, reasoning_effort, expected_reasoning
+) -> None:
+    llm = _streaming_oauth_llm(tmp_path, model, reasoning_effort=reasoning_effort)
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        return _AsyncEvents(_stream_events("O", "K"))
+
+    completions_create = Mock()
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=create),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=completions_create)),
+    )
+    monkeypatch.setattr(OpenAIOAuth, "_get_aclient", lambda _self: client)
+
+    async def run():
+        stream = await llm.astream_chat(
+            [ChatMessage(role=MessageRole.USER, content="Reply with OK.")]
+        )
+        return [chunk async for chunk in stream]
+
+    chunks = asyncio.run(run())
+
+    assert [chunk.delta for chunk in chunks] == ["O", "K", ""]
+    assert chunks[-1].message.content == "OK"
+    assert chunks[-1].raw.output_text == "OK"
+    completions_create.assert_not_called()
+    [request] = calls
+    assert request["model"] == model
+    assert request["stream"] is True
+    assert request["reasoning"] == expected_reasoning
+
+
+def test_stream_complete_routes_through_codex_responses(tmp_path, monkeypatch) -> None:
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-astra")
+    client = _sync_client(_stream_events("O", "K"))
+    monkeypatch.setattr(OpenAIOAuth, "_get_client", lambda _self: client)
+
+    chunks = list(llm.stream_complete("Reply with OK."))
+
+    assert chunks[-1].text == "OK"
+    client.chat.completions.create.assert_not_called()
+
+
+def test_stream_chat_uses_final_text_when_no_deltas_arrive(
+    tmp_path, monkeypatch
+) -> None:
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-astra")
+    final = SimpleNamespace(output_text="OK")
+    client = _sync_client([SimpleNamespace(type="response.completed", response=final)])
+    monkeypatch.setattr(OpenAIOAuth, "_get_client", lambda _self: client)
+
+    chunks = list(
+        llm.stream_chat([ChatMessage(role=MessageRole.USER, content="Reply OK")])
+    )
+
+    assert [(chunk.delta, chunk.message.content) for chunk in chunks] == [("OK", "OK")]
+    assert chunks[0].raw is final
+
+
+def test_stream_chat_falls_back_to_backend_api_on_not_found(
+    tmp_path, monkeypatch
+) -> None:
+    from mobilerun.agent.utils.oauth.openai_oauth_llm import DEFAULT_BACKEND_API_BASE
+
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-astra")
+    not_found = Exception("404 Not Found")
+    not_found.status_code = 404
+    create = Mock(side_effect=[not_found, _stream_events("OK")])
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(OpenAIOAuth, "_get_client", lambda _self: client)
+
+    chunks = list(
+        llm.stream_chat([ChatMessage(role=MessageRole.USER, content="Reply OK")])
+    )
+
+    assert chunks[-1].message.content == "OK"
+    assert create.call_count == 2
+    assert llm._responses_api_base == DEFAULT_BACKEND_API_BASE
+
+
+def test_stream_chat_rejects_unsupported_effort_before_request(
+    tmp_path, monkeypatch
+) -> None:
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-sol", reasoning_effort="minimal")
+    client = _sync_client(_stream_events("OK"))
+    monkeypatch.setattr(OpenAIOAuth, "_get_client", lambda _self: client)
+
+    with pytest.raises(ValueError, match="does not support reasoning effort"):
+        llm.stream_chat([ChatMessage(role=MessageRole.USER, content="Reply OK")])
+
+    client.responses.create.assert_not_called()
+
+
+def test_streamed_response_keeps_text_and_usage(tmp_path, monkeypatch) -> None:
+    from mobilerun.agent.usage import get_usage_from_response
+    from mobilerun.agent.utils.inference import _stream_response
+
+    usage = SimpleNamespace(input_tokens=11, output_tokens=2, total_tokens=13)
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-astra")
+
+    async def create(**kwargs):
+        return _AsyncEvents(_stream_events("O", "K", usage=usage))
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(OpenAIOAuth, "_get_aclient", lambda _self: client)
+
+    response = asyncio.run(
+        _stream_response(
+            llm,
+            [ChatMessage(role=MessageRole.USER, content="Reply with OK.")],
+            timeout=5,
+        )
+    )
+
+    assert response.message.content == "OK"
+    result = get_usage_from_response("OpenAIOAuth", response)
+    assert (result.request_tokens, result.response_tokens) == (11, 2)
+
+
+def test_astream_chat_closes_the_stream_when_the_consumer_stops(
+    tmp_path, monkeypatch
+) -> None:
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-astra")
+    events = _AsyncEvents(_stream_events("O", "K"))
+
+    async def create(**kwargs):
+        return events
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(OpenAIOAuth, "_get_aclient", lambda _self: client)
+
+    async def run():
+        stream = await llm._astream_chat(
+            [ChatMessage(role=MessageRole.USER, content="Reply with OK.")]
+        )
+        first = await stream.__anext__()
+        await stream.aclose()
+        return first
+
+    first = asyncio.run(run())
+
+    assert first.delta == "O"
+    assert events.closed is True
+
+
+def test_achat_closes_the_async_stream(tmp_path, monkeypatch) -> None:
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-astra")
+    events = _AsyncEvents(_stream_events("OK"))
+
+    async def create(**kwargs):
+        return events
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(OpenAIOAuth, "_get_aclient", lambda _self: client)
+
+    asyncio.run(llm._achat([ChatMessage(role=MessageRole.USER, content="Reply OK")]))
+
+    assert events.closed is True
