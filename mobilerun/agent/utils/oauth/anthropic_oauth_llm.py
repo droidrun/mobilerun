@@ -68,8 +68,8 @@ DEFAULT_CLAUDE_CODE_VERSION = "2.1.281"
 DEFAULT_USER_AGENT = f"claude-cli/{DEFAULT_CLAUDE_CODE_VERSION}"
 DEFAULT_CC_VERSION = f"{DEFAULT_CLAUDE_CODE_VERSION}.000"
 DEFAULT_CC_ENTRYPOINT = "cli"
-# Replies are not streamed; always-on thinking can take minutes at max_tokens.
-DEFAULT_TIMEOUT_SECONDS = 180.0
+# Replies are not streamed, and always-on thinking makes them slower.
+DEFAULT_TIMEOUT_SECONDS = 60.0
 _IGNORED_REQUEST_KWARGS = {
     "formatted",
 }

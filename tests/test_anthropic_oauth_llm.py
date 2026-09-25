@@ -300,4 +300,4 @@ def test_system_message_text_reaches_system_blocks():
 
 
 def test_default_timeout_covers_unstreamed_thinking_replies():
-    assert AnthropicOAuthLLM(credential_path=None).timeout == 180.0
+    assert AnthropicOAuthLLM(credential_path=None).timeout == 60.0
