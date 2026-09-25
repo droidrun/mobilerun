@@ -5,8 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping, MutableMapping
 from typing import Any
 
-GROK_DEFAULT_MODEL = "grok-4.6"
-GROK_MODELS = (GROK_DEFAULT_MODEL, "grok-4.5")
+# grok-4.7 on the public API does not emit mobilerun's XML tool calls; the
+# Grok Build proxy serves a build that does.
+GROK_API_DEFAULT_MODEL = "grok-4.6"
+GROK_OAUTH_DEFAULT_MODEL = "grok-4.7"
+GROK_API_MODELS = (GROK_API_DEFAULT_MODEL,)
+GROK_OAUTH_MODELS = (GROK_OAUTH_DEFAULT_MODEL, "grok-4.6")
+# No longer offered, but still accepted so saved OAuth profiles load.
+GROK_OAUTH_LEGACY_MODELS = ("grok-4.5",)
 GROK_MODEL_ALIASES = {
     "grok-4.5-latest": "grok-4.5",
 }
@@ -14,9 +20,9 @@ GROK_MODEL_ALIASES = {
 XAI_API_BASE = "https://api.x.ai/v1"
 GROK_CONTEXT_WINDOW = 500_000
 
-# Grok accepts temperature and top_p on the Responses API, but these legacy
-# Chat Completions controls are rejected. Filter after all constructor and
-# per-call kwargs are merged so an override cannot accidentally restore them.
+# Chat Completions-only controls that mobilerun keeps out of Grok Responses
+# payloads. Filter after all constructor and per-call kwargs are merged so an
+# override cannot accidentally restore them.
 GROK_UNSUPPORTED_SAMPLING_PARAMS = frozenset(
     {"presence_penalty", "frequency_penalty", "stop"}
 )

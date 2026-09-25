@@ -18,12 +18,10 @@ def test_gemini_api_key_catalog_uses_current_flash_models() -> None:
     assert models == (
         "gemini-3.8-flash",
         "gemini-3.7-flash",
-        "gemini-3.5-flash",
-        "gemini-3.6-flash",
         "gemini-3.5-flash-lite",
-        "gemini-3-flash-preview",
         "gemini-3.1-pro-preview",
     )
+    assert "gemini-3-flash-preview" not in models
     assert "gemini-3.1-flash-lite" not in models
     assert "gemini-3.1-flash-lite-preview" not in models
 
@@ -35,15 +33,17 @@ def test_gemini_oauth_catalog_uses_antigravity_consumer_models() -> None:
     assert variant.default_model == "gemini-3.8-flash-tiered"
     assert models == (
         "gemini-3.8-flash-tiered",
+        "gemini-3.8-flash-low",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high",
         "gemini-3.7-flash-tiered",
         "gemini-3.5-flash-lite",
-        "gemini-3-flash",
         "gemini-pro-agent",
         "gemini-3.1-pro-low",
-        "gemini-3.6-flash-low",
-        "gemini-3.6-flash-medium",
-        "gemini-3.6-flash-high",
     )
+    # Slow legacy ids remain custom-only rather than advertised.
+    assert "gemini-3-flash" not in models
+    assert "gemini-3.6-flash-high" not in models
     # Live legacy ids remain custom-only rather than advertised.
     assert "gemini-2.5-pro" not in models
     assert "gemini-2.5-flash" not in models
@@ -71,8 +71,8 @@ def test_gemini_oauth_catalog_uses_antigravity_consumer_models() -> None:
         (
             "gemini",
             "oauth",
-            "gemini-3.6-flash-high",
-            "gemini-3.6-flash-high",
+            "gemini-3.8-flash-high",
+            "gemini-3.8-flash-high",
         ),
         ("gemini", "api_key", "gemini-3.8-flash", "gemini-3.8-flash"),
         ("openai", "oauth", "gpt-6-astra", "gpt-6-astra"),
@@ -87,7 +87,7 @@ def test_model_display_names_preserve_canonical_ids_except_explicit_overrides(
     assert model_display_name_for_variant(family_id, auth_mode, model_id) == expected
 
 
-def test_anthropic_catalogs_default_to_sonnet_5_and_retain_older_models() -> None:
+def test_anthropic_catalogs_list_the_current_lineup() -> None:
     api_key_variant = resolve_provider_variant("anthropic", "api_key")
     api_key_models = list_models_for_variant("anthropic", "api_key")
     oauth_variant = resolve_provider_variant("anthropic", "oauth")
@@ -96,26 +96,11 @@ def test_anthropic_catalogs_default_to_sonnet_5_and_retain_older_models() -> Non
     assert api_key_variant.default_model == "claude-sonnet-5"
     assert api_key_models == (
         "claude-sonnet-5",
+        "claude-opus-5-5",
         "claude-fable-5-1",
-        "claude-opus-5",
-        "claude-sonnet-4-6",
-        "claude-fable-5",
-        "claude-opus-4-8",
-        "claude-opus-4-6",
-        "claude-haiku-4-5",
     )
     assert oauth_variant.default_model == "claude-sonnet-5"
-    assert oauth_models == (
-        "claude-sonnet-5",
-        "claude-fable-5-1",
-        "claude-opus-5",
-        "claude-opus-4-7",
-        "claude-fable-5",
-        "claude-opus-4-8",
-        "claude-sonnet-4-6",
-        "claude-opus-4-6",
-        "claude-haiku-4-5",
-    )
+    assert oauth_models == api_key_models
 
 
 def test_openai_oauth_catalog_hides_unsupported_codex_model() -> None:
@@ -125,12 +110,13 @@ def test_openai_oauth_catalog_hides_unsupported_codex_model() -> None:
     assert variant.default_model == "gpt-6-astra"
     assert models == (
         "gpt-6-astra",
-        "gpt-5.5",
+        "gpt-6-sol",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
     )
     assert "gpt-5.3-codex" not in models
+    assert "gpt-5.5" not in models
 
 
 def test_openai_api_key_catalog_uses_current_default_model() -> None:
@@ -140,14 +126,13 @@ def test_openai_api_key_catalog_uses_current_default_model() -> None:
     assert variant.default_model == "gpt-6-astra"
     assert models == (
         "gpt-6-astra",
-        "gpt-5.5",
+        "gpt-6-sol",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.4-nano",
     )
+    # Listed live, but does not drive the agent's XML tool protocol.
+    assert "gpt-6-luna" not in models
 
 
 def test_default_profiles_use_gemini_3_8_flash() -> None:
@@ -171,6 +156,11 @@ def test_default_profiles_use_gemini_3_8_flash() -> None:
         ("oauth", "gpt-5.6-luna", "gpt-5.6-luna"),
         ("api_key", "gpt-6-astra", "gpt-6-astra"),
         ("oauth", "gpt-6-astra", "gpt-6-astra"),
+        ("api_key", "openai/gpt-6-sol", "gpt-6-sol"),
+        ("oauth", "openai-codex/gpt-6-luna", "gpt-6-luna"),
+        ("api_key", "openai/gpt-5.5", "gpt-5.5"),
+        ("oauth", "openai-codex/gpt-5.5", "gpt-5.5"),
+        ("api_key", "openai/gpt-5.4-mini", "gpt-5.4-mini"),
     ],
 )
 def test_openai_model_aliases_normalize_to_catalog_ids(

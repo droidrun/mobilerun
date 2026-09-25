@@ -31,8 +31,9 @@ from llama_index.llms.openai.responses import OpenAIResponses
 from llama_index.llms.openai.utils import to_openai_message_dicts
 
 from mobilerun.agent.providers.grok import (
-    GROK_DEFAULT_MODEL,
-    GROK_MODELS,
+    GROK_OAUTH_DEFAULT_MODEL,
+    GROK_OAUTH_LEGACY_MODELS,
+    GROK_OAUTH_MODELS,
     normalize_grok_model_id,
     sanitize_grok_responses_kwargs,
 )
@@ -43,7 +44,7 @@ from mobilerun.agent.utils.oauth.login_timeout import (
 from mobilerun.config_manager.auth_profile_store import AuthProfileStore
 from mobilerun.config_manager.credential_paths import GROK_OAUTH_CREDENTIAL_PATH
 
-DEFAULT_GROK_MODEL = GROK_DEFAULT_MODEL
+DEFAULT_GROK_MODEL = GROK_OAUTH_DEFAULT_MODEL
 DEFAULT_GROK_CONTEXT_WINDOW = 500_000
 DEFAULT_GROK_OAUTH_ISSUER = "https://auth.x.ai"
 DEFAULT_GROK_OAUTH_AUTHORIZE_URL = f"{DEFAULT_GROK_OAUTH_ISSUER}/oauth2/authorize"
@@ -52,10 +53,10 @@ DEFAULT_GROK_OAUTH_TOKEN_URL = f"{DEFAULT_GROK_OAUTH_ISSUER}/oauth2/token"
 DEFAULT_GROK_OAUTH_JWKS_URL = f"{DEFAULT_GROK_OAUTH_ISSUER}/.well-known/jwks.json"
 DEFAULT_GROK_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
 DEFAULT_GROK_OAUTH_PROXY = "https://cli-chat-proxy.grok.com/v1"
-# The first-party Grok Build 1.0.0 proxy clients send this exact protocol
-# header/value. Keep it pinned rather than deriving it from any installed CLI.
+# The proxy rejects /responses from clients below its minimum Grok Build
+# version (HTTP 426). Keep it pinned rather than deriving it from any installed CLI.
 GROK_CLI_COMPAT_VERSION_HEADER = "x-grok-client-version"
-GROK_CLI_COMPAT_VERSION = "1.0.0"
+GROK_CLI_COMPAT_VERSION = "1.0.41"
 DEFAULT_GROK_OAUTH_CREDENTIAL_PATH = GROK_OAUTH_CREDENTIAL_PATH
 DEFAULT_GROK_OAUTH_SLOT = "grokOauth"
 DEFAULT_GROK_OAUTH_CALLBACK_HOST = "127.0.0.1"
@@ -729,10 +730,10 @@ class GrokOAuth(OpenAIResponses):
         **kwargs: Any,
     ) -> None:
         model = normalize_grok_model_id(model)
-        if model not in GROK_MODELS:
+        if model not in (*GROK_OAUTH_MODELS, *GROK_OAUTH_LEGACY_MODELS):
             raise ValueError(
                 f"Model {model!r} is not supported with XAI OAuth. "
-                f"Use {', '.join(GROK_MODELS)}."
+                f"Use {', '.join(GROK_OAUTH_MODELS)}."
             )
         path = (
             oauth_credential_path

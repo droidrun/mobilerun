@@ -76,7 +76,7 @@ def test_defaults_agree_across_menu_loader_and_generated_profile(
         payload = (
             llm._get_model_kwargs()
             if auth == "api_key"
-            else llm._sanitize_gpt_6_astra_kwargs({})
+            else llm._sanitize_reasoning_kwargs({})
         )
         assert payload["reasoning"] == {"effort": "low"}
 
@@ -186,7 +186,7 @@ def test_previous_openai_models_have_no_new_reasoning_default(auth, model, tmp_p
     payload = (
         llm._get_model_kwargs()
         if auth == "api_key"
-        else llm._sanitize_gpt_6_astra_kwargs({})
+        else llm._sanitize_reasoning_kwargs({})
     )
     assert llm.model == model
     assert "reasoning" not in payload

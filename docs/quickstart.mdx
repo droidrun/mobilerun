@@ -118,7 +118,7 @@ Now you're ready to control your device with natural language:
 mobilerun run "Open the settings app and tell me the Android version"
 
 # Override provider and model
-mobilerun run "Check the battery level" --provider OpenAI --model gpt-4o
+mobilerun run "Check the battery level" --provider OpenAI --model gpt-6-astra
 
 # Enable vision mode (sends screenshots to LLM)
 mobilerun run "What app is currently open?" --vision
@@ -129,7 +129,7 @@ mobilerun run "Find a contact named John and send him an email" --reasoning
 
 **Common CLI flags:**
 - `--provider` - LLM provider (GoogleGenAI, OpenAI, XAI, Anthropic, etc.)
-- `--model` - Model name (gemini-3.7-flash, gpt-5.5, etc.)
+- `--model` - Model name (gemini-3.8-flash, gpt-6-astra, etc.)
 - `--vision` - Enable screenshot processing
 - `--reasoning` - Enable multi-agent planning mode
 - `--steps N` - Maximum execution steps (default: 15)

@@ -114,7 +114,7 @@ Now you’re ready to control your device using Docker and natural language:
 docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --env GOOGLE_API_KEY=your-api-key-here ghcr.io/droidrun/mobilerun:latest run "Open the settings app and tell me the Android version"
 
 # Override provider and model
-docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --env OPENAI_API_KEY=your-api-key-here ghcr.io/droidrun/mobilerun:latest run "Open a browser and search for mobilerun" -p OpenAI -m gpt-4o
+docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --env OPENAI_API_KEY=your-api-key-here ghcr.io/droidrun/mobilerun:latest run "Open a browser and search for mobilerun" -p OpenAI -m gpt-6-astra
 
 # Use a locally-running LLM, example for LM Studio running in the LAN
 docker run --group-add plugdev --device /dev/phone1/phone:/dev/phone --volume /dev/bus/usb:/dev/bus/usb --volume ~/.android:/home/mobilerun/.android --network host ghcr.io/droidrun/mobilerun:latest run "Open a browser and search for mobilerun" -p OpenAILike -m gpt-oss --api_base http://IP-of-LMStudio-server:PORT/v1

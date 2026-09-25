@@ -4,8 +4,8 @@ Usage:
     from openai_oauth_llm import OpenAIOAuth
 
     llm = OpenAIOAuth(
-        auth_model="openai-codex/gpt-5.5",
-        custom_model="gpt-5.5",  # optional override
+        auth_model="openai-codex/gpt-6-astra",
+        custom_model="gpt-6-sol",  # optional override
         oauth_refresh_token="rt_...",
         oauth_access_token="eyJ...",  # optional if cached file already exists
         oauth_credential_path=str(OPENAI_OAUTH_CREDENTIAL_PATH),
@@ -44,8 +44,10 @@ from llama_index.llms.openai.utils import to_openai_message_dicts
 
 from mobilerun.agent.providers.registry import (
     OPENAI_ASTRA_DEFAULT_REASONING_EFFORT,
+    OPENAI_GPT6_MODELS,
     OPENAI_OAUTH_DEFAULT_MODEL,
     OPENAI_OAUTH_UNSUPPORTED_MODELS,
+    OPENAI_REASONING_EFFORTS,
     normalize_model_id_for_variant,
 )
 from mobilerun.agent.utils.oauth.login_timeout import (
@@ -70,11 +72,12 @@ DEFAULT_OPENAI_OAUTH_SCOPE = (
 )
 _OPENAI_LOGIN_TIMEOUT_MESSAGE = "OpenAI OAuth login timed out."
 _GPT_6_ASTRA_MODEL = "gpt-6-astra"
-_GPT_6_ASTRA_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
-_GPT_6_ASTRA_UNSUPPORTED_PARAMS = frozenset(
+_GPT_6_UNSUPPORTED_PARAMS = frozenset(
     {"temperature", "top_p", "logprobs", "top_logprobs"}
 )
-_GPT_6_ASTRA_UNSUPPORTED_INCLUDE = "message.output_text.logprobs"
+_GPT_6_UNSUPPORTED_INCLUDE = "message.output_text.logprobs"
+# Codex reports this context window for ChatGPT-account models.
+_CODEX_CONTEXT_WINDOW = 272_000
 
 
 def _b64_no_pad(raw: bytes) -> str:
@@ -603,7 +606,7 @@ class OpenAIOAuth(OpenAI):
     def metadata(self) -> LLMMetadata:
         # Codex model IDs are not always in llama-index's static OpenAI map.
         return LLMMetadata(
-            context_window=400000,
+            context_window=_CODEX_CONTEXT_WINDOW,
             num_output=self.max_tokens or -1,
             is_chat_model=True,
             is_function_calling_model=True,
@@ -1081,43 +1084,44 @@ class OpenAIOAuth(OpenAI):
 
         return normalized
 
-    def _sanitize_gpt_6_astra_kwargs(
+    def _sanitize_reasoning_kwargs(
         self, runtime_kwargs: dict[str, Any]
     ) -> dict[str, Any]:
-        if self.model != _GPT_6_ASTRA_MODEL:
-            return runtime_kwargs
-
         merged: dict[str, Any] = {}
         if self.reasoning_effort is not None:
             merged["reasoning"] = {"effort": self.reasoning_effort}
         merged.update(self.additional_kwargs or {})
         merged.update(runtime_kwargs)
-        merged.setdefault(
-            "reasoning", {"effort": OPENAI_ASTRA_DEFAULT_REASONING_EFFORT}
-        )
 
-        for key in _GPT_6_ASTRA_UNSUPPORTED_PARAMS:
-            merged.pop(key, None)
+        if self.model in OPENAI_GPT6_MODELS:
+            if self.model == _GPT_6_ASTRA_MODEL:
+                merged.setdefault(
+                    "reasoning", {"effort": OPENAI_ASTRA_DEFAULT_REASONING_EFFORT}
+                )
+            for key in _GPT_6_UNSUPPORTED_PARAMS:
+                merged.pop(key, None)
+            include = merged.get("include")
+            if isinstance(include, (list, tuple)):
+                filtered_include = [
+                    value for value in include if value != _GPT_6_UNSUPPORTED_INCLUDE
+                ]
+                merged["include"] = filtered_include or None
 
-        include = merged.get("include")
-        if isinstance(include, (list, tuple)):
-            filtered_include = [
-                value for value in include if value != _GPT_6_ASTRA_UNSUPPORTED_INCLUDE
-            ]
-            merged["include"] = filtered_include or None
-
+        supported_efforts = OPENAI_REASONING_EFFORTS.get(self.model)
+        if supported_efforts is None:
+            return merged
         reasoning = merged.get("reasoning")
         if reasoning is not None and not isinstance(reasoning, dict):
             raise ValueError(
-                f"{_GPT_6_ASTRA_MODEL} reasoning must be a mapping with an "
+                f"{self.model} reasoning must be a mapping with an "
                 "optional 'effort' value."
             )
         effort = reasoning.get("effort") if isinstance(reasoning, dict) else None
-        if effort is not None and effort not in _GPT_6_ASTRA_REASONING_EFFORTS:
-            supported = "low, medium, high, xhigh, or max"
+        if effort is not None and effort not in supported_efforts:
+            supported = ", ".join(sorted(supported_efforts))
             raise ValueError(
-                f"{_GPT_6_ASTRA_MODEL} does not support reasoning effort "
-                f"{effort!r}; use {supported}."
+                f"{self.model} does not support reasoning effort "
+                f"{effort!r}; use one of: {supported}."
             )
         return merged
 
@@ -1189,7 +1193,7 @@ class OpenAIOAuth(OpenAI):
 
     @llm_retry_decorator
     def _chat(self, messages: list[ChatMessage], **kwargs: Any) -> ChatResponse:
-        kwargs = self._sanitize_gpt_6_astra_kwargs(kwargs)
+        kwargs = self._sanitize_reasoning_kwargs(kwargs)
         self._ensure_access_token()
         client = self._get_client()
         payload = self._build_responses_payload(messages)
@@ -1232,7 +1236,7 @@ class OpenAIOAuth(OpenAI):
 
     @llm_retry_decorator
     async def _achat(self, messages: list[ChatMessage], **kwargs: Any) -> ChatResponse:
-        kwargs = self._sanitize_gpt_6_astra_kwargs(kwargs)
+        kwargs = self._sanitize_reasoning_kwargs(kwargs)
         self._ensure_access_token()
         aclient = self._get_aclient()
         payload = self._build_responses_payload(messages)

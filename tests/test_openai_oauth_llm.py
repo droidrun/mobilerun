@@ -36,7 +36,7 @@ class _AsyncEvents:
         return None
 
 
-def _offline_oauth_llm(tmp_path, model: str = "gpt-5.5") -> OpenAIOAuth:
+def _offline_oauth_llm(tmp_path, model: str = "gpt-5.6-sol") -> OpenAIOAuth:
     return OpenAIOAuth(
         model=model,
         oauth_access_token="stub-access-token",
@@ -49,9 +49,9 @@ def test_openai_oauth_constructs_with_updated_openai_adapter(tmp_path) -> None:
     llm = _offline_oauth_llm(tmp_path)
 
     assert llm.class_name() == "OpenAIOAuth"
-    assert llm.model == "gpt-5.5"
-    assert llm.metadata.model_name == "gpt-5.5"
-    assert llm.metadata.context_window == 400_000
+    assert llm.model == "gpt-5.6-sol"
+    assert llm.metadata.model_name == "gpt-5.6-sol"
+    assert llm.metadata.context_window == 272_000
 
 
 @pytest.mark.parametrize(
@@ -72,7 +72,7 @@ def test_openai_oauth_normalizes_gpt_5_6_aliases(tmp_path, model_alias: str) -> 
 
     assert llm.model == "gpt-5.6-sol"
     assert llm.metadata.model_name == "gpt-5.6-sol"
-    assert llm.metadata.context_window == 400_000
+    assert llm.metadata.context_window == 272_000
 
 
 def test_openai_oauth_normalizes_auth_model_alias(tmp_path) -> None:
@@ -215,7 +215,7 @@ def test_gpt_6_astra_forwards_supported_reasoning_only(
 
     request = create_response.call_args.kwargs
     assert request["model"] == "gpt-6-astra"
-    assert llm.metadata.context_window == 400_000
+    assert llm.metadata.context_window == 272_000
     assert request["reasoning"] == {"effort": effort or "low"}
     assert request["include"] == ["reasoning.encrypted_content"]
     assert {"temperature", "top_p", "logprobs", "top_logprobs"}.isdisjoint(request)
@@ -295,7 +295,7 @@ def test_gpt_6_astra_accepts_supported_final_merged_reasoning(
         additional_kwargs=additional_kwargs,
     )
 
-    assert llm._sanitize_gpt_6_astra_kwargs(runtime_kwargs)["reasoning"] == {
+    assert llm._sanitize_reasoning_kwargs(runtime_kwargs)["reasoning"] == {
         "effort": effort
     }
 
@@ -366,7 +366,7 @@ def test_oauth_implicit_default_matches_catalog(tmp_path):
     )
 
 
-@pytest.mark.parametrize("model", ["gpt-5.4", "gpt-5.4-mini"])
+@pytest.mark.parametrize("model", ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"])
 @pytest.mark.parametrize("argument", ["model", "custom_model", "auth_model"])
 @pytest.mark.parametrize("prefix", ["", "openai/", "openai-codex/"])
 def test_unsupported_chatgpt_models_fail_locally(tmp_path, model, argument, prefix):
@@ -377,7 +377,7 @@ def test_unsupported_chatgpt_models_fail_locally(tmp_path, model, argument, pref
         )
 
 
-@pytest.mark.parametrize("model", ["gpt-5.5", "gpt-6-astra"])
+@pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-6-astra"])
 @pytest.mark.parametrize("async_call", [False, True])
 def test_oauth_structured_extraction_prompts_for_schema(
     tmp_path, monkeypatch, model, async_call
@@ -412,3 +412,65 @@ def test_oauth_structured_extraction_prompts_for_schema(
     assert result.value == 19
     assert '"properties"' in "\n".join(str(m.content) for m in captured)
     assert '"value"' in "\n".join(str(m.content) for m in captured)
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    (("gpt-6-sol", "none"), ("gpt-6-luna", "xhigh"), ("gpt-5.6-sol", "high")),
+)
+def test_oauth_forwards_configured_reasoning_for_every_model(
+    tmp_path, monkeypatch, model: str, effort: str
+) -> None:
+    llm = OpenAIOAuth(
+        model=model,
+        reasoning_effort=effort,
+        oauth_access_token="stub-access-token",
+        oauth_expires_at_ms=4_102_444_800_000,
+        oauth_credential_path=str(tmp_path / "auth-profiles.json"),
+    )
+    create_response = Mock(
+        return_value=[
+            SimpleNamespace(type="response.output_text.delta", delta="OK"),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(output_text="OK"),
+            ),
+        ]
+    )
+    client = SimpleNamespace(responses=SimpleNamespace(create=create_response))
+    monkeypatch.setattr(OpenAIOAuth, "_get_client", lambda _self: client)
+
+    llm._chat([ChatMessage(role=MessageRole.USER, content="Reply with OK.")])
+
+    request = create_response.call_args.kwargs
+    assert request["model"] == model
+    assert request["reasoning"] == {"effort": effort}
+
+
+@pytest.mark.parametrize("model", ("gpt-6-sol", "gpt-6-luna"))
+def test_oauth_gpt_6_sol_and_luna_have_no_reasoning_default(tmp_path, model) -> None:
+    llm = _offline_oauth_llm(tmp_path, model=model)
+
+    assert "reasoning" not in llm._sanitize_reasoning_kwargs({})
+
+
+@pytest.mark.parametrize(
+    "model", ("gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+)
+def test_oauth_models_reject_minimal_effort_locally(tmp_path, model) -> None:
+    llm = OpenAIOAuth(
+        model=model,
+        reasoning_effort="minimal",
+        oauth_access_token="stub-access-token",
+        oauth_expires_at_ms=4_102_444_800_000,
+        oauth_credential_path=str(tmp_path / "auth-profiles.json"),
+    )
+
+    with pytest.raises(ValueError, match=f"{model} does not support reasoning"):
+        llm._sanitize_reasoning_kwargs({})
+
+
+def test_oauth_saved_gpt_5_5_profile_still_loads(tmp_path) -> None:
+    llm = _offline_oauth_llm(tmp_path, model="openai-codex/gpt-5.5")
+
+    assert llm.model == "gpt-5.5"

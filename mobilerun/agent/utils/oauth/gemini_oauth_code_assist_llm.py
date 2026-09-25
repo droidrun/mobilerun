@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import os
+import platform
 import queue
 import secrets
 import sys
@@ -35,6 +36,7 @@ from llama_index.core.llms.custom import CustomLLM
 from mobilerun.agent.providers.registry import (
     GEMINI_OAUTH_DEFAULT_MODEL,
     GEMINI_OAUTH_RETIRED_MODELS,
+    gemini_model_omits_sampling_params,
     model_display_name_for_variant,
 )
 from mobilerun.agent.utils.oauth.login_timeout import (
@@ -69,9 +71,22 @@ DEFAULT_OAUTH_SCOPES = (
 # Credential slot in the shared auth-profiles.json.
 DEFAULT_CREDENTIAL_SLOT = "geminiAntigravityOauth"
 
+# Code Assist gates newer models on an Antigravity app version >= 2.5.2.
+ANTIGRAVITY_CLIENT_VERSION = "2.14.0"
+DEFAULT_TIMEOUT_SECONDS = 60.0
+
+
+def _antigravity_user_agent() -> str:
+    os_name = {"win32": "windows"}.get(sys.platform, sys.platform)
+    arch = platform.machine().lower()
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(arch, arch)
+    return f"antigravity/{ANTIGRAVITY_CLIENT_VERSION} {os_name}/{arch}"
+
+
 # Kwargs that must never be forwarded to Google's API (LlamaIndex-internal, and
 # project ids which the consumer entitlement does not use).
 _IGNORED_REQUEST_KWARGS = {"formatted", "project", "project_id"}
+_GEMINI_SAMPLING_CONFIG_KEYS = {"temperature", "topP", "topK", "top_p", "top_k"}
 
 
 def _b64_no_pad(raw: bytes) -> str:
@@ -163,7 +178,7 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
     )
     max_tokens: Optional[int] = Field(default=None, gt=0)
     temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0)
-    timeout: float = Field(default=30.0, gt=0)
+    timeout: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0)
 
     access_token: Optional[str] = Field(default=None, description="OAuth access token.")
     refresh_token: Optional[str] = Field(
@@ -199,7 +214,7 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         credential_slot: str = DEFAULT_CREDENTIAL_SLOT,
         max_tokens: Optional[int] = None,
         temperature: float = DEFAULT_TEMPERATURE,
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
         access_token: Optional[str] = None,
         refresh_token: Optional[str] = None,
         client_id: str = DEFAULT_CLIENT_ID,
@@ -342,12 +357,12 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         }
 
     def _build_headers(self, token: str) -> Dict[str, str]:
-        # Identify as the Antigravity CLI. The gemini-cli/vscode User-Agent +
+        # Identify as the Antigravity app. The gemini-cli/vscode User-Agent +
         # gl-node X-Goog-Api-Client make the backend 500 for an aicode token.
         return {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "User-Agent": "antigravity-cli",
+            "User-Agent": _antigravity_user_agent(),
             "Client-Metadata": json.dumps(self._metadata_payload()),
         }
 
@@ -360,9 +375,10 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         """Agent-usable Gemini models for the current entitlement.
 
         Calls Code Assist ``fetchAvailableModels`` and returns dicts with
-        ``id``, ``display_name`` and ``supports_images``. Internal/tab/aux and
-        deprecated ids are filtered out. Used to verify login and to optionally
-        discover the live catalog. Requires the Antigravity client headers.
+        ``id``, ``display_name`` and ``supports_images``. Internal/tab/aux,
+        image-generation and deprecated ids are filtered out. Used to verify
+        login and to optionally discover the live catalog. Requires the
+        Antigravity client headers.
         """
         token = access_token or self._resolve_access_token()
         effective_timeout = (
@@ -383,11 +399,12 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         models = data.get("models")
         if not isinstance(models, dict):
             return []
-        deprecated = set((data.get("deprecatedModelIds") or {}).keys())
-        deprecated.update(GEMINI_OAUTH_RETIRED_MODELS)
+        excluded = set((data.get("deprecatedModelIds") or {}).keys())
+        excluded.update(GEMINI_OAUTH_RETIRED_MODELS)
+        excluded.update(data.get("imageGenerationModelIds") or ())
         out: list[Dict[str, Any]] = []
         for model_id, meta in models.items():
-            if not isinstance(meta, dict) or model_id in deprecated:
+            if not isinstance(meta, dict) or model_id in excluded:
                 continue
             if meta.get("isInternal"):
                 continue
@@ -870,12 +887,16 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         if not contents:
             contents.append({"role": "user", "parts": [{"text": ""}]})
 
-        generation_config = {
-            "temperature": self.temperature,
-        }
+        generation_config: Dict[str, Any] = {}
+        if not gemini_model_omits_sampling_params(self.model):
+            generation_config["temperature"] = self.temperature
         if self.max_tokens is not None:
             generation_config["maxOutputTokens"] = self.max_tokens
         generation_config.update(kwargs.pop("generation_config", {}))
+        omit_sampling = gemini_model_omits_sampling_params(self.model)
+        if omit_sampling:
+            for param in _GEMINI_SAMPLING_CONFIG_KEYS:
+                generation_config.pop(param, None)
 
         request: Dict[str, Any] = {
             "contents": contents,
@@ -904,7 +925,10 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
         # Strip internal kwargs Google rejects; the consumer entitlement is
         # project-less, so never send a project (also filtered by the ignore set).
         safe_kwargs = {
-            k: v for k, v in kwargs.items() if k not in _IGNORED_REQUEST_KWARGS
+            k: v
+            for k, v in kwargs.items()
+            if k not in _IGNORED_REQUEST_KWARGS
+            and not (omit_sampling and k in _GEMINI_SAMPLING_CONFIG_KEYS)
         }
         payload.update(safe_kwargs)
         payload.pop("project", None)

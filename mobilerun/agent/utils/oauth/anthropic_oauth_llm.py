@@ -64,10 +64,12 @@ DEFAULT_OAUTH_BETA = "oauth-2025-04-20"
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 # Model access is Claude Code version-gated, so keep the HTTP user agent and
 # billing marker derived from the same verified-compatible client version.
-DEFAULT_CLAUDE_CODE_VERSION = "2.1.259"
+DEFAULT_CLAUDE_CODE_VERSION = "2.1.281"
 DEFAULT_USER_AGENT = f"claude-cli/{DEFAULT_CLAUDE_CODE_VERSION}"
 DEFAULT_CC_VERSION = f"{DEFAULT_CLAUDE_CODE_VERSION}.000"
 DEFAULT_CC_ENTRYPOINT = "cli"
+# Replies are not streamed, and always-on thinking makes them slower.
+DEFAULT_TIMEOUT_SECONDS = 60.0
 _IGNORED_REQUEST_KWARGS = {
     "formatted",
 }
@@ -135,7 +137,7 @@ class AnthropicOAuthLLM(CustomLLM):
     model: str = Field(default=DEFAULT_MODEL, description="Anthropic model id.")
     max_tokens: Optional[int] = Field(default=DEFAULT_MAX_TOKENS, gt=0)
     temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0)
-    timeout: float = Field(default=30.0, gt=0)
+    timeout: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0)
 
     access_token: Optional[str] = Field(default=None, description="OAuth access token.")
     refresh_token: Optional[str] = Field(
@@ -176,7 +178,7 @@ class AnthropicOAuthLLM(CustomLLM):
         *,
         max_tokens: Optional[int] = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
         access_token: Optional[str] = None,
         refresh_token: Optional[str] = None,
         client_id: str = DEFAULT_CLIENT_ID,

@@ -129,7 +129,7 @@ llm_profiles:
 
   structured_output:
     provider: OpenAI
-    model: gpt-4o-mini
+    model: gpt-6-sol
     temperature: 0.0  # Low temp for consistent extraction
 ```
 
@@ -141,7 +141,7 @@ config = MobileConfig()
 
 llms = {
     "fast_agent": load_llm("GoogleGenAI", "gemini-3.5-flash-lite"),
-    "structured_output": load_llm("OpenAI", "gpt-4o-mini"),
+    "structured_output": load_llm("OpenAI", "gpt-6-sol"),
 }
 
 agent = MobileAgent(
