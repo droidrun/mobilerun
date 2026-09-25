@@ -26,6 +26,7 @@ from mobilerun.agent.manager.prompts import (
 )
 from mobilerun.agent.usage import get_usage_from_response
 from mobilerun.agent.utils.chat_utils import to_chat_messages
+from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.inference import acall_with_retries
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.agent.utils.tracing_setup import record_langfuse_screenshot
@@ -152,7 +153,7 @@ class StatelessManagerAgent(Workflow):
                 output = response.message.content
                 parsed = parse_manager_response(output)
             except Exception as e:
-                logger.error(f"LLM retry failed: {e}")
+                logger.error(f"LLM retry failed: {describe_error(e)}")
                 raise ManagerResponseValidationError(validation_error) from e
 
         validation = validate_manager_response(parsed)
@@ -237,8 +238,11 @@ class StatelessManagerAgent(Workflow):
             )
             output = response.message.content
         except Exception as e:
-            logger.error(f"LLM call failed: {e}")
-            raise RuntimeError(f"Error calling LLM in stateless manager: {e}") from e
+            error = describe_error(e)
+            logger.error(f"LLM call failed: {error}")
+            raise RuntimeError(
+                f"Error calling LLM in stateless manager: {error}"
+            ) from e
 
         usage = None
         try:

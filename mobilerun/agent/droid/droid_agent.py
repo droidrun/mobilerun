@@ -59,6 +59,7 @@ from mobilerun.agent.manager import ManagerAgent, StatelessManagerAgent
 from mobilerun.agent.manager.prompts import ManagerResponseValidationError
 from mobilerun.agent.oneflows.structured_output_agent import StructuredOutputAgent
 from mobilerun.agent.trajectory import TrajectoryWriter
+from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.llm_loader import (
     load_agent_llms,
     merge_llms_with_config,
@@ -937,11 +938,12 @@ class MobileAgent(Workflow):
             )
 
         except Exception as e:
-            logger.error(f"Error during task execution: {e}")
+            error = describe_error(e)
+            logger.error(f"Error during task execution: {error}")
             if self.config.logging.debug:
                 logger.error(traceback.format_exc())
             return FastAgentResultEvent(
-                success=False, reason=f"Error: {str(e)}", instruction=ev.instruction
+                success=False, reason=f"Error: {error}", instruction=ev.instruction
             )
 
     @step
@@ -952,12 +954,13 @@ class MobileAgent(Workflow):
             return FinalizeEvent(success=ev.success, reason=ev.reason)
 
         except Exception as e:
-            logger.error(f"❌ Error during MobileAgent execution: {e}")
+            error = describe_error(e)
+            logger.error(f"❌ Error during MobileAgent execution: {error}")
             if self.config.logging.debug:
                 logger.error(traceback.format_exc())
             return FinalizeEvent(
                 success=False,
-                reason=str(e),
+                reason=error,
             )
 
     # ========================================================================

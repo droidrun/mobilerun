@@ -10,47 +10,14 @@ from llama_index.core.base.llms.types import (
 from llama_index.core.prompts import PromptTemplate
 from pydantic import BaseModel
 
+from mobilerun.agent.utils.errors import describe_error
+from mobilerun.agent.utils.errors import http_status_code as _http_status_code
+
 logger = logging.getLogger("mobilerun")
 
 T = TypeVar("T", bound=BaseModel)
 
 _RETRYABLE_HTTP_CLIENT_STATUS_CODES = {408, 409, 425, 429}
-
-
-def _http_status_code(error: Exception) -> int | None:
-    def read_attribute(value: object, name: str) -> object | None:
-        try:
-            return getattr(value, name, None)
-        except Exception:
-            return None
-
-    def parse_status(value: object) -> int | None:
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            parsed = value
-        elif isinstance(value, str):
-            stripped = value.strip()
-            if not stripped.isascii() or not stripped.isdecimal():
-                return None
-            parsed = int(stripped)
-        else:
-            return None
-        return parsed if 100 <= parsed <= 599 else None
-
-    response = read_attribute(error, "response")
-    candidates = (
-        read_attribute(error, "status_code"),
-        read_attribute(response, "status_code"),
-        read_attribute(error, "code"),
-        read_attribute(error, "status"),
-        read_attribute(response, "status"),
-    )
-    for status_code in candidates:
-        parsed = parse_status(status_code)
-        if parsed is not None:
-            return parsed
-    return None
 
 
 def _is_permanent_http_client_error(error: Exception) -> bool:
@@ -115,7 +82,10 @@ async def acall_with_retries(
             last_exception = TimeoutError("Timed out")
 
         except Exception as e:
-            logger.warning(f"Attempt {attempt} failed with error: {e!r}")
+            logger.warning(
+                f"Attempt {attempt} failed with error: "
+                f"{type(e).__name__}: {describe_error(e)}"
+            )
             if _is_permanent_http_client_error(e):
                 raise
             last_exception = e
@@ -219,7 +189,10 @@ async def acomplete_with_retries(
             last_exception = TimeoutError("Timed out")
 
         except Exception as e:
-            logger.warning(f"Attempt {attempt} failed with error: {e!r}")
+            logger.warning(
+                f"Attempt {attempt} failed with error: "
+                f"{type(e).__name__}: {describe_error(e)}"
+            )
             if _is_permanent_http_client_error(e):
                 raise
             last_exception = e
@@ -317,7 +290,10 @@ async def astructured_predict_with_retries(
             last_exception = TimeoutError("Timed out")
 
         except Exception as e:
-            logger.warning(f"Attempt {attempt} failed with error: {e!r}")
+            logger.warning(
+                f"Attempt {attempt} failed with error: "
+                f"{type(e).__name__}: {describe_error(e)}"
+            )
             if _is_permanent_http_client_error(e):
                 raise
             last_exception = e

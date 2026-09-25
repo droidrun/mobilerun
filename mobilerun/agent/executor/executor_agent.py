@@ -26,6 +26,7 @@ from mobilerun.agent.executor.events import (
 )
 from mobilerun.agent.executor.prompts import parse_executor_response
 from mobilerun.agent.usage import get_usage_from_response
+from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.inference import acall_with_retries
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.config_manager.config_manager import AgentConfig
@@ -180,7 +181,9 @@ class ExecutorAgent(Workflow):
             ctx.write_event_to_stream(event)
             return event
         except Exception as e:
-            raise RuntimeError(f"Error calling LLM in executor: {e}") from e
+            raise RuntimeError(
+                f"Error calling LLM in executor: {describe_error(e)}"
+            ) from e
 
         # Extract usage
         usage = None
