@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Set
 
 from mobilerun.agent.action_result import ActionResult
+from mobilerun.agent.utils.errors import describe_error
 
 if TYPE_CHECKING:
     from llama_index.core.workflow import Context as WorkflowContext
@@ -148,7 +149,7 @@ class ToolRegistry:
         except Exception as e:
             result = ActionResult(
                 success=False,
-                summary=f"Failed to execute {name}: {e}",
+                summary=f"Failed to execute {name}: {describe_error(e)}",
             )
             self._emit_event(workflow_ctx, name, args, result)
             return result
