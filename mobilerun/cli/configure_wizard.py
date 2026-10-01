@@ -415,6 +415,14 @@ def _configure_advanced_settings(
                 label="Maximum steps",
             ),
             SelectChoice(
+                value="timeout",
+                label=(
+                    f"Workflow timeout ({config.agent.timeout}s)"
+                    if config.agent.timeout
+                    else "Workflow timeout (none)"
+                ),
+            ),
+            SelectChoice(
                 value="temperature",
                 label="Temperature",
             ),
@@ -449,6 +457,17 @@ def _configure_advanced_settings(
             config.agent.max_steps = _prompt_int(
                 console, "Maximum steps", default=config.agent.max_steps
             )
+        elif selected == "timeout":
+            while True:
+                value = _prompt_int(
+                    console,
+                    "Workflow timeout in seconds (0 = no timeout)",
+                    default=config.agent.timeout,
+                )
+                if value >= 0:
+                    break
+                console.print("[red]Timeout must be 0 or a positive integer.[/red]")
+            config.agent.timeout = value
         elif selected == "temperature":
             default_temp = config.llm_profiles[_ALL_CONFIG_ROLES[0]].temperature
             while True:
