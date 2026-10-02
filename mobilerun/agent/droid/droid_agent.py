@@ -64,6 +64,7 @@ from mobilerun.agent.utils.llm_loader import (
     load_agent_llms,
     merge_llms_with_config,
 )
+from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.agent.utils.signatures import build_tool_registry
 from mobilerun.agent.utils.tracing_setup import (
@@ -281,6 +282,9 @@ class MobileAgent(Workflow):
                 else logging.Formatter("%(message)s")
             )
             configure_logging(debug=debug, handler=handler)
+        elif debug:
+            # Keep the existing handler (e.g. the import-time one); never lower.
+            logger.setLevel(logging.DEBUG)
 
     def __init__(
         self,
@@ -298,6 +302,7 @@ class MobileAgent(Workflow):
         *args,
         **kwargs,
     ):
+        self._configure_default_logging(debug=bool(config and config.logging.debug))
         self.user_id = kwargs.pop("user_id", None)
         self.runtype = kwargs.pop("runtype", "developer")
         self.shared_state = MobileAgentState(
@@ -364,8 +369,6 @@ class MobileAgent(Workflow):
         self.state_provider = None
 
         super().__init__(*args, timeout=timeout, **kwargs)
-
-        self._configure_default_logging(debug=self.config.logging.debug)
 
         setup_tracing(self.config.tracing, agent=self)
 
@@ -689,7 +692,11 @@ class MobileAgent(Workflow):
                 and self.resolved_device_config.portal_mode != "disabled"
             ):
                 device_obj = await adb.device(serial=device_serial)
-                await ensure_portal_ready(device_obj, debug=self.config.logging.debug)
+                await ensure_portal_ready(
+                    device_obj,
+                    debug=self.config.logging.debug,
+                    **portal_version_kwargs(ensure_portal_ready),
+                )
 
             driver = AndroidDriver(
                 serial=device_serial,

@@ -338,6 +338,17 @@ async def check_portal_version(
                 expected,
                 download_base,
             )
+        # The pinned Portal is correct even when a newer release exists.
+        return (
+            CheckResult(
+                "Portal Version",
+                Status.PASS,
+                f"v{installed} (pinned for mobilerun {__version__})",
+            ),
+            installed,
+            expected,
+            download_base,
+        )
 
     if latest_portal:
         latest_t = _parse_version_tuple(latest_portal)

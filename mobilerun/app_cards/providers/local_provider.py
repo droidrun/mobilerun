@@ -41,16 +41,23 @@ class LocalAppCardProvider(AppCardProvider):
             logger.warning(f"Failed to load app_cards.json: {e}")
             self.mapping = {}
 
-        # Content cache: (package_name, instruction) -> content
-        self._content_cache: Dict[tuple[str, str], str] = {}
+        # Content cache: (package_name, instruction, platform) -> content
+        self._content_cache: Dict[tuple[str, str, str | None], str] = {}
 
-    async def load_app_card(self, package_name: str, instruction: str = "") -> str:
+    async def load_app_card(
+        self, package_name: str, instruction: str = "", platform: str | None = None
+    ) -> str:
         """
         Load app card for a package name from local files.
 
+        A mapping value is either a card path for every platform, or a dict of
+        per-platform paths with an optional "default", e.g.
+        {"android": "android/tiktok.md", "ios": "ios/tiktok.md"}.
+
         Args:
-            package_name: Android package name (e.g., "com.google.android.gm")
+            package_name: Android package name or iOS bundle id
             instruction: User instruction (for cache key consistency, not used in loading)
+            platform: "android" or "ios", when known
 
         Returns:
             App card content or empty string if not found
@@ -59,7 +66,7 @@ class LocalAppCardProvider(AppCardProvider):
             return ""
 
         # Check content cache first
-        cache_key = (package_name, instruction)
+        cache_key = (package_name, instruction, platform)
         if cache_key in self._content_cache:
             logger.debug(f"App card cache hit: {package_name}")
             return self._content_cache[cache_key]
@@ -71,6 +78,16 @@ class LocalAppCardProvider(AppCardProvider):
 
         # Get app card file path (relative to app_cards_dir)
         filename = self.mapping[package_name]
+        if isinstance(filename, dict):
+            filename = filename.get(platform or "") or filename.get("default")
+        if not filename:
+            self._content_cache[cache_key] = ""
+            logger.debug(f"No app card for {package_name} on {platform}")
+            return ""
+        if not isinstance(filename, str):
+            self._content_cache[cache_key] = ""
+            logger.warning(f"Invalid app card path for {package_name}: {filename!r}")
+            return ""
         app_card_path = self.app_cards_dir / filename
 
         # Read file

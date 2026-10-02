@@ -24,6 +24,7 @@ from mobilerun_core_local.driver.ios import (
 )
 from rich.console import Console
 
+from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.config_manager import ConfigLoader
 from mobilerun.tools.filters import ConciseFilter
 from mobilerun.tools.formatters import IndexedFormatter
@@ -184,7 +185,9 @@ async def _create_driver(
 
     if config.device.auto_setup and config.device.portal_mode != "disabled":
         device_obj = await adb.device(serial=serial)
-        await ensure_portal_ready(device_obj, debug=False)
+        await ensure_portal_ready(
+            device_obj, debug=False, **portal_version_kwargs(ensure_portal_ready)
+        )
 
     driver = AndroidDriver(
         serial=serial,

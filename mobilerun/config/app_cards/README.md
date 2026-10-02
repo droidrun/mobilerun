@@ -4,7 +4,7 @@ App cards provide app-specific guidance to Mobilerun agents. They help agents un
 
 ## How It Works
 
-1. **Mapping File**: `app_cards.json` maps Android package names to markdown files
+1. **Mapping File**: `app_cards.json` maps Android package names and iOS bundle ids to markdown files
 2. **App Card Files**: Markdown files containing app-specific guidance
 3. **Automatic Loading**: Mobilerun automatically loads the appropriate app card based on the current package name
 4. **Prompt Injection**: App cards are injected into agent prompts when available
@@ -54,27 +54,32 @@ Create a `.md` file with guidance about the app:
 
 ## Path Resolution
 
-App cards support three path types:
+Card paths in `app_cards.json` are resolved like this:
 
-1. **Relative to app_cards directory** (most common):
+1. **Relative to the folder that contains `app_cards.json`** (most common):
    ```json
-   {"com.google.android.gm": "gmail.md"}
+   {"com.google.android.gm": "gmail.md", "com.whatsapp": "social/whatsapp.md"}
    ```
-   Resolves to: `config/app_cards/gmail.md` (in package)
 
-2. **Relative paths with PathResolver**:
+2. **Absolute path**:
    ```json
-   {"com.google.gm": "config/custom_cards/gmail.md"}
+   {"com.google.android.gm": "/usr/share/mobilerun/cards/gmail.md"}
    ```
-   Checks working directory first, then package directory
-   - Working dir: `./config/custom_cards/gmail.md`
-   - Package dir: `<package>/config/custom_cards/gmail.md`
 
-3. **Absolute path**:
-   ```json
-   {"com.google.gm": "/usr/share/mobilerun/cards/gmail.md"}
-   ```
-   Uses the absolute path directly
+The `app_cards_dir` setting itself is looked up in the working directory first, then in the package directory.
+
+## Different Cards per Platform
+
+Some apps use the same id on Android and iOS. Map the id to one path per platform; `default` is used for any platform without its own entry:
+
+```json
+{
+  "com.zhiliaoapp.musically": {
+    "android": "android/tiktok.md",
+    "ios": "ios/tiktok.md"
+  }
+}
+```
 
 ## Finding Package Names
 

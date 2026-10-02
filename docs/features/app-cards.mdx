@@ -68,7 +68,7 @@ You can use this as a template to create cards for other apps (see "Creating Cus
 
 ### When Are They Used?
 
-App cards are used by the **Manager Agent** when running in reasoning mode (`--reasoning` flag or `reasoning: true` in config):
+App cards are used by the **Manager Agent** when running in reasoning mode (`--reasoning` flag or `reasoning: true` in config), and the Executor sees the same card:
 
 ```bash
 # App cards enabled (Manager uses them for planning)
@@ -77,6 +77,8 @@ mobilerun run "Archive all unread emails" --reasoning
 # App cards not used (direct execution mode)
 mobilerun run "Tap the button"
 ```
+
+The stateless manager (`manager.stateless: true`) does not load app cards.
 
 ---
 
@@ -152,6 +154,22 @@ Add your app mapping to `config/app_cards/app_cards.json`:
 {
   "com.whatsapp": "social/whatsapp.md",
   "com.instagram.android": "social/instagram.md"
+}
+```
+
+Card paths are relative to the folder that contains `app_cards.json`, or absolute.
+
+**Different cards per platform:**
+
+Some apps use the same id on Android and iOS. Map the id to one path per platform; `default` is used for any platform without its own entry:
+
+```json
+{
+  "com.zhiliaoapp.musically": {
+    "android": "android/tiktok.md",
+    "ios": "ios/tiktok.md"
+  },
+  "com.google.android.gm": "gmail.md"
 }
 ```
 
