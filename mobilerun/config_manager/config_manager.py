@@ -133,6 +133,20 @@ class AgentConfig:
     # on top of per-model effective-size resolution. Escape hatch for local
     # vision models (e.g. Ollama) that downsize to an undocumented size.
     model_screenshot_max_side: Optional[int] = None
+    # Workflow timeout in seconds — caps the total run before llama-index
+    # raises `Operation timed out after N seconds`. Surface this through
+    # `mobilerun configure → Advanced settings` so users can raise it
+    # for long-running tasks without editing the YAML by hand.
+    # ``0`` means "no timeout"; the CLI normalizes it to ``None`` before
+    # constructing the agent, because the workflow runtime treats ``0`` as
+    # "time out immediately" and only ``None`` disables the deadline.
+    timeout: int = 1000
+
+    def resolve_timeout(self) -> Optional[float]:
+        """Return the workflow timeout in seconds, or ``None`` for no limit."""
+        if self.timeout is None or self.timeout <= 0:
+            return None
+        return self.timeout
 
     fast_agent: FastAgentConfig = field(default_factory=FastAgentConfig)
     manager: ManagerConfig = field(default_factory=ManagerConfig)
@@ -363,6 +377,7 @@ class MobileConfig:
                 "use_normalized_coordinates", False
             ),
             model_screenshot_max_side=agent_data.get("model_screenshot_max_side"),
+            timeout=agent_data.get("timeout", 1000),
             fast_agent=fast_agent_config,
             manager=manager_config,
             executor=executor_config,

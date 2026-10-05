@@ -262,6 +262,11 @@ async def run_command(
             f"👁️  Vision settings: Manager={config.agent.manager.vision}, "
             f"Executor={config.agent.executor.vision}, FastAgent={config.agent.fast_agent.vision}"
         )
+        workflow_timeout = config.agent.resolve_timeout()
+        logger.info(
+            "⏱️  Workflow timeout: "
+            f"{f'{workflow_timeout}s' if workflow_timeout is not None else 'none'}"
+        )
 
         if config.tracing.enabled:
             logger.info("🔍 Tracing enabled")
@@ -294,7 +299,7 @@ async def run_command(
             goal=command,
             llms=llm,
             config=config,
-            timeout=1000,
+            timeout=workflow_timeout,
             **droid_agent_kwargs,
         )
 
@@ -1389,6 +1394,11 @@ async def test(
             f"👁️  Vision settings: Manager={config.agent.manager.vision}, "
             f"Executor={config.agent.executor.vision}, FastAgent={config.agent.fast_agent.vision}"
         )
+        workflow_timeout = config.agent.resolve_timeout()
+        logger.info(
+            "⏱️  Workflow timeout: "
+            f"{f'{workflow_timeout}s' if workflow_timeout is not None else 'none'}"
+        )
 
         if config.tracing.enabled:
             logger.info("🔍 Tracing enabled")
@@ -1401,7 +1411,7 @@ async def test(
         droid_agent = MobileAgent(
             goal=command,
             config=config,
-            timeout=1000,
+            timeout=workflow_timeout,
             **droid_agent_kwargs,
         )
 
