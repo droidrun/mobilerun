@@ -32,7 +32,7 @@ Initialize the AndroidDriver instance.
 
 **Arguments**:
 
-- `serial` _str | None_ - Device serial number (e.g., "emulator-5554", "192.168.1.100:5555"). If None, auto-detects the first available device.
+- `serial` _str | None_ - Device serial number (e.g., "emulator-5554", "192.168.1.100:5555"). If None, uses `ANDROID_SERIAL`, otherwise the only connected device; raises an error if several devices are connected.
 - `use_tcp` _bool_ - Whether to prefer TCP communication (default: False). TCP is faster but requires port forwarding. Falls back to content provider mode if TCP fails.
 - `remote_tcp_port` _int_ - TCP port for Portal app communication on device (default: 8080)
 

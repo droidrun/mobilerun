@@ -43,7 +43,7 @@ mobilerun run "<command>" [OPTIONS]
 | `--agent`, `-a` | External agent to use (not yet supported — reserved for future use) | None |
 | `--provider`, `-p` | LLM provider (GoogleGenAI, OpenAI, Anthropic, etc.) | From config |
 | `--model`, `-m` | Model name | From config |
-| `--device`, `-d` | Device serial or IP | Auto-detect |
+| `--device`, `-d` | Device serial or IP | See [Device Selection](#device-selection) |
 | `--steps` | Max execution steps | `15` |
 | `--reasoning` | Enable planning mode | `false` |
 | `--vision` | Enable vision for all agents | From config |
@@ -420,7 +420,7 @@ mobilerun macro replay trajectories/test --dry-run
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--device`, `-d` | Device serial | Auto-detect |
+| `--device`, `-d` | Device serial | See [Device Selection](#device-selection) |
 | `--delay`, `-t` | Seconds between actions | `1.0` |
 | `--start-from`, `-s` | Start step (1-based) | `1` |
 | `--max-steps`, `-m` | Max steps to run | All |
@@ -459,6 +459,17 @@ trajectories/2025-10-16_14-30-45/
 1. **CLI flags** (highest)
 2. **Config file** (`~/.config/mobilerun/config.yaml`)
 3. **Defaults** (lowest)
+
+### Device Selection
+
+For Android, Mobilerun picks the device in this order:
+
+1. `--device` / `-d`
+2. `device.serial` in `config.yaml` (`run`, `device`, and `doctor`)
+3. `ANDROID_SERIAL` environment variable
+4. The only connected device
+
+If several devices are connected and none is selected, the command exits with an error.
 
 ### Common Patterns
 
@@ -590,6 +601,7 @@ mobilerun ping --tcp
 | `MINIMAX_API_KEY` | MiniMax API key | None |
 | `MOBILERUN_CLOUD_API_KEY` | Mobilerun Cloud API key for `devices --cloud` and cloud device actions | None |
 | `MOBILERUN_CONFIG` | Config file path | `~/.config/mobilerun/config.yaml` |
+| `ANDROID_SERIAL` | Default Android device serial (see [Device Selection](#device-selection)) | None |
 
 **Setting variables:**
 

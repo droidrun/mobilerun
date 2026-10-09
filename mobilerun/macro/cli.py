@@ -7,10 +7,13 @@ import logging
 from typing import Optional
 
 import click
-from async_adbutils import adb
 from rich.console import Console
 from rich.table import Table
 
+from mobilerun.agent.utils.android_device import (
+    AndroidDeviceSelectionError,
+    resolve_android_serial,
+)
 from mobilerun.agent.utils.trajectory import Trajectory
 from mobilerun.config_manager.path_resolver import PathResolver
 from mobilerun.macro.replay import MacroPlayer
@@ -116,10 +119,13 @@ def replay(
     async def get_device():
         if device is None:
             logger.info("🔍 Finding connected device...")
-            devices = await adb.list()
-            if not devices:
-                raise ValueError("No connected devices found.")
-            dev = devices[0].serial
+            try:
+                dev = await resolve_android_serial()
+            except AndroidDeviceSelectionError as e:
+                if dry_run:
+                    logger.warning(f"⚠️  {e}")
+                    return None
+                raise click.ClickException(str(e)) from None
             logger.info(f"📱 Using device: {dev}")
             return dev
         else:
@@ -245,7 +251,7 @@ async def _replay_async(
         logger.info(f"   Description: {description}")
         logger.info(f"   Version: {version}")
         logger.info(f"   Total actions: {total_actions}")
-        logger.info(f"   Device: {device}")
+        logger.info(f"   Device: {device or 'not selected'}")
         logger.info(f"   Delay between actions: {delay}s")
         logger.info(f"   State threshold: {state_threshold}")
         logger.info(f"   State timeout: {state_timeout}s")

@@ -35,6 +35,10 @@ from rich.text import Text
 
 from mobilerun import MobileAgent, ResultEvent
 from mobilerun.agent.external import list_agents
+from mobilerun.agent.utils.android_device import (
+    AndroidDeviceSelectionError,
+    resolve_android_serial,
+)
 from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.llm_picker import load_llm
 from mobilerun.agent.utils.oauth.openai_oauth_llm import (
@@ -841,12 +845,11 @@ async def _setup_portal(
     """Internal async function to install and enable the Mobilerun Portal on a device."""
     try:
         if not device:
-            devices = await adb.list()
-            if not devices:
-                console.print("[yellow]No devices connected.[/]")
+            try:
+                device = await resolve_android_serial()
+            except AndroidDeviceSelectionError as e:
+                console.print(f"[bold red]Error:[/] {e}")
                 return
-
-            device = devices[0].serial
             console.print(f"[blue]Using device:[/] {device}")
 
         device_obj = await adb.device(device)
