@@ -213,6 +213,9 @@ The Portal only communicates locally via ADB. No data is sent to external server
     # CLI
     mobilerun run "your command" --device emulator-5554
 
+    # CLI, for every command in this shell
+    export ANDROID_SERIAL=emulator-5554
+
     # Python
     config = MobileConfig(device=DeviceConfig(serial="emulator-5554"))
     agent = MobileAgent(goal="your task", config=config)

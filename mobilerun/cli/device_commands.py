@@ -24,6 +24,10 @@ from mobilerun_core_local.driver.ios import (
 )
 from rich.console import Console
 
+from mobilerun.agent.utils.android_device import (
+    AndroidDeviceSelectionError,
+    resolve_android_serial,
+)
 from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.config_manager import ConfigLoader
 from mobilerun.tools.filters import ConciseFilter
@@ -178,10 +182,11 @@ async def _create_driver(
 
     serial = config.device.serial
     if serial is None:
-        devices = await adb.list()
-        if not devices:
-            raise click.ClickException("No connected Android devices found.")
-        serial = devices[0].serial
+        try:
+            serial = await resolve_android_serial()
+        except AndroidDeviceSelectionError as e:
+            raise click.ClickException(str(e)) from None
+        click.echo(f"Using device: {serial}", err=True)
 
     if config.device.auto_setup and config.device.portal_mode != "disabled":
         device_obj = await adb.device(serial=serial)
