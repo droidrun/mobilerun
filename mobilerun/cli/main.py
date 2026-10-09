@@ -170,6 +170,7 @@ async def run_command(
     debug_mode = debug if debug is not None else config.logging.debug
     _setup_cli_logging(debug_mode)
     logger = logging.getLogger("mobilerun")
+    droid_agent = None
 
     try:
         logger.info(f"🚀 Starting: {command}")
@@ -337,17 +338,21 @@ async def run_command(
             logger.debug(traceback.format_exc())
         return False
     finally:
-        await _cleanup_android_keyboard(config)
+        await _cleanup_android_keyboard(
+            config, getattr(droid_agent, "android_serial", None)
+        )
 
 
-async def _cleanup_android_keyboard(config: MobileConfig) -> None:
+async def _cleanup_android_keyboard(
+    config: MobileConfig, serial: str | None = None
+) -> None:
     platform = (config.device.platform or "").lower()
     control_backend = (config.device.control_backend or "").lower()
     if platform == "ios" or control_backend == VISUAL_REMOTE_CONNECTION:
         return
 
     try:
-        device_obj = await adb.device(config.device.serial)
+        device_obj = await adb.device(serial or config.device.serial)
         if device_obj:
             from mobilerun_core_local.driver.android.portal import (
                 PORTAL_PACKAGE_NAME,
