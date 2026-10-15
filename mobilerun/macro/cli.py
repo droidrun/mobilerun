@@ -16,7 +16,7 @@ from mobilerun.agent.utils.android_device import (
 )
 from mobilerun.agent.utils.trajectory import Trajectory
 from mobilerun.config_manager.path_resolver import PathResolver
-from mobilerun.macro.replay import MacroPlayer
+from mobilerun.macro.replay import MacroPlayer, resolve_ios_portal_url
 
 console = Console()
 
@@ -51,7 +51,12 @@ def macro_cli():
 
 @macro_cli.command()
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--device", "-d", help="Device serial number", default=None)
+@click.option(
+    "--device",
+    "-d",
+    help="Device serial number, or the iOS portal URL with --ios",
+    default=None,
+)
 @click.option(
     "--delay", "-t", help="Delay between actions (seconds)", default=1.0, type=float
 )
@@ -92,7 +97,25 @@ def macro_cli():
 @click.option(
     "--provider", default=None, help="LLM provider override for agent handoff."
 )
-@click.option("--model", default=None, help="LLM model override for agent handoff.")
+@click.option(
+    "--model",
+    default=None,
+    help="LLM model override for agent handoff, or the Jev model/version with "
+    "--agent jev.",
+)
+@click.option(
+    "--agent",
+    type=click.Choice(["mobilerun", "jev"], case_sensitive=False),
+    default=None,
+    help="Agent backend for agent handoff: mobilerun (LLM agents) or jev "
+    "(TypeSafe Jev). Defaults to the configured agent.",
+)
+@click.option(
+    "--ios",
+    is_flag=True,
+    default=False,
+    help="Replay on an iOS device through the iOS portal.",
+)
 def replay(
     path: str,
     device: Optional[str],
@@ -107,6 +130,8 @@ def replay(
     config_path: Optional[str],
     provider: Optional[str],
     model: Optional[str],
+    agent: Optional[str],
+    ios: bool,
 ):
     """Replay a macro from a file or trajectory folder."""
     logger = configure_logging(debug)
@@ -116,7 +141,27 @@ def replay(
     # Convert start_from from 1-based to 0-based
     start_from_zero = max(0, start_from - 1)
 
+    async def get_ios_device():
+        if device is None:
+            try:
+                url = await resolve_ios_portal_url()
+            except Exception as e:
+                # Dry runs never touch a device, so any discovery failure is fine.
+                if dry_run:
+                    logger.warning(f"⚠️  {e}")
+                    return None
+                raise click.ClickException(str(e)) from None
+        else:
+            try:
+                url = await resolve_ios_portal_url(device)
+            except ValueError as e:
+                raise click.ClickException(str(e)) from None
+        logger.info(f"📱 Using iOS portal: {url}")
+        return url
+
     async def get_device():
+        if ios:
+            return await get_ios_device()
         if device is None:
             logger.info("🔍 Finding connected device...")
             try:
@@ -151,6 +196,8 @@ def replay(
             config_path,
             provider,
             model,
+            agent=agent,
+            ios=ios,
         )
     )
 
@@ -170,6 +217,8 @@ async def _replay_with_device(
     config_path: Optional[str],
     provider: Optional[str],
     model: Optional[str],
+    agent: Optional[str] = None,
+    ios: bool = False,
 ):
     device = await get_device()
     await _replay_async(
@@ -186,6 +235,8 @@ async def _replay_with_device(
         config_path,
         provider,
         model,
+        agent=agent,
+        ios=ios,
     )
 
 
@@ -203,37 +254,31 @@ async def _replay_async(
     config_path: Optional[str],
     provider: Optional[str],
     model: Optional[str],
+    agent: Optional[str] = None,
+    ios: bool = False,
 ):
     """Async function to handle macro replay."""
     try:
         # Resolve path (checks working dir, then package dir)
         resolved_path = PathResolver.resolve(path, must_exist=True)
 
+        player = MacroPlayer(
+            device_serial=device,
+            delay_between_actions=delay,
+            on_mismatch=on_mismatch,
+            state_timeout=state_timeout,
+            state_threshold=state_threshold,
+            config_path=config_path,
+            provider=provider,
+            model=model,
+            agent=agent,
+            ios=ios,
+        )
         if resolved_path.is_file():
             logger.info(f"📄 Loading macro from file: {resolved_path}")
-            player = MacroPlayer(
-                device_serial=device,
-                delay_between_actions=delay,
-                on_mismatch=on_mismatch,
-                state_timeout=state_timeout,
-                state_threshold=state_threshold,
-                config_path=config_path,
-                provider=provider,
-                model=model,
-            )
             macro_data = player.load_macro_from_file(str(resolved_path))
         elif resolved_path.is_dir():
             logger.info(f"📁 Loading macro from folder: {resolved_path}")
-            player = MacroPlayer(
-                device_serial=device,
-                delay_between_actions=delay,
-                on_mismatch=on_mismatch,
-                state_timeout=state_timeout,
-                state_threshold=state_threshold,
-                config_path=config_path,
-                provider=provider,
-                model=model,
-            )
             macro_data = player.load_macro_from_folder(str(resolved_path))
         else:
             logger.error(f"❌ Invalid path: {resolved_path}")
@@ -255,10 +300,14 @@ async def _replay_async(
         logger.info(f"   Version: {version}")
         logger.info(f"   Total actions: {total_actions}")
         logger.info(f"   Device: {device or 'not selected'}")
+        if ios:
+            logger.info("   Platform: iOS")
         logger.info(f"   Delay between actions: {delay}s")
         logger.info(f"   State threshold: {state_threshold}")
         logger.info(f"   State timeout: {state_timeout}s")
         logger.info(f"   On mismatch: {on_mismatch}")
+        if on_mismatch == "agent":
+            logger.info(f"   Handoff agent: {agent or 'from config'}")
 
         if start_from > 0:
             logger.info(f"   Starting from step: {start_from + 1}")

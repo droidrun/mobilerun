@@ -15,8 +15,14 @@ async def run_agent_handoff(
     divergence: Dict[str, Any],
     current_state: Dict[str, Any],
     remaining_actions: List[Dict[str, Any]],
+    agent: Optional[str] = None,
+    ios: bool = False,
 ) -> bool:
-    """Invoke the normal Mobilerun agent after macro replay diverges."""
+    """Invoke the normal Mobilerun agent after macro replay diverges.
+
+    ``agent`` selects the agent backend (e.g. ``"jev"``); ``None`` keeps the
+    configured one. With ``ios``, ``device_serial`` is the iOS portal URL.
+    """
     from mobilerun.cli.main import run_command
 
     _ = divergence, current_state, remaining_actions
@@ -24,7 +30,9 @@ async def run_agent_handoff(
         goal,
         config_path=config_path,
         device=device_serial,
+        agent=agent,
         provider=provider,
         model=model,
         save_trajectory="none",
+        ios=ios,
     )

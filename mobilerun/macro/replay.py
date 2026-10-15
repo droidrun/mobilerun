@@ -11,6 +11,14 @@ import time
 from typing import Any, Dict, Optional
 
 from mobilerun_core_local.driver.android import AndroidDriver
+from mobilerun_core_local.driver.base import DeviceDriver
+from mobilerun_core_local.driver.ios import (
+    IOSPortalDriver,
+    IOSPortalHttpDriver,
+    create_ios_driver,
+    discover_ios_device,
+    validate_ios_portal_url,
+)
 
 from mobilerun.agent.utils.trajectory import Trajectory
 from mobilerun.macro.handoff import run_agent_handoff
@@ -22,7 +30,8 @@ from mobilerun.macro.state import (
 )
 from mobilerun.tools.filters import DetailedFilter
 from mobilerun.tools.formatters import IndexedFormatter
-from mobilerun.tools.ui.provider import AndroidStateProvider
+from mobilerun.tools.ui.ios_provider import IOSStateProvider
+from mobilerun.tools.ui.provider import AndroidStateProvider, StateProvider
 
 logger = logging.getLogger("mobilerun-macro")
 
@@ -30,12 +39,20 @@ logger = logging.getLogger("mobilerun-macro")
 _KEYCODE_TO_BUTTON = {4: "back", 3: "home", 66: "enter"}
 
 
+async def resolve_ios_portal_url(url: Optional[str] = None) -> str:
+    """Validate an iOS portal base URL, or discover a running portal."""
+    if url:
+        return validate_ios_portal_url(url)
+    logger.info("🔍 Searching for iOS portal...")
+    return await discover_ios_device()
+
+
 class MacroPlayer:
     """
     A class for loading and replaying Mobilerun macro sequences.
 
     This player can execute recorded UI actions (taps, swipes, text input, key presses)
-    on Android devices using AndroidDriver.
+    on Android devices, or on iOS devices through the iOS portal.
     """
 
     def __init__(
@@ -50,13 +67,24 @@ class MacroPlayer:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         config_path: Optional[str] = None,
+        agent: Optional[str] = None,
+        ios: bool = False,
+        driver: DeviceDriver | None = None,
+        state_provider: StateProvider | None = None,
     ):
         """
         Initialize the MacroPlayer.
 
         Args:
-            device_serial: Serial number of the target device. If None, uses ANDROID_SERIAL or the only connected device.
+            device_serial: Serial number of the target device, or the iOS portal URL.
+                If None, uses ANDROID_SERIAL or the only connected device (iOS:
+                portal discovery).
             delay_between_actions: Delay in seconds between each action (default: 1.0s)
+            agent: Agent backend for divergence handoff (e.g. "jev"); None keeps
+                the configured one.
+            ios: Replay on an iOS device through the iOS portal.
+            driver: Pre-connected device driver to use instead of creating one.
+            state_provider: State provider for pre-action state checks.
         """
         self.device_serial = device_serial
         self.delay_between_actions = delay_between_actions
@@ -68,19 +96,52 @@ class MacroPlayer:
         self.provider = provider
         self.model = model
         self.config_path = config_path
+        self.agent = agent
+        self.ios = ios
         self.last_divergence: Optional[Dict[str, Any]] = None
-        self.state_provider = None
-        self.driver: AndroidDriver | None = None
+        self.state_provider = state_provider
+        self.driver: DeviceDriver | None = driver
         self.credential_manager = None
         self._credential_load_error: Optional[str] = None
 
-    async def _initialize_driver(self) -> AndroidDriver:
-        """Initialize AndroidDriver for the target device."""
+    async def _initialize_driver(self) -> DeviceDriver:
+        """Initialize the driver for the target device."""
         if self.driver is None:
-            self.driver = AndroidDriver(serial=self.device_serial)
-            await self.driver.connect()
-            logger.info(f"🤖 Initialized driver for device: {self.device_serial}")
+            if self.ios:
+                self.driver = await self._create_ios_driver()
+            else:
+                self.driver = AndroidDriver(serial=self.device_serial)
+                await self.driver.connect()
+                logger.info(f"🤖 Initialized driver for device: {self.device_serial}")
         return self.driver
+
+    async def _create_ios_driver(self) -> DeviceDriver:
+        url = await resolve_ios_portal_url(self.device_serial)
+        # The handoff reuses the resolved URL as the agent's device.
+        self.device_serial = url
+        driver = await create_ios_driver(url, token=self._resolve_device_token())
+        await driver.connect()
+        logger.info(f"🍎 Initialized iOS driver for portal: {url}")
+        return driver
+
+    def _resolve_device_token(self) -> Optional[str]:
+        from mobilerun.config_manager.config_manager import DeviceConfig
+        from mobilerun.config_manager.loader import ConfigLoader
+
+        device_config = DeviceConfig()
+        try:
+            if (
+                self.config_path is not None
+                or ConfigLoader.get_user_config_path().exists()
+            ):
+                device_config = ConfigLoader.load(self.config_path).device
+        except Exception as e:
+            logger.debug("Failed to load device config for macro replay: %s", e)
+        return device_config.resolve_auth_token()
+
+    def _is_ios(self) -> bool:
+        platform = str(getattr(self.driver, "platform", "") or "")
+        return self.ios or platform.lower() == "ios"
 
     def load_macro_from_file(self, macro_file_path: str) -> Dict[str, Any]:
         """
@@ -139,13 +200,8 @@ class MacroPlayer:
 
     async def get_current_state_snapshot(self) -> Dict[str, Any]:
         driver = await self._initialize_driver()
-        if self.state_provider is None and isinstance(driver, AndroidDriver):
-            self.state_provider = AndroidStateProvider(
-                driver,
-                tree_filter=DetailedFilter(),
-                tree_formatter=IndexedFormatter(),
-                use_normalized=False,
-            )
+        if self.state_provider is None:
+            self.state_provider = _default_state_provider(driver)
         if self.state_provider is not None:
             try:
                 return normalize_ui_state(await self.state_provider.get_state())
@@ -374,6 +430,12 @@ class MacroPlayer:
                 }
                 if self.on_mismatch == "agent":
                     logger.warning("🤖 Handing off to agent after macro divergence")
+                    handoff_kwargs: Dict[str, Any] = {}
+                    # Only set when used, so custom runners keep their signature.
+                    if self.agent is not None:
+                        handoff_kwargs["agent"] = self.agent
+                    if self._is_ios():
+                        handoff_kwargs["ios"] = True
                     return await self.handoff_runner(
                         goal=description,
                         device_serial=self.device_serial,
@@ -383,6 +445,7 @@ class MacroPlayer:
                         divergence=self.last_divergence,
                         current_state=current_state or {},
                         remaining_actions=macro_data["actions"][i - 1 :],
+                        **handoff_kwargs,
                     )
                 return False
 
@@ -418,6 +481,21 @@ class MacroPlayer:
         return failed_count == 0
 
 
+def _default_state_provider(driver: DeviceDriver) -> StateProvider | None:
+    """Pick the provider MobileAgent pairs with ``driver`` (no vision)."""
+    # The --local iOS portal serves the Android-shaped tree in points.
+    if isinstance(driver, (AndroidDriver, IOSPortalHttpDriver)):
+        return AndroidStateProvider(
+            driver,
+            tree_filter=DetailedFilter(),
+            tree_formatter=IndexedFormatter(),
+            use_normalized=False,
+        )
+    if isinstance(driver, IOSPortalDriver):
+        return IOSStateProvider(driver)
+    return None
+
+
 # Utility functions for convenience
 
 
@@ -430,6 +508,11 @@ async def replay_macro_file(
     on_mismatch: str = "stop",
     state_timeout: float = 5.0,
     state_threshold: float = 0.85,
+    config_path: Optional[str] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    agent: Optional[str] = None,
+    ios: bool = False,
 ) -> bool:
     """
     Convenience function to replay a macro from a file.
@@ -440,6 +523,11 @@ async def replay_macro_file(
         delay_between_actions: Delay between actions in seconds
         start_from_step: Step to start from (0-based)
         max_steps: Maximum steps to execute
+        config_path: Config file for credentials and agent handoff
+        provider: LLM provider override for agent handoff
+        model: Model override for agent handoff
+        agent: Agent backend for agent handoff (e.g. "jev")
+        ios: Replay on an iOS device (device_serial is the portal URL)
 
     Returns:
         True if replay was successful, False otherwise
@@ -450,6 +538,11 @@ async def replay_macro_file(
         on_mismatch=on_mismatch,
         state_timeout=state_timeout,
         state_threshold=state_threshold,
+        config_path=config_path,
+        provider=provider,
+        model=model,
+        agent=agent,
+        ios=ios,
     )
 
     try:
@@ -471,6 +564,11 @@ async def replay_macro_folder(
     on_mismatch: str = "stop",
     state_timeout: float = 5.0,
     state_threshold: float = 0.85,
+    config_path: Optional[str] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    agent: Optional[str] = None,
+    ios: bool = False,
 ) -> bool:
     """
     Convenience function to replay a macro from a trajectory folder.
@@ -481,6 +579,11 @@ async def replay_macro_folder(
         delay_between_actions: Delay between actions in seconds
         start_from_step: Step to start from (0-based)
         max_steps: Maximum steps to execute
+        config_path: Config file for credentials and agent handoff
+        provider: LLM provider override for agent handoff
+        model: Model override for agent handoff
+        agent: Agent backend for agent handoff (e.g. "jev")
+        ios: Replay on an iOS device (device_serial is the portal URL)
 
     Returns:
         True if replay was successful, False otherwise
@@ -491,6 +594,11 @@ async def replay_macro_folder(
         on_mismatch=on_mismatch,
         state_timeout=state_timeout,
         state_threshold=state_threshold,
+        config_path=config_path,
+        provider=provider,
+        model=model,
+        agent=agent,
+        ios=ios,
     )
 
     try:
