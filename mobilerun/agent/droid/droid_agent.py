@@ -5,6 +5,7 @@ to achieve a user's goal on a mobile device.
 Architecture:
 - When reasoning=False: Uses FastAgent directly
 - When reasoning=True: Uses Manager (planning) + Executor (action) workflows
+- When agent.name is "jev": Uses JevAgent (TypeSafe Jev picks each action)
 """
 
 import asyncio
@@ -55,6 +56,11 @@ from mobilerun.agent.executor import ExecutorAgent
 from mobilerun.agent.external import load_agent
 from mobilerun.agent.fast_agent import FastAgent
 from mobilerun.agent.fast_agent.events import FastAgentOutputEvent
+from mobilerun.agent.jev.agent import JevAgent
+from mobilerun.agent.jev.client import JevClient, resolve_typesafe_api_key
+from mobilerun.agent.jev.errors import JevError
+from mobilerun.agent.jev.events import JevStepEvent
+from mobilerun.agent.jev.observation import JevIndexedFormatter
 from mobilerun.agent.manager import ManagerAgent, StatelessManagerAgent
 from mobilerun.agent.manager.prompts import ManagerResponseValidationError
 from mobilerun.agent.oneflows.structured_output_agent import StructuredOutputAgent
@@ -80,6 +86,7 @@ from mobilerun.agent.utils.vision_sizing import (
 )
 from mobilerun.config_manager.config_manager import (
     DEFAULT_DISABLED_TOOLS,
+    JEV_AGENT_NAME,
     AgentConfig,
     CredentialsConfig,
     DeviceConfig,
@@ -351,15 +358,38 @@ class MobileAgent(Workflow):
             mcp=config.mcp if config else MCPConfig(),
         )
         self.shared_state.telemetry_config_enabled = self.config.telemetry.enabled
+        self._using_jev = (
+            self.config.agent.name or ""
+        ).strip().lower() == JEV_AGENT_NAME
+        if self._using_jev and output_model is not None:
+            raise ValueError(
+                "output_model is not supported with the Jev agent: Jev returns no "
+                "answer text to extract structured output from."
+            )
         control_backend = _normalize_control_backend(
             self.resolved_device_config.control_backend
         )
-        if (
+        screenshot_only = (
             self.config.agent.vision_only
             or control_backend == VISUAL_REMOTE_CONNECTION
             or getattr(state_provider, "requires_coordinate_tools", False)
-        ):
+        )
+        if self._using_jev and screenshot_only:
+            raise ValueError(
+                "Jev needs the accessibility tree; disable vision_only and do not "
+                f"use the {VISUAL_REMOTE_CONNECTION} control backend or a "
+                "screenshot-only state provider."
+            )
+        if screenshot_only:
             _force_screenshot_only_vision(self.config.agent)
+
+        # Resolve the TypeSafe key now so a missing key is a setup error.
+        self.jev_client: JevClient | None = None
+        if self._using_jev:
+            if self.config.agent.reasoning:
+                logger.warning("⚠️ reasoning is ignored with the Jev agent")
+                self.config.agent.reasoning = False
+            self.jev_client = self._create_jev_client()
 
         # These are populated in start_handler (unless injected via __init__)
         self._injected_driver = driver
@@ -376,8 +406,10 @@ class MobileAgent(Workflow):
         setup_tracing(self.config.tracing, agent=self)
 
         # Check if using external agent - skip LLM loading
-        _BUILTIN_AGENT_NAMES = {"mobilerun", "droidrun"}
-        self._using_external_agent = self.config.agent.name not in _BUILTIN_AGENT_NAMES
+        _BUILTIN_AGENT_NAMES = {"mobilerun", "droidrun", JEV_AGENT_NAME}
+        self._using_external_agent = (
+            not self._using_jev and self.config.agent.name not in _BUILTIN_AGENT_NAMES
+        )
 
         self._stream_screenshots = (
             os.environ.get("MOBILERUN_STREAM_SCREENSHOTS")
@@ -498,6 +530,55 @@ class MobileAgent(Workflow):
         )
         await ctx.store.set(_WORKFLOW_DEADLINE_KEY, workflow_deadline)
 
+    def _create_jev_client(self) -> JevClient:
+        settings = self.config.agent.jev
+        return JevClient(
+            resolve_typesafe_api_key(settings.api_key_source),
+            model=settings.model,
+            base_url=settings.base_url,
+            timeout=settings.timeout,
+            max_retries=settings.max_retries,
+        )
+
+    async def _preflight_jev(self) -> None:
+        """Check the TypeSafe key before any device work."""
+        if self.jev_client is None:
+            # A previous run closed the client.
+            self.jev_client = self._create_jev_client()
+        try:
+            models = await self.jev_client.list_models()
+        except Exception:
+            await self._close_jev_client()
+            raise
+        logger.debug(
+            f"🧭 TypeSafe key accepted; Jev model {self.jev_client.model} "
+            f"({len(models)} models listed)"
+        )
+
+    async def _close_jev_client(self) -> None:
+        client, self.jev_client = self.jev_client, None
+        if client is None:
+            return
+        try:
+            await client.aclose()
+        except Exception as e:
+            logger.debug(f"Closing the Jev client failed: {e}")
+
+    def _tree_formatter(self) -> IndexedFormatter:
+        # The Jev variant only adds a namespaced key, so macros stay replayable.
+        return JevIndexedFormatter() if self._using_jev else IndexedFormatter()
+
+    def _jev_input_texts(self) -> list[str]:
+        """Variable values Jev may type verbatim."""
+        texts = []
+        for value in (self.shared_state.custom_variables or {}).values():
+            if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                continue
+            text = str(value)
+            if text.strip():
+                texts.append(text)
+        return texts
+
     async def _initialize_run_trajectory(self) -> None:
         """Create trajectory state and a writer owned by the current run."""
         if self._using_external_agent or self.config.logging.save_trajectory == "none":
@@ -527,6 +608,19 @@ class MobileAgent(Workflow):
             f"🚀 Running MobileAgent to achieve goal: {self.shared_state.instruction}"
         )
         ctx.write_event_to_stream(ev)
+        if not self._using_jev:
+            return await self._setup_run(ctx)
+        await self._preflight_jev()
+        try:
+            return await self._setup_run(ctx)
+        except BaseException:
+            await self._close_jev_client()
+            raise
+
+    async def _setup_run(
+        self, ctx: Context
+    ) -> FastAgentExecuteEvent | ManagerInputEvent:
+        """Create the driver, state provider, registry and action context."""
         await self._initialize_run_trajectory()
 
         # ── 0. External agent — early exit ────────────────────────────
@@ -646,6 +740,11 @@ class MobileAgent(Workflow):
                 str(getattr(coordinate_llm, "model", "") or "")
             )
         )
+        if self._using_jev:
+            # Jev reads the accessibility tree; actions use device coordinates.
+            vision_enabled = False
+            action_agent_has_vision = False
+            use_normalized = False
 
         is_ios = self.resolved_device_config.platform.lower() == "ios"
         control_backend = _normalize_control_backend(
@@ -727,6 +826,16 @@ class MobileAgent(Workflow):
         # ── 2. Create state provider ──────────────────────────────────
         if self._injected_state_provider is not None:
             self.state_provider = self._injected_state_provider
+            formatter = getattr(self.state_provider, "tree_formatter", None)
+            if (
+                self._using_jev
+                and formatter is not None
+                and not isinstance(formatter, JevIndexedFormatter)
+            ):
+                logger.warning(
+                    "⚠️ Jev needs JevIndexedFormatter in the state provider "
+                    "to see which elements are tappable or editable"
+                )
         elif self.config.agent.vision_only or is_visual_remote:
             self.state_provider = ScreenshotOnlyStateProvider(
                 driver,
@@ -741,7 +850,7 @@ class MobileAgent(Workflow):
             self.state_provider = AndroidStateProvider(
                 driver,
                 tree_filter=tree_filter,
-                tree_formatter=IndexedFormatter(),
+                tree_formatter=self._tree_formatter(),
                 use_normalized=use_normalized,
                 stealth=False,
                 vision_enabled=vision_enabled,
@@ -756,7 +865,7 @@ class MobileAgent(Workflow):
             )
         else:
             tree_filter = ConciseFilter() if vision_enabled else DetailedFilter()
-            tree_formatter = IndexedFormatter()
+            tree_formatter = self._tree_formatter()
             self.state_provider = AndroidStateProvider(
                 driver,
                 tree_filter=tree_filter,
@@ -775,7 +884,7 @@ class MobileAgent(Workflow):
             supported_buttons=driver.supported_buttons,
             credential_manager=self.credential_manager,
             platform="ios" if driver.platform.lower() == "ios" else "android",
-            exact_app_launch=is_visual_remote,
+            exact_app_launch=is_visual_remote or self._using_jev,
             screenshot_only=getattr(
                 self.state_provider,
                 "requires_coordinate_tools",
@@ -924,7 +1033,10 @@ class MobileAgent(Workflow):
     async def execute_task(
         self, ctx: Context, ev: FastAgentExecuteEvent
     ) -> FastAgentResultEvent:
-        """Execute a single task using FastAgent."""
+        """Execute a single task using FastAgent, or Jev when it is selected."""
+
+        if self._using_jev:
+            return await self._execute_jev_task(ctx, ev)
 
         logger.debug(f"🔧 Executing task: {ev.instruction}")
 
@@ -982,6 +1094,74 @@ class MobileAgent(Workflow):
             return FastAgentResultEvent(
                 success=False, reason=f"Error: {error}", instruction=ev.instruction
             )
+
+    async def _execute_jev_task(
+        self, ctx: Context, ev: FastAgentExecuteEvent
+    ) -> FastAgentResultEvent:
+        """Run the Jev loop; its result flows into the FastAgent result path."""
+        logger.debug(f"🧭 Executing task with Jev: {ev.instruction}")
+        save_trajectory = self.config.logging.save_trajectory
+        try:
+            agent = JevAgent(
+                client=self.jev_client,
+                agent_config=self.config.agent,
+                registry=self.registry,
+                action_ctx=self.action_ctx,
+                state_provider=self.state_provider,
+                shared_state=self.shared_state,
+                platform=(
+                    "ios"
+                    if str(self.shared_state.platform).lower() == "ios"
+                    else "android"
+                ),
+                save_trajectory=save_trajectory,
+                input_texts=self._jev_input_texts(),
+                debug=self.config.logging.debug,
+                timeout=self.timeout,
+            )
+            handler = agent.run(input=ev.instruction)
+
+            async for nested_ev in handler.stream_events():
+                self.handle_stream_event(nested_ev, ctx)
+                if isinstance(nested_ev, JevStepEvent) and save_trajectory != "none":
+                    self.trajectory_writer.write(
+                        self.trajectory, stage=f"jev_step_{nested_ev.step}"
+                    )
+
+            result = await handler
+            return FastAgentResultEvent(
+                success=bool(result.get("success", False)),
+                reason=result["reason"],
+                instruction=ev.instruction,
+            )
+
+        except DeviceDisconnectedError as e:
+            logger.error(f"Device disconnected: {e}")
+            return FastAgentResultEvent(
+                success=False,
+                reason=f"Device disconnected: {e}",
+                instruction=ev.instruction,
+            )
+
+        except JevError as e:
+            logger.error(f"💥 Jev error: {e}")
+            if self.config.logging.debug:
+                logger.error(traceback.format_exc())
+            return FastAgentResultEvent(
+                success=False, reason=f"Jev error: {e}", instruction=ev.instruction
+            )
+
+        except Exception as e:
+            error = describe_error(e)
+            logger.error(f"Error during task execution: {error}")
+            if self.config.logging.debug:
+                logger.error(traceback.format_exc())
+            return FastAgentResultEvent(
+                success=False, reason=f"Error: {error}", instruction=ev.instruction
+            )
+
+        finally:
+            await self._close_jev_client()
 
     @step
     async def handle_fast_agent_result(

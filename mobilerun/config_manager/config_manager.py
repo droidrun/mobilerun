@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import math
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List, Literal, Optional
 
 import yaml
@@ -119,6 +120,63 @@ class AppCardConfig:
     server_max_retries: int = 2
 
 
+JEV_AGENT_NAME = "jev"
+_JEV_KEY_SOURCES = ("auto", "env", "file")
+
+
+def _jev_number(name: str, value: Any) -> float:
+    """Coerce a numeric setting (YAML may quote numbers) to a finite float."""
+    if not isinstance(value, bool):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if math.isfinite(number):
+                return number
+    raise ValueError(f"agent.jev.{name} must be a number.")
+
+
+@dataclass
+class JevConfig:
+    """TypeSafe Jev agent settings. The API key is never stored here."""
+
+    model: str = "jev-latest"
+    min_confidence: float = 0.3
+    api_key_source: Literal["auto", "env", "file"] = "auto"
+    base_url: str = "https://api.typesafe.ai"
+    timeout: float = 30.0
+    max_retries: int = 2
+
+    def __post_init__(self) -> None:
+        for name in ("model", "base_url"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"agent.jev.{name} must be a non-empty string.")
+        if self.api_key_source not in _JEV_KEY_SOURCES:
+            raise ValueError(
+                "agent.jev.api_key_source must be 'auto', 'env' or 'file'."
+            )
+        self.min_confidence = _jev_number("min_confidence", self.min_confidence)
+        if not 0 <= self.min_confidence <= 1:
+            raise ValueError(
+                "agent.jev.min_confidence must be between 0 and 1, "
+                f"got {self.min_confidence:g}."
+            )
+        self.timeout = _jev_number("timeout", self.timeout)
+        if self.timeout <= 0:
+            raise ValueError(
+                f"agent.jev.timeout must be greater than 0, got {self.timeout:g}."
+            )
+        max_retries = _jev_number("max_retries", self.max_retries)
+        if not max_retries.is_integer() or max_retries < 0:
+            raise ValueError(
+                "agent.jev.max_retries must be a whole number of 0 or more, "
+                f"got {max_retries:g}."
+            )
+        self.max_retries = int(max_retries)
+
+
 @dataclass
 class AgentConfig:
     name: str = "mobilerun"
@@ -138,6 +196,7 @@ class AgentConfig:
     manager: ManagerConfig = field(default_factory=ManagerConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
     app_cards: AppCardConfig = field(default_factory=AppCardConfig)
+    jev: JevConfig = field(default_factory=JevConfig)
 
     def get_fast_agent_system_prompt_path(self) -> str:
         return str(PathResolver.resolve(self.fast_agent.system_prompt, must_exist=True))
@@ -351,6 +410,12 @@ class MobileConfig:
             AppCardConfig(**app_cards_data) if app_cards_data else AppCardConfig()
         )
 
+        jev_data = agent_data.get("jev") or {}
+        if not isinstance(jev_data, dict):
+            raise ValueError("agent.jev must be a mapping of settings.")
+        jev_fields = {f.name for f in fields(JevConfig)}
+        jev_config = JevConfig(**{k: v for k, v in jev_data.items() if k in jev_fields})
+
         agent_config = AgentConfig(
             name=agent_data.get("name", "mobilerun"),
             max_steps=agent_data.get("max_steps", 15),
@@ -367,6 +432,7 @@ class MobileConfig:
             manager=manager_config,
             executor=executor_config,
             app_cards=app_cards_config,
+            jev=jev_config,
         )
 
         # External agents config - just pass through as-is

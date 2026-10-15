@@ -12,7 +12,7 @@ from llama_index.core.llms.llm import LLM
 from pydantic import BaseModel
 
 from mobilerun.agent.utils.llm_picker import load_llm, load_llms_from_profiles
-from mobilerun.config_manager.config_manager import MobileConfig
+from mobilerun.config_manager.config_manager import JEV_AGENT_NAME, MobileConfig
 
 logger = logging.getLogger("mobilerun")
 
@@ -30,6 +30,10 @@ def _get_required_profiles(
     Returns:
         List of required profile names
     """
+    if (config.agent.name or "").strip().lower() == JEV_AGENT_NAME:
+        # Jev picks actions itself and does not support output_model.
+        return []
+
     if config.agent.reasoning:
         profiles = ["manager", "executor", "app_opener"]
     else:

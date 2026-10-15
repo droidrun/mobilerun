@@ -266,9 +266,14 @@ def _parse_a11y_tree(a11y_text: str) -> List[Dict[str, Any]]:
     element_index = 0
 
     seen_signatures: set[tuple[str, str, str]] = set()
+    # Indentation of the open Keyboard line; deeper lines are its keys.
+    keyboard_depth: Optional[int] = None
 
     for line in a11y_text.strip().split("\n"):
         stripped = line.strip()
+        depth = len(line) - len(line.lstrip())
+        if stripped and keyboard_depth is not None and depth <= keyboard_depth:
+            keyboard_depth = None
         if (
             not stripped
             or stripped.startswith("Attributes:")
@@ -284,14 +289,17 @@ def _parse_a11y_tree(a11y_text: str) -> List[Dict[str, Any]]:
 
         x, y, width, height = map(float, coord_match.groups())
 
-        # Skip elements with no tappable area
-        if width == 0 or height == 0:
-            continue
-
         # Element type
         type_match = _ELEMENT_TYPE_RE.match(line)
         element_type = type_match.group(1).strip() if type_match else "Unknown"
         element_type = re.sub(r"^[→\s]+", "", element_type)
+        in_keyboard = keyboard_depth is not None
+        if element_type == "Keyboard" and not in_keyboard:
+            keyboard_depth = depth
+
+        # Skip elements with no tappable area
+        if width == 0 or height == 0:
+            continue
 
         # Skip layout containers that add noise without useful info
         if element_type in _SKIP_TYPES:
@@ -322,21 +330,22 @@ def _parse_a11y_tree(a11y_text: str) -> List[Dict[str, Any]]:
             continue
         seen_signatures.add(signature)
 
-        elements.append(
-            {
-                "index": element_index,
-                "type": element_type,
-                "className": element_type,
-                "text": text,
-                "label": label,
-                "identifier": identifier,
-                "placeholder": placeholder,
-                "value": value,
-                "bounds": bounds_str,
-                "rect": f"{x},{y},{width},{height}",
-                "children": [],
-            }
-        )
+        element = {
+            "index": element_index,
+            "type": element_type,
+            "className": element_type,
+            "text": text,
+            "label": label,
+            "identifier": identifier,
+            "placeholder": placeholder,
+            "value": value,
+            "bounds": bounds_str,
+            "rect": f"{x},{y},{width},{height}",
+            "children": [],
+        }
+        if in_keyboard:
+            element["in_keyboard"] = True
+        elements.append(element)
         element_index += 1
 
     return _prioritize_actionable_elements(elements)
