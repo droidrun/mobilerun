@@ -117,8 +117,14 @@ class JevIndexedFormatter(IndexedFormatter):
         password = _flag(node, "isPassword", "password") or (
             ios_class == "SecureTextField"
         )
-        showing_hint = _flag(node, "isShowingHintText")
         raw_text = _clean(node.get("text"))
+        # iOS --local (WDA) reads an empty field back as its placeholder, which
+        # is the field's own label: that text is a hint, not a value.
+        showing_hint = _flag(node, "isShowingHintText") or (
+            ios_class in _IOS_EDITABLE
+            and bool(raw_text)
+            and raw_text == _clean(node.get("contentDescription"))
+        )
         hint = _clean(node.get("hint")) or (raw_text if showing_hint else "")
         formatted["jev"] = {
             "clickable": _flag(node, "isClickable", "clickable")

@@ -639,6 +639,41 @@ def test_ios_local_reported_is_editable_is_not_input_focus():
     assert plan.state["focusedField"] is None
 
 
+def test_ios_local_placeholder_text_is_a_hint_not_a_value():
+    # Contacts' New Contact form over WDA: an empty field reads back as its
+    # placeholder, which is also its label.
+    def field(name, top, text):
+        return _ios_node(
+            "XCUIElementTypeTextField",
+            (40, top, 400, top + 22),
+            resourceId=name,
+            text=text,
+            contentDescription=name,
+            isFocusable=True,
+        )
+
+    tree = _ios_node(
+        "XCUIElementTypeApplication",
+        (0, 0, 440, 956),
+        [field("First name", 410, "Ada"), field("Last name", 463, "Last name")],
+    )
+    before = _ios_local_screen(tree, _login_phone(False))
+    last = next(e for e in before.elements if e.resource_id == "Last name")
+    screen = _ios_local_screen(tree, _login_phone(True), tapped_input=last)
+    fields = {e.resource_id: e for e in screen.elements if e.editable}
+
+    assert (fields["First name"].value, fields["First name"].hint) == ("Ada", "")
+    assert (fields["Last name"].value, fields["Last name"].hint) == ("", "Last name")
+    plan = _ios_plan(screen, "Type 'Lovelace' as the last name")
+    assert plan.state["focusedField"] == {
+        "index": str(last.index),
+        "label": "Last name",
+        "value": "",
+    }
+    entry = next(e for e in plan.state["elements"] if e["index"] == str(last.index))
+    assert entry["label"] == "Focus text input: Last name" and "value" not in entry
+
+
 LEGACY_LOGIN = """Attributes: Application, pid: 1, label: 'Shop'
 Element subtree:
  ->Application, pid: 1, label: 'Shop'
