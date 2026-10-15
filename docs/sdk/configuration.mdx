@@ -39,7 +39,7 @@ MobileAgent(
 | `custom_tools` | `dict` | `None` | Custom tool definitions |
 | `credentials` | `Union[dict, CredentialManager, None]` | `None` | Dict of credential secrets or CredentialManager instance |
 | `variables` | `dict \| None` | `None` | Custom variables accessible during execution |
-| `output_model` | `Type[BaseModel] \| None` | `None` | Pydantic model for structured output extraction |
+| `output_model` | `Type[BaseModel] \| None` | `None` | Pydantic model for structured output extraction. Not supported with the Jev agent |
 | `prompts` | `dict[str, str] \| None` | `None` | Custom Jinja2 prompt templates (NOT file paths) |
 | `driver` | `DeviceDriver \| None` | `None` | Pre-configured device driver instance (AndroidDriver or IOSDriver) |
 | `state_provider` | `StateProvider \| None` | `None` | Pre-configured state provider instance |
@@ -52,11 +52,11 @@ MobileAgent(
 ### AgentConfig
 
 ```python
-from mobilerun import AgentConfig, FastAgentConfig, ManagerConfig, ExecutorConfig, AppCardConfig
+from mobilerun import AgentConfig, FastAgentConfig, ManagerConfig, ExecutorConfig, AppCardConfig, JevConfig
 
 AgentConfig(
     # Core settings
-    name="mobilerun",                 # Agent name (use "mobilerun" for default agent)
+    name="mobilerun",                 # Agent backend: "mobilerun" (LLM agents) or "jev" (TypeSafe Jev)
     max_steps=15,                    # Max execution steps
     reasoning=False,                 # Enable Manager/Executor workflow
     streaming=True,                  # Stream LLM responses
@@ -70,6 +70,7 @@ AgentConfig(
     manager=ManagerConfig(...),
     executor=ExecutorConfig(...),
     app_cards=AppCardConfig(...),
+    jev=JevConfig(...),
 )
 ```
 
@@ -122,6 +123,27 @@ AppCardConfig(
     server_max_retries=2,            # Server retry attempts
 )
 ```
+
+**JevConfig**
+
+Used when `name="jev"`. See [TypeSafe Jev](/features/jev).
+
+```python
+JevConfig(
+    model="jev-latest",              # jev-latest, jev-preview, or a pinned version such as jev-1.14.0
+    min_confidence=0.3,              # Stop when Jev's confidence is below this value (0-1, 0 disables)
+    api_key_source="auto",           # "auto" (saved key, then TYPESAFE_API_KEY) | "env" | "file"
+    base_url="https://api.typesafe.ai",  # TypeSafe API URL
+    timeout=30.0,                    # Seconds per request attempt
+    max_retries=2,                   # Retries for timeouts, rate limits, and server errors
+)
+```
+
+`JevConfig` raises `ValueError` for an invalid value, naming the setting (for
+example `agent.jev.min_confidence`). Numbers given as strings are converted.
+
+The API key is never stored in `JevConfig`. It comes from `TYPESAFE_API_KEY` or
+the key saved by `mobilerun configure jev`.
 
 ---
 
@@ -512,6 +534,14 @@ agent:
     server_timeout: 2.0
     server_max_retries: 2
 
+  jev:  # Used when name: jev
+    model: jev-latest
+    min_confidence: 0.3
+    api_key_source: auto
+    base_url: https://api.typesafe.ai
+    timeout: 30.0
+    max_retries: 2
+
 llm_profiles:
   manager:
     provider: GoogleGenAI
@@ -608,9 +638,11 @@ mobilerun run "Task" --config /path/to/config.yaml
 **All CLI Flags:**
 - `--config PATH` - Custom config file
 - `--device SERIAL` - Device serial/IP
-- `--agent NAME` - External agent to use. Not yet supported — reserved for future use.
+- `--agent NAME` - Agent backend: `mobilerun` (LLM agents) or `jev` ([TypeSafe Jev](/features/jev))
 - `--provider PROVIDER` - LLM provider (OpenAI, XAI, Ollama, Anthropic, GoogleGenAI, DeepSeek, MiniMax)
-- `--model MODEL` - LLM model name
+- `--model MODEL` - LLM model name, or the Jev model/version with `--agent jev`
+- `--min-confidence FLOAT` - Jev confidence threshold (0-1)
+- `--var NAME=VALUE` - Named input value the agent may use; Jev types these values exactly (repeatable)
 - `--temperature FLOAT` - LLM temperature
 - `--steps INT` - Max steps
 - `--base_url URL` - API base URL (for Ollama/OpenRouter/MiniMax)
@@ -636,6 +668,7 @@ export ANTHROPIC_API_KEY=your-key
 export XAI_API_KEY=your-key
 export DEEPSEEK_API_KEY=your-key
 export MINIMAX_API_KEY=your-key
+export TYPESAFE_API_KEY=your-key  # Jev agent
 export MOBILERUN_CONFIG=/path/to/config.yaml  # Custom config path
 ```
 

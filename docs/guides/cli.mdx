@@ -40,9 +40,11 @@ mobilerun run "<command>" [OPTIONS]
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--agent`, `-a` | External agent to use (not yet supported — reserved for future use) | None |
+| `--agent`, `-a` | Agent backend: `mobilerun` (LLM agents; `droidrun` is also accepted) or `jev` ([TypeSafe Jev](/features/jev)) | From config (`mobilerun`) |
 | `--provider`, `-p` | LLM provider (GoogleGenAI, OpenAI, Anthropic, etc.) | From config |
-| `--model`, `-m` | Model name | From config |
+| `--model`, `-m` | Model name; with `--agent jev`, the Jev model or pinned version | From config |
+| `--min-confidence` | Jev only: stop when Jev's confidence is below this value (0-1) | From config (`0.3`) |
+| `--var NAME=VALUE` | Named input value the agent may use; Jev types these values exactly. Repeatable | None |
 | `--device`, `-d` | Device serial or IP | See [Device Selection](#device-selection) |
 | `--steps` | Max execution steps | `15` |
 | `--reasoning` | Enable planning mode | `false` |
@@ -236,6 +238,33 @@ Mobilerun's platform configuration directory. Pasting a new key in the wizard
 updates that saved entry. The top-level `credentials.enabled` setting controls
 device secrets and does not configure LLM provider authentication.
 
+### TypeSafe Jev
+
+[Jev](/features/jev) runs tasks without an LLM provider. Save a TypeSafe API key
+and make Jev the default agent:
+
+```bash
+mobilerun configure jev
+```
+
+`configure jev` reads the key from `--api-key`, then `TYPESAFE_API_KEY`, then a
+hidden prompt, and checks it with TypeSafe before saving. It also accepts
+`--model`, `--min-confidence`, `--no-set-default` (keep the current default
+agent), and `--no-verify` (skip the check).
+
+```bash
+# Select Jev for one run
+mobilerun run 'Search YouTube for "lofi beats"' --agent jev
+
+# Pin a Jev version and raise the confidence threshold
+mobilerun run "Turn on Wi-Fi" --agent jev --model jev-1.14.0 --min-confidence 0.5
+
+# Supply text that is not in the task
+mobilerun run "Sign in with my email" --agent jev --var email=me@example.com
+```
+
+With `--agent jev`, `--provider` and `--reasoning` are ignored.
+
   </Tab>
 
   <Tab title="Device Management">
@@ -414,17 +443,32 @@ mobilerun macro replay trajectories/checkout \
 
 # Preview without executing
 mobilerun macro replay trajectories/test --dry-run
+
+# Hand off to Jev when the screen does not match the recording
+mobilerun macro replay trajectories/checkout --on-mismatch agent --agent jev
+
+# Replay on iOS (portal auto-discovered, or pass its URL with --device)
+mobilerun macro replay trajectories/open-settings --ios
 ```
 
 **Flags:**
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--device`, `-d` | Device serial | See [Device Selection](#device-selection) |
+| `--device`, `-d` | Device serial, or the iOS portal URL with `--ios` | See [Device Selection](#device-selection) |
 | `--delay`, `-t` | Seconds between actions | `1.0` |
 | `--start-from`, `-s` | Start step (1-based) | `1` |
 | `--max-steps`, `-m` | Max steps to run | All |
 | `--dry-run` | Preview only | `false` |
+| `--on-mismatch` | When the screen does not match the recorded state: `stop`, or `agent` to hand the recorded task to an agent | `stop` |
+| `--state-timeout` | Seconds to wait for the recorded state before declaring a mismatch | `5.0` |
+| `--state-threshold` | Minimum state similarity required before replaying an action | `0.85` |
+| `--config` | Config file for credentials and agent handoff | `~/.config/mobilerun/config.yaml` |
+| `--agent` | Agent for the handoff: `mobilerun` or `jev` | From config |
+| `--provider` | LLM provider for the handoff | From config |
+| `--model` | Model for the handoff; with `--agent jev`, the Jev model | From config |
+| `--ios` | Replay on an iOS device | `false` |
+| `--debug` | Verbose logging | `false` |
 
 ---
 
@@ -599,6 +643,7 @@ mobilerun ping --tcp
 | `XAI_API_KEY` | xAI API key for Grok | None |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | None |
 | `MINIMAX_API_KEY` | MiniMax API key | None |
+| `TYPESAFE_API_KEY` | TypeSafe API key for the [Jev agent](/features/jev) | None |
 | `MOBILERUN_CLOUD_API_KEY` | Mobilerun Cloud API key for `devices --cloud` and cloud device actions | None |
 | `MOBILERUN_CONFIG` | Config file path | `~/.config/mobilerun/config.yaml` |
 | `ANDROID_SERIAL` | Default Android device serial (see [Device Selection](#device-selection)) | None |

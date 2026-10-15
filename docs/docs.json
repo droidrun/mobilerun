@@ -44,6 +44,7 @@
               "/features/app-cards",
               "/features/custom-tools",
               "/features/custom-variables",
+              "/features/jev",
               "/features/tracing",
               "/features/telemetry"
             ]

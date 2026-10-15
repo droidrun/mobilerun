@@ -1,0 +1,295 @@
+---
+title: 'TypeSafe Jev'
+description: 'Run tasks with TypeSafe Jev choosing each device action on Android and iOS.'
+---
+
+Jev is a built-in agent backend that uses TypeSafe's Jev model to choose each action. At each step, Mobilerun reads the screen's accessibility tree, asks Jev which action moves the task forward, and runs that action on the device. This repeats until Jev reports the task done or the run stops.
+
+Jev does not need an LLM provider. It works with the same devices, trajectories, and macros as the default agents.
+
+## Setup
+
+<Steps>
+  <Step title="Get an API key">
+    Create a key in the [TypeSafe console](https://console.typesafe.ai).
+  </Step>
+
+  <Step title="Save the key">
+    Save and verify the key with:
+
+    ```bash
+    mobilerun configure jev
+    ```
+
+    This also makes Jev the default agent (`agent.name: jev`). Alternatively, export the key in your shell:
+
+    ```bash
+    export TYPESAFE_API_KEY=your-key
+    ```
+  </Step>
+
+  <Step title="Select Jev">
+    Pass `--agent jev` to a single run, or set `agent.name: jev` in `config.yaml`.
+  </Step>
+
+  <Step title="Run a task">
+    ```bash
+    mobilerun run 'Open Settings and search for "dark mode"' --agent jev
+    ```
+
+    Each step logs the chosen action, its target, and Jev's confidence.
+  </Step>
+</Steps>
+
+Prepare the device as for any other run: see [Device Setup](/guides/device-setup). Run `mobilerun doctor` to check that TypeSafe accepts the key.
+
+Before connecting to the device, every run checks the key with TypeSafe. A missing or rejected key stops the run before any action is taken.
+
+## Configuration
+
+Jev settings live under `agent.jev` in `config.yaml`:
+
+```yaml
+agent:
+  name: jev
+  max_steps: 15
+  jev:
+    model: jev-latest
+    min_confidence: 0.3
+    api_key_source: auto
+    base_url: https://api.typesafe.ai
+    timeout: 30.0
+    max_retries: 2
+```
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `agent.name` | `jev` runs Jev; `mobilerun` runs the LLM agents | `mobilerun` |
+| `agent.jev.model` | Jev model: `jev-latest`, `jev-preview`, or a pinned version such as `jev-1.14.0` | `jev-latest` |
+| `agent.jev.min_confidence` | Stop when Jev's confidence in the chosen action or its target is below this value (0-1). `0` disables the check | `0.3` |
+| `agent.jev.api_key_source` | `auto`: saved key first, then `TYPESAFE_API_KEY`. `env`: `TYPESAFE_API_KEY` only. `file`: saved key only | `auto` |
+| `agent.jev.base_url` | TypeSafe API URL. Must use `https` (plain `http` only for `localhost`) | `https://api.typesafe.ai` |
+| `agent.jev.timeout` | Seconds to wait for each TypeSafe request attempt | `30.0` |
+| `agent.jev.max_retries` | Retries after a timeout, a connection error, or HTTP 408, 429, or 5xx | `2` |
+| `agent.max_steps` | Maximum number of actions per run | `15` |
+| `agent.after_sleep_action` | Seconds to wait after each action, except waits | `1.0` |
+
+Invalid values, such as a `min_confidence` outside 0-1 or an unknown `api_key_source`, stop with an error that names the setting, for example `agent.jev.min_confidence`.
+
+The API key is never written to `config.yaml`. `mobilerun configure jev` saves it in the `apiKeys.typesafe` entry of `credentials/auth-profiles.json` in Mobilerun's configuration directory.
+
+## CLI
+
+```bash
+# Run with Jev
+mobilerun run 'Search YouTube for "lofi beats"' --agent jev
+
+# Supply the text Jev may type
+mobilerun run "Sign in with my email" --agent jev --var email=me@example.com
+
+# Pick a model and a stricter confidence threshold
+mobilerun run "Turn on Wi-Fi" --agent jev --model jev-preview --min-confidence 0.5
+
+# Run on iOS
+mobilerun run "Open Settings" --agent jev --ios
+```
+
+| Flag | Description |
+|------|-------------|
+| `--agent jev`, `-a jev` | Run with Jev, overriding `agent.name` |
+| `--model`, `-m` | Jev model or pinned version, overriding `agent.jev.model` |
+| `--min-confidence` | Confidence threshold (0-1), overriding `agent.jev.min_confidence` |
+| `--var NAME=VALUE` | A value Jev may type. Repeatable |
+| `--steps` | Maximum number of actions |
+| `--save-trajectory` | Save the trajectory and macro (`step` or `action`) |
+| `--ios`, `--device`, `--debug` | Same as for other agents |
+
+With Jev, `--provider` and `--reasoning` are ignored with a warning.
+
+### `mobilerun configure jev`
+
+Saves the TypeSafe key, verifies it, and updates `config.yaml`. The key comes from `--api-key`, then `TYPESAFE_API_KEY`, then a hidden prompt. When a key is already saved, pressing Enter at the prompt keeps it.
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--api-key` | Key to save | `TYPESAFE_API_KEY` or prompt |
+| `--model` | Set `agent.jev.model` | Unchanged |
+| `--min-confidence` | Set `agent.jev.min_confidence` | Unchanged |
+| `--set-default/--no-set-default` | Set `agent.name: jev` | `--set-default` |
+| `--verify/--no-verify` | Check the key with TypeSafe before saving | `--verify` |
+
+A key that TypeSafe rejects is not saved. If TypeSafe cannot be reached, the key is saved with a warning. The command prints where the key and config were saved and never prints the key.
+
+## SDK
+
+```python
+import asyncio
+
+from mobilerun import AgentConfig, JevConfig, MobileAgent, MobileConfig
+
+
+async def main():
+    config = MobileConfig(
+        agent=AgentConfig(
+            name="jev",
+            max_steps=20,
+            jev=JevConfig(model="jev-latest", min_confidence=0.3),
+        )
+    )
+
+    agent = MobileAgent(
+        goal="Sign in to the Example app with my email",
+        config=config,
+        variables={"email": "me@example.com"},
+    )
+
+    result = await agent.run()
+    print(result.success, result.reason)
+
+
+asyncio.run(main())
+```
+
+- The key is read from `TYPESAFE_API_KEY` or the saved key, according to `api_key_source`. Creating `MobileAgent` raises `JevConfigError` when no key is found.
+- String and number values in `variables` are the text Jev may type. The names are labels only.
+
+## Supported Actions
+
+Jev performs one action per step:
+
+| Action | Android | iOS (`mobilerun-ios --local`) | iOS (legacy iOS Portal app) |
+|--------|---------|-------------------------------|-----------------------------|
+| Tap an element | Yes | Yes | Yes |
+| Type into the focused field | Yes | Yes | Yes |
+| Scroll up, down, left, right | Scrollable regions or the whole screen | Scrollable regions or the whole screen | Whole screen only |
+| Back | Yes | Yes | No |
+| Home | Yes | Yes | Yes |
+| Enter | While a field is focused or the keyboard is shown | While a field is focused or the keyboard is shown | Taps the keyboard's submit key (Return, Search, Go, ...) while the keyboard is shown |
+| Open an app | Installed apps | Installed apps | Built-in Apple apps only |
+| Wait | Yes | Yes | Yes |
+
+- Jev opens apps by their exact package name or bundle ID. When the task names an app by its home screen label, only matching apps are offered; the app already in the foreground is never offered.
+- Jev does not long-press, tap keyboard keys other than the submit key, or type into password fields.
+- Elements whose center is behind the on-screen keyboard are not offered as tap or scroll targets. A text field behind the keyboard can still be the focused field.
+
+## Entering Text
+
+Jev never writes its own text. It picks one value from a fixed list:
+
+- **Values you supply**: `--var NAME=VALUE` on the CLI or `variables=` in the SDK. When any are supplied, only these values are offered.
+- **Otherwise, the task itself**: each quoted value exactly as written, and any run of 1 to 8 consecutive words from the task, with surrounding quotes and punctuation removed.
+
+Put the exact value in quotes in the task. For example, `Search for "noise cancelling headphones"` lets Jev type `noise cancelling headphones`. Quoted values keep their punctuation and can be any length: `Reply with "See you at 5!"` lets Jev type `See you at 5!`.
+
+Use `--var` when the value:
+
+- is longer than 8 words and not quoted,
+- does not appear in the task, or
+- belongs to a task longer than about 35 words (longer tasks offer no text from the task).
+
+Typing replaces the field's current content. Jev types only into a field it can identify: the focused text field, the text field Jev just tapped while the keyboard is shown, or the only text field on screen while the keyboard is shown, unless the device reports focus on another kind of field. If none of the offered values fits the focused field, the run stops and asks for the value.
+
+## When a Run Stops
+
+| Condition | Result | Example reason |
+|-----------|--------|----------------|
+| Jev reports the task done | Success | `Jev reports the goal is complete (confidence 0.95).` |
+| Jev finds no action that helps | Failure | `Jev found no operation that advances the goal (confidence 0.81).` |
+| Confidence in the action or its target is below `min_confidence` | Failure | `Stopped: Jev's confidence in TAP [7] Wi-Fi is 0.21, below the 0.30 threshold.` |
+| No offered text fits the focused field | Failure | `Jev found no suitable text for the focused field. Quote the exact value in the task or pass it with --var NAME=VALUE.` |
+| Step limit reached | Failure | `Reached max step count of 15 steps` |
+| Jev chooses the same action on an unchanged screen a third time | Failure | `Stopped: Jev repeated TAP [7] Wi-Fi on an unchanged screen.` |
+| The screen keeps loading | Failure | `Stopped: the screen kept loading for 15s.` |
+| The device returns no readable screen | Failure | `Stopped: the device screen could not be read for 15s.` |
+| An action fails | Failure | `Action TAP failed: ...` |
+| TypeSafe returns an error | Failure | `Jev error: ...` |
+
+- The confidence check also applies when Jev reports the task done: a low-confidence completion ends the run as a failure.
+- After the last allowed action, Jev still checks the screen once, so a task finished by that action succeeds.
+- Consecutive waits last 0.5 s, 1 s, then 2 s each, up to 15 s in total.
+- When the device returns an empty screen, for example while an app launches, the screen is read again with the same backoff instead of asking Jev.
+- When an action leaves the screen unchanged, the screen is read up to three more times (0.5 s, 1 s, 2 s) before Jev decides again.
+- A failed action is never retried.
+- Timeouts, connection errors, and HTTP 408, 429, and 5xx responses are retried up to `max_retries` times before the run stops. No action runs for a step whose request failed.
+
+## Macros
+
+Record a macro by saving the trajectory. Jev's actions are written to `macro.json` in the trajectory folder:
+
+```bash
+mobilerun run 'Search YouTube for "lofi beats"' --agent jev --save-trajectory action
+```
+
+Replay it without any TypeSafe requests:
+
+```bash
+mobilerun macro replay trajectories/<folder>
+```
+
+To hand off to Jev when the screen no longer matches the recording:
+
+```bash
+mobilerun macro replay trajectories/<folder> --on-mismatch agent --agent jev
+```
+
+- On a mismatch, Jev runs the recorded task from the current screen.
+- Without `--agent`, the handoff uses `agent.name` from the config file (`--config` selects another file).
+- `--model` sets the Jev model for the handoff.
+- The handoff has only the task text. Values passed with `--var` while recording are not available, so quote them in the task.
+
+On iOS, add `--ios`. The portal is discovered automatically, or pass its URL with `--device`:
+
+```bash
+mobilerun macro replay trajectories/<folder> --ios --device http://127.0.0.1:8080 \
+  --on-mismatch agent --agent jev
+```
+
+The legacy iOS Portal app can take several seconds to read a screen. Give each replay step more time to match with `--state-timeout 20`.
+
+## Limitations
+
+- Jev reads the accessibility tree. `--vision-only`, `agent.vision_only: true`, and `--control-backend visual-remote` stop the run with an error. Vision settings are ignored.
+- Reasoning mode, custom tools, credentials, and app cards are not used.
+- LLM profiles are not used.
+- `output_model` (structured output) is not supported: creating `MobileAgent` with it raises `ValueError`.
+- On the legacy iOS Portal app, a screen that takes more than about 6 seconds to read comes back empty, for example a large Apple Maps view. Jev reads it again for up to 15 seconds and then stops.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="No TypeSafe API key found">
+    Run `mobilerun configure jev` or set `TYPESAFE_API_KEY`. With `agent.jev.api_key_source: env`, only `TYPESAFE_API_KEY` is read; with `file`, only the saved key is read.
+  </Accordion>
+
+  <Accordion title="TypeSafe rejected the API key (HTTP 401 or 403)">
+    The key is invalid or revoked. Create a new key in the [TypeSafe console](https://console.typesafe.ai) and run `mobilerun configure jev` again.
+
+    With `api_key_source: auto`, a saved key takes precedence over `TYPESAFE_API_KEY`. To use the shell key instead, set `agent.jev.api_key_source: env`.
+  </Accordion>
+
+  <Accordion title="TypeSafe rate limit reached (HTTP 429)">
+    Requests are retried with backoff, following the server's `Retry-After` hint. If the run still stops, wait and retry, or raise `agent.jev.max_retries`. Your organization's limits are shown in the [TypeSafe console](https://console.typesafe.ai/rate-limits).
+  </Accordion>
+
+  <Accordion title="TypeSafe did not respond or could not be reached">
+    Check your network connection and `agent.jev.base_url`. For slow connections, raise `agent.jev.timeout`. No action was executed for the step that failed.
+  </Accordion>
+
+  <Accordion title="TypeSafe rejected the request (HTTP 400 or 422)">
+    Check `agent.jev.model`: use `jev-latest`, `jev-preview`, or a pinned version such as `jev-1.14.0`. `mobilerun doctor` warns when the configured model is not listed by TypeSafe.
+
+    A `max_tokens_exceeded` detail means the screen and task were too large for one request.
+  </Accordion>
+
+  <Accordion title="Runs stop on low confidence">
+    - Name the visible labels in the task, for example `Tap "Network & internet"`.
+    - Lower the threshold with `--min-confidence 0.2`, or set it to `0` to turn the check off.
+    - Run with `--debug` to log Jev's top operation probabilities at each step.
+  </Accordion>
+</AccordionGroup>
+
+## Related Documentation
+
+- [CLI Usage](/guides/cli) - All commands and flags
+- [Configuration](/sdk/configuration) - `config.yaml` and SDK settings
+- [Custom Variables](/features/custom-variables) - Passing `variables` to `MobileAgent`
