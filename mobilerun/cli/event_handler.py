@@ -29,6 +29,7 @@ from mobilerun.agent.fast_agent.events import (
     FastAgentResponseEvent,
     FastAgentToolCallEvent,
 )
+from mobilerun.agent.jev.events import JevDecisionEvent, JevEndEvent, JevStepEvent
 from mobilerun.agent.manager.events import (
     ManagerContextEvent,
     ManagerPlanDetailsEvent,
@@ -36,6 +37,24 @@ from mobilerun.agent.manager.events import (
 )
 
 logger = logging.getLogger("mobilerun")
+
+_JEV_STATUS_COLORS = {"action": "cyan", "done": "green"}
+
+
+def _preview(text: str, limit: int) -> str:
+    return text[:limit] + "..." if len(text) > limit else text
+
+
+def format_jev_decision(event: JevDecisionEvent) -> str:
+    """One-line summary of a Jev decision."""
+    target = f" {_preview(event.label, 80)}" if event.label else ""
+    scores = f"confidence {event.confidence:.2f}"
+    if event.target_confidence is not None:
+        scores += f", target {event.target_confidence:.2f}"
+    summary = f"{event.operation}{target} ({scores})"
+    if event.status != "action":
+        summary = f"{event.status}: {summary}"
+    return f"🧭 Step {event.step}: {summary}"
 
 
 class EventHandler:
@@ -152,6 +171,36 @@ class EventHandler:
             color = "green" if event.success else "red"
             logger.debug(
                 f"■ {status}: {event.reason} ({event.tool_call_count} runs)",
+                extra={"color": color},
+            )
+
+        # ── Jev events ──────────────────────────────────────────────
+        elif isinstance(event, JevDecisionEvent):
+            color = _JEV_STATUS_COLORS.get(event.status, "yellow")
+            logger.info(format_jev_decision(event), extra={"color": color})
+            logger.debug(
+                f"Jev model {event.model or 'unknown'}, {event.latency_ms} ms"
+                + (
+                    f", {event.input_tokens} input tokens"
+                    if event.input_tokens is not None
+                    else ""
+                )
+            )
+
+        elif isinstance(event, JevStepEvent):
+            if event.success:
+                logger.debug(f"✅ {event.summary}", extra={"color": "green"})
+            else:
+                logger.info(
+                    f"❌ {event.operation} failed: {event.summary}",
+                    extra={"color": "red"},
+                )
+
+        elif isinstance(event, JevEndEvent):
+            status = "done" if event.success else "failed"
+            color = "green" if event.success else "red"
+            logger.debug(
+                f"■ {status}: {event.reason} ({event.steps} steps)",
                 extra={"color": color},
             )
 

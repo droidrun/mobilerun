@@ -30,6 +30,9 @@ console = Console()
 
 PORTAL_REMOTE_PORT = 8080
 
+# Pinned Jev versions are accepted although /v1/models lists aliases only.
+_JEV_PINNED_MODEL = re.compile(r"^jev-\d+\.\d+\.\d+$")
+
 
 class Status(Enum):
     PASS = "pass"
@@ -184,6 +187,78 @@ async def check_config(debug: bool) -> tuple[CheckResult, Any]:
             ),
             None,
         )
+
+
+def is_known_jev_model(model: str, models: list[str]) -> bool:
+    """True when TypeSafe lists the model or it is a pinned version."""
+    return model in models or bool(_JEV_PINNED_MODEL.match(model))
+
+
+async def check_typesafe(config: Any, debug: bool = False) -> CheckResult | None:
+    """Check the TypeSafe key and Jev model.
+
+    Returns None when Jev is not selected and no TypeSafe key is configured.
+    """
+    from mobilerun.agent.jev.client import JevClient, resolve_typesafe_api_key
+    from mobilerun.agent.jev.errors import JevAuthError, JevConfigError, JevError
+    from mobilerun.config_manager.config_manager import JEV_AGENT_NAME, JevConfig
+
+    agent = getattr(config, "agent", None)
+    jev = getattr(agent, "jev", None) or JevConfig()
+    selected = (getattr(agent, "name", "") or "").lower() == JEV_AGENT_NAME
+
+    # Same resolution as runs, so doctor and runs agree on the key.
+    try:
+        key = resolve_typesafe_api_key(jev.api_key_source)
+    except JevConfigError as e:
+        if not selected:
+            return None
+        return CheckResult("TypeSafe", Status.FAIL, "no API key", detail=str(e))
+
+    def redact(text: str) -> str:
+        return text.replace(key, "[redacted]")
+
+    try:
+        client = JevClient(
+            key,
+            model=jev.model,
+            base_url=jev.base_url,
+            timeout=jev.timeout,
+            max_retries=0,
+        )
+        try:
+            models = await client.list_models()
+        finally:
+            await client.aclose()
+    except JevAuthError as e:
+        return CheckResult(
+            "TypeSafe", Status.FAIL, "API key rejected", detail=redact(str(e))
+        )
+    except JevConfigError as e:
+        return CheckResult(
+            "TypeSafe", Status.FAIL, "invalid settings", detail=redact(str(e))
+        )
+    except JevError as e:
+        return CheckResult(
+            "TypeSafe", Status.WARN, "could not verify key", detail=redact(str(e))
+        )
+    except Exception as e:
+        return CheckResult(
+            "TypeSafe",
+            Status.WARN,
+            "could not verify key",
+            detail=redact(f"{type(e).__name__}: {e}"),
+        )
+
+    listed = ", ".join(models) or "none listed"
+    if not is_known_jev_model(jev.model, models):
+        return CheckResult(
+            "TypeSafe",
+            Status.WARN,
+            f"key accepted; model {jev.model} not listed",
+            detail=f"models: {listed}",
+        )
+    return CheckResult("TypeSafe", Status.PASS, f"key accepted; models: {listed}")
 
 
 async def check_adb(debug: bool) -> CheckResult:
@@ -691,6 +766,12 @@ async def run_doctor(
     r_config, config = await check_config(debug)
     _print_result(r_config, debug)
     results.append(r_config)
+
+    # TypeSafe (Jev agent)
+    r_typesafe = await check_typesafe(config, debug)
+    if r_typesafe is not None:
+        _print_result(r_typesafe, debug)
+        results.append(r_typesafe)
 
     # Load serial from config if not provided
     if device_serial is None and config:

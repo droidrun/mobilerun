@@ -32,6 +32,7 @@ from mobilerun_core_local.driver.android.portal import (
 from mobilerun_core_local.driver.ios import discover_ios_device, validate_ios_portal_url
 from mobilerun_core_local.driver.visual_remote import VISUAL_REMOTE_CONNECTION
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
@@ -68,7 +69,8 @@ from mobilerun.cli.oauth_actions import (
     run_openai_oauth_login,
     save_anthropic_setup_token,
 )
-from mobilerun.config_manager import ConfigLoader, MobileConfig
+from mobilerun.config_manager import ConfigLoader, MobileConfig, env_keys
+from mobilerun.config_manager.config_manager import JEV_AGENT_NAME
 from mobilerun.config_manager.credential_paths import (
     ANTHROPIC_OAUTH_CREDENTIAL_PATH,
     GEMINI_OAUTH_CREDENTIAL_PATH,
@@ -94,6 +96,32 @@ def _validate_oauth_timeout(
     if not math.isfinite(value) or value <= 0:
         raise click.BadParameter("must be a finite number greater than zero")
     return value
+
+
+def _validate_min_confidence(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    if value is not None and not (math.isfinite(value) and 0 <= value <= 1):
+        raise click.BadParameter("must be a number between 0 and 1")
+    return value
+
+
+def _parse_variables(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    values: tuple[str, ...],
+) -> dict[str, str] | None:
+    variables: dict[str, str] = {}
+    for item in values:
+        name, sep, value = item.partition("=")
+        name = name.strip()
+        # Never echo the raw item: it may hold the value.
+        if not sep or not name:
+            raise click.BadParameter("expected NAME=VALUE")
+        variables[name] = value
+    return variables or None
 
 
 def _force_screenshot_only_vision(config: MobileConfig) -> None:
@@ -147,6 +175,8 @@ async def run_command(
     save_trajectory: str | None = None,
     ios: bool = False,
     temperature: float | None = None,
+    min_confidence: float | None = None,
+    variables: dict | None = None,
     **kwargs,
 ) -> bool:
     """Run a command on your Android device using natural language.
@@ -218,6 +248,19 @@ async def run_command(
         if stream is not None:
             config.agent.streaming = stream
 
+        using_jev = (config.agent.name or "").strip().lower() == JEV_AGENT_NAME
+        if using_jev:
+            config.agent.name = JEV_AGENT_NAME
+            if model is not None:
+                config.agent.jev.model = model
+            if min_confidence is not None:
+                config.agent.jev.min_confidence = min_confidence
+        elif min_confidence is not None:
+            logger.warning(
+                "⚠️ --min-confidence only applies to the Jev agent",
+                extra={"color": "yellow"},
+            )
+
         # Device overrides
         if device is not None:
             config.device.serial = device
@@ -261,14 +304,19 @@ async def run_command(
         # STEP 2: Initialize MobileAgent with config
         # ================================================================
 
-        mode = (
-            "planning with reasoning" if config.agent.reasoning else "direct execution"
-        )
-        logger.info(f"🤖 Agent mode: {mode}")
-        logger.info(
-            f"👁️  Vision settings: Manager={config.agent.manager.vision}, "
-            f"Executor={config.agent.executor.vision}, FastAgent={config.agent.fast_agent.vision}"
-        )
+        if using_jev:
+            logger.info(f"🤖 Agent: Jev ({config.agent.jev.model})")
+        else:
+            mode = (
+                "planning with reasoning"
+                if config.agent.reasoning
+                else "direct execution"
+            )
+            logger.info(f"🤖 Agent mode: {mode}")
+            logger.info(
+                f"👁️  Vision settings: Manager={config.agent.manager.vision}, "
+                f"Executor={config.agent.executor.vision}, FastAgent={config.agent.fast_agent.vision}"
+            )
 
         if config.tracing.enabled:
             logger.info("🔍 Tracing enabled")
@@ -277,7 +325,13 @@ async def run_command(
         droid_agent_kwargs = {"runtype": "cli"}
         llm = None
 
-        if provider or model:
+        if using_jev and provider:
+            logger.warning(
+                "⚠️ --provider is ignored with the Jev agent",
+                extra={"color": "yellow"},
+            )
+
+        if not using_jev and (provider or model):
             assert (
                 provider and model
             ), "Either both provider and model must be provided or none of them"
@@ -301,6 +355,7 @@ async def run_command(
             goal=command,
             llms=llm,
             config=config,
+            variables=variables,
             timeout=1000,
             **droid_agent_kwargs,
         )
@@ -471,6 +526,12 @@ try:
 except Exception:
     _available_agents = []
 
+# "droidrun" is the legacy name of the mobilerun agent.
+_BUILTIN_RUN_AGENTS = ["mobilerun", "droidrun", JEV_AGENT_NAME]
+_external_run_agents = [
+    name for name in _available_agents if name.lower() not in _BUILTIN_RUN_AGENTS
+]
+
 
 @cli.command()
 @click.argument("command", type=str)
@@ -479,12 +540,14 @@ except Exception:
 @click.option(
     "--agent",
     "-a",
-    type=click.Choice(_available_agents) if _available_agents else None,
-    help="External agent to use"
+    type=click.Choice(
+        [*_BUILTIN_RUN_AGENTS, *_external_run_agents], case_sensitive=False
+    ),
+    help="Agent backend: mobilerun (LLM agents) or jev (TypeSafe Jev)"
     + (
-        f" [{', '.join(_available_agents)}]"
-        if _available_agents
-        else " (none available)"
+        f"; external agents: {', '.join(_external_run_agents)}"
+        if _external_run_agents
+        else ""
     ),
     default=None,
 )
@@ -497,8 +560,24 @@ except Exception:
 @click.option(
     "--model",
     "-m",
-    help="LLM model name",
+    help="LLM model name, or the Jev model/version with --agent jev",
     default=None,
+)
+@click.option(
+    "--min-confidence",
+    type=float,
+    callback=_validate_min_confidence,
+    default=None,
+    help="Jev: stop when Jev's confidence is below this value (0-1)",
+)
+@click.option(
+    "--var",
+    "variables",
+    multiple=True,
+    metavar="NAME=VALUE",
+    callback=_parse_variables,
+    help="Named input value the agent may use; Jev types these values exactly. "
+    "Repeatable.",
 )
 @click.option("--temperature", type=float, help="Temperature for LLM", default=None)
 @click.option("--steps", type=int, help="Maximum number of steps", default=None)
@@ -581,6 +660,8 @@ async def run(
     device_id: str | None,
     save_trajectory: str | None,
     ios: bool,
+    min_confidence: float | None,
+    variables: dict[str, str] | None,
 ):
     """Run a command on your mobile device using natural language."""
 
@@ -606,6 +687,8 @@ async def run(
         temperature=temperature,
         save_trajectory=save_trajectory,
         ios=ios,
+        min_confidence=min_confidence,
+        variables=variables,
     )
 
     # Exit with appropriate code
@@ -1123,6 +1206,7 @@ def configure(
 
     Run without a subcommand for the interactive wizard, or use a provider
     subcommand (e.g. `mobilerun configure anthropic`) to log in via OAuth.
+    Use `mobilerun configure jev` to set up the TypeSafe Jev agent.
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -1359,6 +1443,160 @@ def configure_xai(
         open_browser=open_browser,
         device_code=device_code,
     )
+
+
+def _redact(text: str, secret: str) -> str:
+    return text.replace(secret, "[redacted]") if secret else text
+
+
+def _resolve_jev_key_for_configure(api_key: str | None) -> str:
+    """Pick the key from --api-key, TYPESAFE_API_KEY or a hidden prompt."""
+    if api_key is not None:
+        return api_key.strip()
+    env_var = env_keys.API_KEY_ENV_VARS["typesafe"]
+    env_key = os.environ.get(env_var, "").strip()
+    if env_key:
+        console.print(f"[blue]Using {env_var} from the environment.[/]")
+        return env_key
+    saved_key = env_keys.resolve_env_key("typesafe", "file").strip()
+    if saved_key:
+        entered = click.prompt(
+            "TypeSafe API key (Enter keeps the saved key)",
+            default="",
+            show_default=False,
+            hide_input=True,
+        )
+        return entered.strip() or saved_key
+    return click.prompt("TypeSafe API key", hide_input=True).strip()
+
+
+def _jev_key_malformed(key: str) -> bool:
+    return not key or any(
+        not ch.isascii() or not ch.isprintable() or ch.isspace() for ch in key
+    )
+
+
+async def _list_jev_models(key: str, jev_config) -> list[str]:
+    from mobilerun.agent.jev.client import JevClient
+
+    client = JevClient(
+        key,
+        model=jev_config.model,
+        base_url=jev_config.base_url,
+        timeout=jev_config.timeout,
+        max_retries=0,
+    )
+    try:
+        return await client.list_models()
+    finally:
+        await client.aclose()
+
+
+@configure.command("jev")
+@click.option(
+    "--api-key",
+    default=None,
+    help="TypeSafe API key. Defaults to TYPESAFE_API_KEY, otherwise you are prompted.",
+)
+@click.option(
+    "--model",
+    default=None,
+    help="Jev model or pinned version, e.g. jev-latest or jev-1.14.0.",
+)
+@click.option(
+    "--min-confidence",
+    type=float,
+    callback=_validate_min_confidence,
+    default=None,
+    help="Stop when Jev's confidence is below this value (0-1).",
+)
+@click.option(
+    "--set-default/--no-set-default",
+    default=True,
+    show_default=True,
+    help="Make Jev the default agent (agent.name: jev).",
+)
+@click.option(
+    "--verify/--no-verify",
+    default=True,
+    show_default=True,
+    help="Check the key with TypeSafe before saving it.",
+)
+def configure_jev(
+    api_key: str | None,
+    model: str | None,
+    min_confidence: float | None,
+    set_default: bool,
+    verify: bool,
+):
+    """Save a TypeSafe API key and select the Jev agent."""
+    from mobilerun.agent.jev.errors import JevAuthError, JevConfigError, JevError
+    from mobilerun.cli.doctor import is_known_jev_model
+
+    try:
+        config = ConfigLoader.load()
+    except ValueError as e:
+        raise click.ClickException(f"{e} Nothing was saved.") from None
+    if model is not None:
+        model = model.strip()
+        if not model:
+            raise click.BadParameter("must not be empty", param_hint="'--model'")
+        config.agent.jev.model = model
+    if min_confidence is not None:
+        config.agent.jev.min_confidence = min_confidence
+
+    key = _resolve_jev_key_for_configure(api_key)
+    if _jev_key_malformed(key):
+        raise click.ClickException(
+            "The TypeSafe API key is empty or malformed. Nothing was saved."
+        )
+
+    if verify:
+        try:
+            models = asyncio.run(_list_jev_models(key, config.agent.jev))
+        except (JevAuthError, JevConfigError) as e:
+            raise click.ClickException(
+                f"{_redact(str(e), key)} Nothing was saved."
+            ) from None
+        except JevError as e:
+            console.print(
+                f"[yellow]Could not verify the key: {escape(_redact(str(e), key))}[/]"
+            )
+            console.print("[yellow]Saving it anyway.[/]")
+        except Exception as e:
+            reason = _redact(describe_error(e) or type(e).__name__, key)
+            console.print(f"[yellow]Could not verify the key: {escape(reason)}[/]")
+            console.print("[yellow]Saving it anyway.[/]")
+        else:
+            listed = ", ".join(models) or "none listed"
+            console.print(
+                f"[green]TypeSafe accepted the key.[/] Models: {escape(listed)}"
+            )
+            if not is_known_jev_model(config.agent.jev.model, models):
+                console.print(
+                    f"[yellow]Model {escape(config.agent.jev.model)} is not listed "
+                    "by TypeSafe. Use a listed alias or a pinned version such as "
+                    "jev-1.14.0.[/]"
+                )
+
+    env_keys.save_env_keys({"typesafe": key})
+    if set_default:
+        config.agent.name = JEV_AGENT_NAME
+    config_path = ConfigLoader.save(config)
+
+    console.print(f"[blue]API key saved to:[/] {env_keys.AUTH_PROFILES_PATH}")
+    console.print(f"[blue]Config saved to:[/] {config_path}")
+    unchanged = "" if set_default else " (unchanged)"
+    console.print(
+        f"Default agent: {escape(config.agent.name)}{unchanged}\n"
+        f"Jev model: {escape(config.agent.jev.model)}\n"
+        f"Min confidence: {config.agent.jev.min_confidence:g}"
+    )
+    if config.agent.jev.api_key_source == "env":
+        console.print(
+            "[yellow]agent.jev.api_key_source is 'env', so runs read "
+            "TYPESAFE_API_KEY from the shell, not the saved key.[/]"
+        )
 
 
 async def test(

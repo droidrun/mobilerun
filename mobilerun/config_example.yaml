@@ -5,6 +5,8 @@ _version: 7
 
 # === Agent Settings ===
 agent:
+  # Agent backend: mobilerun (LLM agents) or jev (TypeSafe Jev)
+  name: mobilerun
   # Maximum number of steps per task
   max_steps: 15
   # Enable planning with reasoning mode
@@ -65,6 +67,23 @@ agent:
     server_timeout: 10.0
     # Number of server retry attempts
     server_max_retries: 2
+
+  # TypeSafe Jev Configuration (used when name: jev)
+  # The API key is never stored here: set TYPESAFE_API_KEY or run
+  # `mobilerun configure jev` to save it.
+  jev:
+    # Model alias (jev-latest, jev-preview) or a pinned version (e.g. jev-1.14.0)
+    model: jev-latest
+    # Stop when Jev's confidence in its choice is below this value (0-1, 0 disables)
+    min_confidence: 0.3
+    # Key source: auto = saved key first, then shell env; env = shell only; file = saved key only
+    api_key_source: auto
+    # TypeSafe API base URL
+    base_url: https://api.typesafe.ai
+    # Request timeout in seconds
+    timeout: 30.0
+    # Retries for timeouts, rate limits and server errors
+    max_retries: 2
 
 # === LLM Profiles ===
 # Define LLM configurations for each agent type
