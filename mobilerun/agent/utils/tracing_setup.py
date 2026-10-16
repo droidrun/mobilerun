@@ -328,9 +328,11 @@ def _provider_span_processors(tracer_provider: object) -> tuple[object, ...]:
 
 @contextmanager
 def session_context(
-    session_id: Optional[str] = None, user_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    agent: Optional[object] = None,
 ) -> Iterator[None]:
-    """Scope Langfuse session/user context to the caller's workflow scheduling."""
+    """Scope Langfuse identifiers and agent metadata to workflow scheduling."""
     if not _tracing_initialized or _tracing_provider != "langfuse":
         yield
         return
@@ -338,13 +340,18 @@ def session_context(
     from openinference.semconv.trace import SpanAttributes
     from opentelemetry.context import attach, detach, get_current, set_value
 
+    from mobilerun.telemetry.langfuse_processor import _current_agent
+
     ctx = get_current()
     ctx = set_value(SpanAttributes.SESSION_ID, session_id or _default_session_id, ctx)
     ctx = set_value(SpanAttributes.USER_ID, user_id or "anonymous", ctx)
     token = attach(ctx)
+    agent_token = _current_agent.set(agent) if agent is not None else None
     try:
         yield
     finally:
+        if agent_token is not None:
+            _current_agent.reset(agent_token)
         detach(token)
 
 

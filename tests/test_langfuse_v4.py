@@ -763,6 +763,7 @@ def test_concurrent_mobile_agents_keep_their_tracing_context(monkeypatch, outcom
                             get_value(SpanAttributes.USER_ID),
                         )
                         assert actual == expected
+                        assert langfuse_processor._current_agent.get() is self
                         assert (
                             await asyncio.to_thread(
                                 lambda: (
@@ -798,10 +799,13 @@ def test_concurrent_mobile_agents_keep_their_tracing_context(monkeypatch, outcom
             for name in ("first", "second")
         ]
         before = get_current()
+        caller_agent = langfuse_processor._current_agent.get()
         first = agents[0].run()
         assert get_current() is before
+        assert langfuse_processor._current_agent.get() is caller_agent
         second = agents[1].run()
         assert get_current() is before
+        assert langfuse_processor._current_agent.get() is caller_agent
         await asyncio.wait_for(entered.wait(), timeout=5)
         assert (await second).reason == "second-session"
         if outcome == "cancel":
@@ -820,6 +824,7 @@ def test_concurrent_mobile_agents_keep_their_tracing_context(monkeypatch, outcom
             "second": ("second-session", "second-user"),
         }
         assert get_current() is before
+        assert langfuse_processor._current_agent.get() is caller_agent
 
     try:
         asyncio.run(exercise())
@@ -829,6 +834,73 @@ def test_concurrent_mobile_agents_keep_their_tracing_context(monkeypatch, outcom
             name = span.name.split("-")[0]
             assert span.attributes["session.id"] == f"{name}-session"
             assert span.attributes["user.id"] == f"{name}-user"
+    finally:
+        provider.shutdown()
+
+
+def test_concurrent_mobile_agents_keep_their_tracing_metadata(monkeypatch):
+    from llama_index.core.workflow import StartEvent, step
+
+    from mobilerun.agent.droid.droid_agent import MobileAgent
+    from mobilerun.agent.droid.events import ResultEvent
+    from mobilerun.config_manager.config_manager import (
+        AgentConfig,
+        MobileConfig,
+        TelemetryConfig,
+    )
+
+    monkeypatch.setattr(tracing_setup, "_tracing_initialized", True)
+    monkeypatch.setattr(tracing_setup, "_tracing_provider", "langfuse")
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(LangfuseSpanProcessor())
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer(__name__)
+
+    async def exercise():
+        barrier = asyncio.Barrier(2)
+        observations = {}
+
+        class MetadataAgent(MobileAgent):
+            @step
+            async def start_handler(self, ev: StartEvent) -> ResultEvent:
+                await barrier.wait()
+                with tracer.start_as_current_span("MobileAgent.run") as span:
+                    await asyncio.sleep(0)
+                    current = langfuse_processor._current_agent.get()
+                    assert current is self
+                    assert await asyncio.to_thread(langfuse_processor._current_agent.get) is self
+                    name = self.shared_state.instruction
+                    observations[name] = current.shared_state.instruction
+                    span.set_attribute("test.agent", name)
+                return ResultEvent(success=True, reason=name, steps=1)
+
+        # Construct both agents in this task before scheduling either workflow.
+        agents = [
+            MetadataAgent(
+                name,
+                config=MobileConfig(
+                    agent=AgentConfig(name="metadata-test-agent"),
+                    telemetry=TelemetryConfig(enabled=False),
+                    tracing=TracingConfig(enabled=True, provider="langfuse"),
+                ),
+                disable_validation=True,
+            )
+            for name in ("first", "second")
+        ]
+        caller_agent = langfuse_processor._current_agent.get()
+        results = await asyncio.gather(agents[0].run(), agents[1].run())
+        assert {result.reason for result in results} == {"first", "second"}
+        assert observations == {"first": "first", "second": "second"}
+        assert langfuse_processor._current_agent.get() is caller_agent
+
+    try:
+        asyncio.run(exercise())
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 2
+        for span in spans:
+            metadata = json.loads(span.attributes["langfuse.observation.input"])
+            assert metadata["goal"] == span.attributes["test.agent"]
     finally:
         provider.shutdown()
 
@@ -847,9 +919,12 @@ def test_mobile_agent_restores_context_if_workflow_start_fails(monkeypatch):
     )
     monkeypatch.setattr(Workflow, "run", Mock(side_effect=RuntimeError("cannot start")))
     before = get_current()
+    caller_agent = SimpleNamespace(name="caller")
+    langfuse_processor._current_agent.set(caller_agent)
     with pytest.raises(RuntimeError, match="cannot start"):
         agent.run()
     assert get_current() is before
+    assert langfuse_processor._current_agent.get() is caller_agent
 
 
 @pytest.mark.parametrize("method", ["get_state", "get_final_state"])
