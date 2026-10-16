@@ -9,7 +9,8 @@ import base64
 import logging
 import os
 import threading
-from contextvars import Token
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Optional
 from uuid import uuid4
 
@@ -325,20 +326,26 @@ def _provider_span_processors(tracer_provider: object) -> tuple[object, ...]:
     return tuple(processors)
 
 
-def apply_session_context(
+@contextmanager
+def session_context(
     session_id: Optional[str] = None, user_id: Optional[str] = None
-) -> Optional[Token]:
-    """Attach Langfuse session/user context; the caller must detach the token."""
+) -> Iterator[None]:
+    """Scope Langfuse session/user context to the caller's workflow scheduling."""
     if not _tracing_initialized or _tracing_provider != "langfuse":
+        yield
         return
 
     from openinference.semconv.trace import SpanAttributes
-    from opentelemetry.context import attach, get_current, set_value
+    from opentelemetry.context import attach, detach, get_current, set_value
 
     ctx = get_current()
     ctx = set_value(SpanAttributes.SESSION_ID, session_id or _default_session_id, ctx)
     ctx = set_value(SpanAttributes.USER_ID, user_id or "anonymous", ctx)
-    return attach(ctx)
+    token = attach(ctx)
+    try:
+        yield
+    finally:
+        detach(token)
 
 
 def record_langfuse_screenshot(
