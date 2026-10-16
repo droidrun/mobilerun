@@ -142,8 +142,10 @@ class ExecutorAgent(Workflow):
             screenshot = self.shared_state.screenshot
             if screenshot is not None:
                 if should_resize_model_screenshot(self.action_ctx.state_provider):
-                    screenshot = resize_model_screenshot_with_grid(
-                        self.action_ctx.state_provider, screenshot
+                    screenshot = await asyncio.to_thread(
+                        resize_model_screenshot_with_grid,
+                        self.action_ctx.state_provider,
+                        screenshot,
                     )
                 messages[0].blocks.append(ImageBlock(image=screenshot))
                 logger.debug("📸 Using screenshot for Executor")

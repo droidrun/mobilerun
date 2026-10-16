@@ -10,6 +10,7 @@ This agent is responsible for:
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import logging
@@ -276,7 +277,7 @@ class ManagerAgent(Workflow):
 
         return "".join(parts)
 
-    def _build_messages_with_context(
+    async def _build_messages_with_context(
         self, system_prompt: str, screenshot: bytes | None = None
     ) -> list[ChatMessage]:
         """
@@ -323,8 +324,8 @@ class ManagerAgent(Workflow):
             # Add screenshot if vision enabled
             if screenshot and self.vision:
                 if should_resize_model_screenshot(self.state_provider):
-                    screenshot = resize_model_screenshot_with_grid(
-                        self.state_provider, screenshot
+                    screenshot = await asyncio.to_thread(
+                        resize_model_screenshot_with_grid, self.state_provider, screenshot
                     )
                 messages[last_user_idx].blocks.append(ImageBlock(image=screenshot))
 
@@ -490,7 +491,7 @@ class ManagerAgent(Workflow):
         system_prompt = await self._build_system_prompt()
 
         # Build messages with context
-        messages = self._build_messages_with_context(
+        messages = await self._build_messages_with_context(
             system_prompt=system_prompt, screenshot=screenshot
         )
 
