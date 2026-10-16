@@ -318,11 +318,12 @@ class AndroidStateProvider(StateProvider):
             fetch=self.driver.get_ui_tree,
             recovery=self._recover_portal,
         )
-        return self._state_from_data(combined_data)
+        return await asyncio.to_thread(self._state_from_data, combined_data)
 
     async def get_final_state(self) -> UIState:
         """Finalization must not restart accessibility after a failed read."""
-        return self._state_from_data(await self.driver.get_ui_tree())
+        combined_data = await self.driver.get_ui_tree()
+        return await asyncio.to_thread(self._state_from_data, combined_data)
 
     def _state_from_data(self, combined_data: dict) -> UIState:
 

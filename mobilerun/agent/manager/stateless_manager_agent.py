@@ -4,6 +4,7 @@ StatelessManagerAgent - Stateless planning agent that rebuilds context each turn
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Optional, Type
 
@@ -224,8 +225,8 @@ class StatelessManagerAgent(Workflow):
 
         if self.vision and screenshot:
             if should_resize_model_screenshot(self.state_provider):
-                screenshot = resize_model_screenshot_with_grid(
-                    self.state_provider, screenshot
+                screenshot = await asyncio.to_thread(
+                    resize_model_screenshot_with_grid, self.state_provider, screenshot
                 )
             messages[0]["content"].append({"image": screenshot})
 

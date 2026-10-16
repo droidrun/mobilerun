@@ -33,6 +33,7 @@ from mobilerun_core_local.driver.visual_remote import (
     VisualRemoteDriver,
 )
 from opentelemetry import trace
+from opentelemetry.context import detach
 from pydantic import BaseModel
 from workflows.events import Event
 from workflows.handler import WorkflowHandler
@@ -267,6 +268,9 @@ class MobileAgent(Workflow):
     - reasoning=True: Uses ManagerAgent (planning) + ExecutorAgent (actions)
     """
 
+    _tracing_session_id: str | None = None
+    _tracing_user_id: str | None = None
+
     @staticmethod
     def _configure_default_logging(debug: bool = False):
         """
@@ -373,6 +377,8 @@ class MobileAgent(Workflow):
 
         super().__init__(*args, timeout=timeout, **kwargs)
 
+        self._tracing_session_id = self.config.tracing.langfuse_session_id
+        self._tracing_user_id = self.config.tracing.langfuse_user_id
         setup_tracing(self.config.tracing, agent=self)
 
         # Check if using external agent - skip LLM loading
@@ -486,9 +492,14 @@ class MobileAgent(Workflow):
         logger.debug("✅ MobileAgent initialized successfully.")
 
     def run(self, *args, **kwargs) -> Awaitable[ResultEvent] | WorkflowHandler:
-        apply_session_context()
-        handler = super().run(*args, **kwargs)  # type: ignore[assignment]
-        return handler
+        token = apply_session_context(self._tracing_session_id, self._tracing_user_id)
+        try:
+            # Workflow tasks inherit this context when run() schedules them.
+            return super().run(*args, **kwargs)
+        finally:
+            # Restore the caller in the same context that attached the token.
+            if token is not None:
+                detach(token)
 
     async def _initialize_workflow_deadline(self, ctx: Context) -> None:
         """Store a deadline owned by the runtime execution of this run."""

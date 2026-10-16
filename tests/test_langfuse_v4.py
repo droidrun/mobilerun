@@ -1,9 +1,13 @@
+import asyncio
 import base64
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from io import BytesIO
 from types import MappingProxyType, SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -43,8 +47,6 @@ def reset_tracing_state(monkeypatch):
     monkeypatch.setattr(tracing_setup, "_langfuse_preprocessor", None)
     monkeypatch.setattr(tracing_setup, "_langfuse_tracer_provider", None)
     monkeypatch.setattr(tracing_setup, "_langfuse_setup_attempted", False)
-    monkeypatch.setattr(tracing_setup, "_session_id", "test-session")
-    monkeypatch.setattr(tracing_setup, "_user_id", "anonymous")
     for name in (
         "LANGFUSE_PUBLIC_KEY",
         "LANGFUSE_SECRET_KEY",
@@ -704,21 +706,288 @@ def test_malformed_base64_serialized_media_is_removed(caplog):
     assert "input.value" not in attrs
 
 
-def test_apply_session_context_sets_langfuse_trace_attributes():
+@pytest.mark.parametrize(
+    ("session_id", "user_id", "expected_session", "expected_user"),
+    [
+        ("session-123", "user-123", "session-123", "user-123"),
+        (None, None, tracing_setup._default_session_id, "anonymous"),
+    ],
+)
+def test_apply_session_context_sets_langfuse_trace_attributes(
+    monkeypatch, session_id, user_id, expected_session, expected_user
+):
     from openinference.semconv.trace import SpanAttributes
-    from opentelemetry.context import get_value
+    from opentelemetry.context import detach, get_current, get_value
 
-    tracing_setup._tracing_initialized = True
-    tracing_setup._tracing_provider = "langfuse"
-    tracing_setup._session_id = "session-123"
-    tracing_setup._user_id = "user-123"
+    monkeypatch.setattr(tracing_setup, "_tracing_initialized", True)
+    monkeypatch.setattr(tracing_setup, "_tracing_provider", "langfuse")
+    before = get_current()
+    token = tracing_setup.apply_session_context(session_id, user_id)
+    try:
+        assert get_value(SpanAttributes.SESSION_ID) == expected_session
+        assert get_value(SpanAttributes.USER_ID) == expected_user
+    finally:
+        detach(token)
+    assert get_current() is before
 
-    def read_context():
-        tracing_setup.apply_session_context()
-        return (
-            get_value(SpanAttributes.SESSION_ID),
-            get_value(SpanAttributes.USER_ID),
-        )
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        assert pool.submit(read_context).result() == ("session-123", "user-123")
+@pytest.mark.parametrize("provider", [None, "phoenix"])
+def test_apply_session_context_leaves_other_providers_unchanged(monkeypatch, provider):
+    from opentelemetry.context import get_current
+
+    monkeypatch.setattr(tracing_setup, "_tracing_initialized", provider is not None)
+    monkeypatch.setattr(tracing_setup, "_tracing_provider", provider)
+    before = get_current()
+    assert tracing_setup.apply_session_context("session", "user") is None
+    assert get_current() is before
+
+
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
+def test_concurrent_mobile_agents_keep_their_tracing_context(monkeypatch, outcome):
+    from llama_index.core.workflow import StartEvent, step
+    from openinference.instrumentation import TracerProvider as OITracerProvider
+    from openinference.semconv.trace import SpanAttributes
+    from opentelemetry.context import get_current, get_value
+    from workflows.errors import WorkflowCancelledByUser
+
+    from mobilerun.agent.droid.droid_agent import MobileAgent
+    from mobilerun.agent.droid.events import ResultEvent
+    from mobilerun.config_manager.config_manager import (
+        AgentConfig,
+        MobileConfig,
+        TelemetryConfig,
+    )
+
+    # Use the existing process-wide provider path without creating a network client.
+    monkeypatch.setattr(tracing_setup, "_tracing_initialized", True)
+    monkeypatch.setattr(tracing_setup, "_tracing_provider", "langfuse")
+    provider = OITracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer(__name__)
+
+    async def exercise():
+        barrier = asyncio.Barrier(2)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        observations = {}
+
+        class ContextAgent(MobileAgent):
+            @step
+            async def start_handler(self, ev: StartEvent) -> ResultEvent:
+                await barrier.wait()
+                expected = (self._tracing_session_id, self._tracing_user_id)
+                for index in range(3):
+                    with tracer.start_as_current_span(f"{self.shared_state.instruction}-{index}"):
+                        await asyncio.sleep(0)
+                        actual = (
+                            get_value(SpanAttributes.SESSION_ID),
+                            get_value(SpanAttributes.USER_ID),
+                        )
+                        assert actual == expected
+                        assert await asyncio.to_thread(
+                            lambda: (
+                                get_value(SpanAttributes.SESSION_ID),
+                                get_value(SpanAttributes.USER_ID),
+                            )
+                        ) == expected
+                        observations[self.shared_state.instruction] = actual
+                if self.shared_state.instruction == "first":
+                    entered.set()
+                    await release.wait()
+                    if outcome == "error":
+                        raise RuntimeError("expected run failure")
+                return ResultEvent(success=True, reason=expected[0], steps=3)
+
+        agents = [
+            ContextAgent(
+                name,
+                config=MobileConfig(
+                    agent=AgentConfig(name="context-test-agent"),
+                    telemetry=TelemetryConfig(enabled=False),
+                    tracing=TracingConfig(
+                        enabled=True,
+                        provider="langfuse",
+                        langfuse_session_id=f"{name}-session",
+                        langfuse_user_id=f"{name}-user",
+                    ),
+                ),
+                disable_validation=True,
+            )
+            for name in ("first", "second")
+        ]
+        before = get_current()
+        first = agents[0].run()
+        assert get_current() is before
+        second = agents[1].run()
+        assert get_current() is before
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        assert (await second).reason == "second-session"
+        if outcome == "cancel":
+            await first.cancel_run()
+            with pytest.raises(WorkflowCancelledByUser):
+                await first
+        else:
+            release.set()
+            if outcome == "error":
+                with pytest.raises(RuntimeError, match="expected run failure"):
+                    await first
+            else:
+                assert (await first).reason == "first-session"
+        assert observations == {
+            "first": ("first-session", "first-user"),
+            "second": ("second-session", "second-user"),
+        }
+        assert get_current() is before
+
+    try:
+        asyncio.run(exercise())
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 6
+        for span in spans:
+            name = span.name.split("-")[0]
+            assert span.attributes["session.id"] == f"{name}-session"
+            assert span.attributes["user.id"] == f"{name}-user"
+    finally:
+        provider.shutdown()
+
+
+def test_mobile_agent_restores_context_if_workflow_start_fails(monkeypatch):
+    from llama_index.core.workflow import Workflow
+    from opentelemetry.context import get_current
+
+    from mobilerun.agent.droid.droid_agent import MobileAgent
+    from mobilerun.config_manager.config_manager import AgentConfig, MobileConfig
+
+    monkeypatch.setattr(tracing_setup, "_tracing_initialized", True)
+    monkeypatch.setattr(tracing_setup, "_tracing_provider", "langfuse")
+    agent = MobileAgent(
+        "Test context cleanup", config=MobileConfig(agent=AgentConfig(name="context-test-agent"))
+    )
+    monkeypatch.setattr(Workflow, "run", Mock(side_effect=RuntimeError("cannot start")))
+    before = get_current()
+    with pytest.raises(RuntimeError, match="cannot start"):
+        agent.run()
+    assert get_current() is before
+
+
+@pytest.mark.parametrize("method", ["get_state", "get_final_state"])
+def test_android_state_processing_runs_in_thread_with_unchanged_output(monkeypatch, method):
+    from mobilerun.tools.filters import ConciseFilter
+    from mobilerun.tools.formatters import IndexedFormatter
+    from mobilerun.tools.ui.provider import AndroidStateProvider
+
+    data = {
+        "a11y_tree": {
+            "text": "Settings",
+            "boundsInScreen": {"left": 0, "top": 0, "right": 1080, "bottom": 2400},
+            "children": [{
+                "text": "Wi-Fi",
+                "boundsInScreen": {"left": 10, "top": 20, "right": 200, "bottom": 100},
+                "children": None,
+            }],
+        },
+        "device_context": {"screen_bounds": {"width": 1080, "height": 2400}},
+        "phone_state": {"packageName": "com.android.settings", "currentApp": "Settings"},
+    }
+    driver = SimpleNamespace(get_ui_tree=AsyncMock(side_effect=lambda: deepcopy(data)))
+    provider = AndroidStateProvider(driver, ConciseFilter(), IndexedFormatter(), vision_enabled=True)
+    expected = provider._state_from_data(deepcopy(data))
+    loop_thread = threading.get_ident()
+    worker_threads = []
+    original = provider._state_from_data
+
+    def process(raw):
+        worker_threads.append(threading.get_ident())
+        return original(raw)
+
+    monkeypatch.setattr(provider, "_state_from_data", process)
+    actual = asyncio.run(getattr(provider, method)())
+    assert vars(actual) == vars(expected)
+    assert worker_threads and all(thread != loop_thread for thread in worker_threads)
+
+
+@pytest.mark.parametrize("kind", ["fast", "manager", "stateless_manager", "executor"])
+def test_agent_screenshot_resizing_runs_in_thread_with_unchanged_output(monkeypatch, kind):
+    from llama_index.core.base.llms.types import ChatMessage, ImageBlock
+    from llama_index.core.workflow import StartEvent
+    from PIL import Image
+
+    from mobilerun.agent.droid.state import MobileAgentState
+    from mobilerun.agent.executor import executor_agent
+    from mobilerun.agent.fast_agent import fast_agent
+    from mobilerun.agent.fast_agent.events import FastAgentInputEvent
+    from mobilerun.agent.manager import manager_agent, stateless_manager_agent
+    from mobilerun.agent.manager.events import ManagerContextEvent
+    from mobilerun.agent.utils.prompt_resolver import PromptResolver
+    from mobilerun.config_manager.config_manager import AgentConfig
+    from mobilerun.tools.ui.provider import resize_model_screenshot_with_grid
+    from mobilerun.tools.ui.state import UIState
+
+    modules = {
+        "fast": (fast_agent, fast_agent.FastAgent),
+        "manager": (manager_agent, manager_agent.ManagerAgent),
+        "stateless_manager": (stateless_manager_agent, stateless_manager_agent.StatelessManagerAgent),
+        "executor": (executor_agent, executor_agent.ExecutorAgent),
+    }
+    module, cls = modules[kind]
+    buffer = BytesIO()
+    Image.new("RGB", (320, 640), "navy").save(buffer, format="PNG")
+    screenshot = buffer.getvalue()
+    provider = SimpleNamespace(
+        resize_model_screenshot=True,
+        model_screenshot_width=160,
+        model_screenshot_height=320,
+        get_state=AsyncMock(return_value=UIState([], "Settings", "", {}, 320, 640)),
+    )
+    expected = resize_model_screenshot_with_grid(provider, screenshot)
+    loop_thread = threading.get_ident()
+    worker_threads = []
+
+    def resize(state_provider, image):
+        worker_threads.append(threading.get_ident())
+        return resize_model_screenshot_with_grid(state_provider, image)
+
+    monkeypatch.setattr(module, "resize_model_screenshot_with_grid", resize)
+    llm_call = AsyncMock(side_effect=RuntimeError("stop after preparing messages"))
+    monkeypatch.setattr(module, "acall_with_retries", llm_call)
+    agent = object.__new__(cls)
+    agent.shared_state = MobileAgentState(
+        screenshot=screenshot, message_history=[ChatMessage(role="user", content="Open settings")],
+        telemetry_config_enabled=False,
+    )
+    agent.state_provider = provider
+    agent.action_ctx = SimpleNamespace(
+        state_provider=provider, driver=SimpleNamespace(screenshot=AsyncMock(return_value=screenshot))
+    )
+    agent.vision = True
+    agent.agent_config = AgentConfig()
+    agent.registry = SimpleNamespace(tools={}, get_signatures=lambda **kwargs: "")
+    agent.prompt_resolver = PromptResolver(custom_prompts={"executor_system": "Test prompt"})
+    agent.llm = SimpleNamespace()
+    agent._build_system_prompt = AsyncMock(return_value="System prompt")
+    agent._build_prompt = AsyncMock(return_value="Test prompt")
+    agent.system_prompt = ChatMessage(role="system", content="System prompt")
+    agent.max_steps = 5
+    agent._stream_screenshots = False
+    agent.save_trajectory = "none"
+    agent.tracing_config = None
+    agent.debug = False
+    ctx = SimpleNamespace(store=SimpleNamespace(set=AsyncMock()), write_event_to_stream=Mock())
+
+    async def exercise():
+        if kind == "executor":
+            await agent.prepare_context(ctx, StartEvent(subgoal="Open settings"))
+            return ctx.store.set.await_args.args[1]
+        with pytest.raises(RuntimeError, match="stop after preparing messages"):
+            if kind == "fast":
+                await agent.handle_llm_input(ctx, FastAgentInputEvent())
+            else:
+                await agent.get_response(ctx, ManagerContextEvent())
+        return llm_call.await_args.args[1]
+
+    messages = asyncio.run(exercise())
+    images = [block for message in messages for block in message.blocks if isinstance(block, ImageBlock)]
+    assert len(images) == 1
+    assert images[0].resolve_image().read() == expected
+    assert worker_threads and all(thread != loop_thread for thread in worker_threads)

@@ -9,6 +9,7 @@ import base64
 import logging
 import os
 import threading
+from contextvars import Token
 from typing import Optional
 from uuid import uuid4
 
@@ -19,10 +20,8 @@ from mobilerun.config_manager.config_manager import TracingConfig
 logger = logging.getLogger("mobilerun")
 
 _default_session_id: str = str(uuid4())
-_session_id: str = _default_session_id
 _tracing_initialized: bool = False
 _tracing_provider: Optional[str] = None
-_user_id: str = "anonymous"
 _langfuse_client: Optional[object] = None
 _langfuse_preprocessor: Optional[object] = None
 _langfuse_tracer_provider: Optional[object] = None
@@ -35,7 +34,7 @@ DEFAULT_LANGFUSE_BASE_URL = "https://us.cloud.langfuse.com"
 def setup_tracing(
     tracing_config: TracingConfig, agent: Optional[object] = None
 ) -> None:
-    global _tracing_initialized, _tracing_provider, _session_id, _user_id
+    global _tracing_initialized, _tracing_provider
 
     if not tracing_config.enabled:
         return
@@ -43,9 +42,6 @@ def setup_tracing(
     provider = tracing_config.provider.lower()
 
     with _tracing_setup_lock:
-        _session_id = tracing_config.langfuse_session_id or _default_session_id
-        _user_id = tracing_config.langfuse_user_id or "anonymous"
-
         if _tracing_initialized:
             logger.debug(
                 f"🔍 Tracing already initialized with {_tracing_provider}, skipping setup"
@@ -64,7 +60,7 @@ def setup_tracing(
             if _setup_langfuse_tracing(tracing_config, agent):
                 _tracing_initialized = True
                 _tracing_provider = "langfuse"
-                logger.debug(f"🔍 Langfuse tracing enabled | Session: {_session_id}")
+                logger.debug("🔍 Langfuse tracing enabled")
         else:
             logger.warning(
                 f"⚠️  Unknown tracing provider: {provider}. "
@@ -326,8 +322,10 @@ def _provider_span_processors(tracer_provider: object) -> tuple[object, ...]:
     return tuple(processors)
 
 
-def apply_session_context() -> None:
-    """Apply session context for tracing. Only active when Langfuse tracing is enabled."""
+def apply_session_context(
+    session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> Optional[Token]:
+    """Attach Langfuse session/user context; the caller must detach the token."""
     if not _tracing_initialized or _tracing_provider != "langfuse":
         return
 
@@ -335,9 +333,9 @@ def apply_session_context() -> None:
     from opentelemetry.context import attach, get_current, set_value
 
     ctx = get_current()
-    ctx = set_value(SpanAttributes.SESSION_ID, _session_id, ctx)
-    ctx = set_value(SpanAttributes.USER_ID, _user_id, ctx)
-    attach(ctx)
+    ctx = set_value(SpanAttributes.SESSION_ID, session_id or _default_session_id, ctx)
+    ctx = set_value(SpanAttributes.USER_ID, user_id or "anonymous", ctx)
+    return attach(ctx)
 
 
 def record_langfuse_screenshot(
