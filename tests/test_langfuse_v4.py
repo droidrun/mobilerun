@@ -43,6 +43,9 @@ from mobilerun.telemetry.langfuse_processor import (
 def reset_tracing_state(monkeypatch):
     monkeypatch.setattr(tracing_setup, "_tracing_initialized", False)
     monkeypatch.setattr(tracing_setup, "_tracing_provider", None)
+    monkeypatch.setattr(
+        tracing_setup, "_legacy_session_context", (tracing_setup._default_session_id, "anonymous")
+    )
     monkeypatch.setattr(tracing_setup, "_langfuse_client", None)
     monkeypatch.setattr(tracing_setup, "_langfuse_preprocessor", None)
     monkeypatch.setattr(tracing_setup, "_langfuse_tracer_provider", None)
@@ -708,6 +711,40 @@ def test_session_context_sets_langfuse_trace_attributes(
     assert get_current() is before
 
 
+@pytest.mark.parametrize("session_id,user_id", [("legacy-session", "legacy-user"), (None, None)])
+def test_legacy_apply_session_context_remains_importable_and_uses_latest_setup(
+    monkeypatch, session_id, user_id
+):
+    from openinference.semconv.trace import SpanAttributes
+    from opentelemetry.context import get_value
+
+    from mobilerun.agent.utils.tracing_setup import apply_session_context
+
+    monkeypatch.setattr(tracing_setup, "_setup_langfuse_tracing", lambda *args: True)
+    tracing_setup.setup_tracing(
+        TracingConfig(enabled=True, provider="langfuse", langfuse_session_id="earlier-session")
+    )
+    tracing_setup.setup_tracing(
+        TracingConfig(
+            enabled=True,
+            provider="langfuse",
+            langfuse_session_id=session_id,
+            langfuse_user_id=user_id,
+        )
+    )
+
+    def read_context():
+        assert apply_session_context() is None
+        return get_value(SpanAttributes.SESSION_ID), get_value(SpanAttributes.USER_ID)
+
+    # Legacy attachment intentionally remains active; isolate it from other tests.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        assert pool.submit(read_context).result() == (
+            session_id or tracing_setup._default_session_id,
+            user_id or "anonymous",
+        )
+
+
 @pytest.mark.parametrize("provider", [None, "phoenix"])
 def test_session_context_leaves_other_providers_unchanged(monkeypatch, provider):
     from opentelemetry.context import get_current
@@ -955,16 +992,139 @@ def test_android_state_processing_runs_in_thread_with_unchanged_output(monkeypat
     expected = provider._state_from_data(deepcopy(data))
     loop_thread = threading.get_ident()
     worker_threads = []
-    original = provider._state_from_data
+    original = AndroidStateProvider._state_from_data
 
-    def process(raw):
+    def process(self, raw):
         worker_threads.append(threading.get_ident())
-        return original(raw)
+        return original(self, raw)
 
-    monkeypatch.setattr(provider, "_state_from_data", process)
+    monkeypatch.setattr(AndroidStateProvider, "_state_from_data", process)
     actual = asyncio.run(getattr(provider, method)())
     assert vars(actual) == vars(expected)
     assert worker_threads and all(thread != loop_thread for thread in worker_threads)
+
+
+@pytest.mark.parametrize("method", ["get_state", "get_final_state"])
+@pytest.mark.parametrize("cancelled", [False, True], ids=["overlapping", "cancelled"])
+def test_android_state_workers_cannot_corrupt_other_observations(monkeypatch, method, cancelled):
+    from mobilerun.tools.filters import ConciseFilter
+    from mobilerun.tools.formatters import IndexedFormatter
+    from mobilerun.tools.ui.provider import AndroidStateProvider
+
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    loop_thread = threading.get_ident()
+    off_loop_writes = []
+
+    def data(width, height):
+        return {
+            "a11y_tree": {
+                "text": "Settings",
+                "boundsInScreen": {"left": 0, "top": 0, "right": width, "bottom": height},
+                "children": [
+                    {
+                        "text": "Wi-Fi",
+                        "boundsInScreen": {"left": 0, "top": 0, "right": 1000, "bottom": 1000},
+                    }
+                ],
+            },
+            "device_context": {"screen_bounds": {"width": width, "height": height}},
+            "phone_state": {"packageName": "com.android.settings"},
+        }
+
+    large, small = data(4000, 8000), data(1000, 2000)
+
+    class PausingFilter(ConciseFilter):
+        def __init__(self):
+            self.observed_sizes = []
+
+        def filter(self, tree, context):
+            self.observed_sizes.append(context["screen_bounds"]["width"])
+            if cancelled and context["screen_bounds"]["width"] == 4000:
+                entered.set()
+                assert release.wait(5), "first worker was not released"
+            return super().filter(tree, context)
+
+    class PausingFormatter(IndexedFormatter):
+        def __setattr__(self, name, value):
+            if self is formatter and threading.get_ident() != loop_thread:
+                off_loop_writes.append(name)
+            super().__setattr__(name, value)
+
+        def format(self, tree, phone_state):
+            if not cancelled and self.screen_width == 4000:
+                entered.set()
+                assert release.wait(5), "first worker was not released"
+            return super().format(tree, phone_state)
+
+    # Keep synchronization events in method closures so per-call copies can
+    # isolate configuration without copying threading locks.
+    formatter = None
+    formatter = PausingFormatter()
+    tree_filter = PausingFilter()
+    provider = AndroidStateProvider(
+        SimpleNamespace(get_ui_tree=AsyncMock(side_effect=[large, small])),
+        tree_filter,
+        formatter,
+        vision_enabled=True,
+    )
+    expected = [
+        AndroidStateProvider(
+            None, ConciseFilter(), IndexedFormatter(), vision_enabled=True
+        )._state_from_data(deepcopy(raw))
+        for raw in (large, small)
+    ]
+    original = AndroidStateProvider._state_from_data
+
+    def process(self, raw):
+        try:
+            return original(self, raw)
+        finally:
+            if raw["device_context"]["screen_bounds"]["width"] == 4000:
+                finished.set()
+
+    monkeypatch.setattr(AndroidStateProvider, "_state_from_data", process)
+
+    def assert_published(state):
+        assert provider.model_screenshot_width == state.model_screenshot_width
+        assert provider.model_screenshot_height == state.model_screenshot_height
+        assert provider.resize_model_screenshot is state.coordinate_contract_active
+        assert formatter.screen_width == state.screen_width
+        assert formatter.screen_height == state.screen_height
+        assert formatter.display_scale_x == state.coordinate_scale_x
+        assert formatter.display_scale_y == state.coordinate_scale_y
+        assert formatter.use_normalized == state.use_normalized
+
+    async def exercise():
+        first = asyncio.create_task(getattr(provider, method)())
+        try:
+            assert await asyncio.to_thread(entered.wait, 5), "first worker did not pause"
+            if cancelled:
+                first.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await first
+            other_method = "get_final_state" if method == "get_state" else "get_state"
+            fresh = await asyncio.wait_for(getattr(provider, other_method)(), 5)
+            assert vars(fresh) == vars(expected[1])
+            assert_published(fresh)
+            release.set()
+            if cancelled:
+                assert await asyncio.to_thread(finished.wait, 5)
+                await asyncio.sleep(0)
+                assert_published(fresh)
+            else:
+                earlier = await asyncio.wait_for(first, 5)
+                assert vars(earlier) == vars(expected[0])
+                assert earlier.elements[1]["displayBounds"] == "0,0,256,256"
+                assert_published(earlier)
+            assert tree_filter.observed_sizes == []
+            assert not off_loop_writes
+        finally:
+            release.set()
+            await asyncio.gather(first, return_exceptions=True)
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize(
