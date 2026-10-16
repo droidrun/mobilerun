@@ -485,7 +485,9 @@ class ManagerAgent(Workflow):
         system_prompt = await self._build_system_prompt()
 
         if screenshot and self.vision:
-            screenshot = await resize_model_screenshot_async(self.state_provider, screenshot)
+            screenshot = await resize_model_screenshot_async(
+                self.state_provider, screenshot
+            )
 
         # Build messages with context
         messages = self._build_messages_with_context(

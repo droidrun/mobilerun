@@ -222,7 +222,9 @@ class StatelessManagerAgent(Workflow):
         messages = [{"role": "user", "content": [{"text": prompt_text}]}]
 
         if self.vision and screenshot:
-            screenshot = await resize_model_screenshot_async(self.state_provider, screenshot)
+            screenshot = await resize_model_screenshot_async(
+                self.state_provider, screenshot
+            )
             messages[0]["content"].append({"image": screenshot})
 
         chat_messages = to_chat_messages(messages)
