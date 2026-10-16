@@ -381,7 +381,9 @@ class FastAgent(Workflow):
 
             # Screenshot → last user message
             if self.vision and screenshot:
-                screenshot = await resize_model_screenshot_async(self.state_provider, screenshot)
+                screenshot = await resize_model_screenshot_async(
+                    self.state_provider, screenshot
+                )
                 messages_to_send[last_user_idx].blocks.append(
                     ImageBlock(image=screenshot)
                 )

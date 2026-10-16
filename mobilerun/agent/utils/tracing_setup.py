@@ -330,9 +330,7 @@ def _provider_span_processors(tracer_provider: object) -> tuple[object, ...]:
     return tuple(processors)
 
 
-def _attach_session_context(
-    session_id: Optional[str], user_id: Optional[str]
-) -> Token:
+def _attach_session_context(session_id: Optional[str], user_id: Optional[str]) -> Token:
     """Attach explicit identifiers and return the token used to restore them."""
     from openinference.semconv.trace import SpanAttributes
     from opentelemetry.context import attach, get_current, set_value

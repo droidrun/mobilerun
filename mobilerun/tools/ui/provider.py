@@ -207,17 +207,23 @@ def resize_model_screenshot_with_grid(state_provider: Any, screenshot: bytes) ->
     return resize_image_to_max_side_with_grid(screenshot, divisions=divisions)
 
 
-async def resize_model_screenshot_async(state_provider: Any, screenshot: bytes) -> bytes:
+async def resize_model_screenshot_async(
+    state_provider: Any, screenshot: bytes
+) -> bytes:
     """Resize when required, snapshotting model geometry before offloading."""
     if not should_resize_model_screenshot(state_provider):
         return screenshot
 
     geometry = SimpleNamespace(
         model_screenshot_width=getattr(state_provider, "model_screenshot_width", None),
-        model_screenshot_height=getattr(state_provider, "model_screenshot_height", None),
+        model_screenshot_height=getattr(
+            state_provider, "model_screenshot_height", None
+        ),
         model_screenshot_grid=getattr(state_provider, "model_screenshot_grid", True),
     )
-    return await asyncio.to_thread(resize_model_screenshot_with_grid, geometry, screenshot)
+    return await asyncio.to_thread(
+        resize_model_screenshot_with_grid, geometry, screenshot
+    )
 
 
 class AndroidStateProvider(StateProvider):

@@ -492,7 +492,9 @@ class MobileAgent(Workflow):
 
     def run(self, *args, **kwargs) -> Awaitable[ResultEvent] | WorkflowHandler:
         # Workflow tasks inherit this context when run() schedules them.
-        with session_context(self._tracing_session_id, self._tracing_user_id, agent=self):
+        with session_context(
+            self._tracing_session_id, self._tracing_user_id, agent=self
+        ):
             return super().run(*args, **kwargs)
 
     async def _initialize_workflow_deadline(self, ctx: Context) -> None:

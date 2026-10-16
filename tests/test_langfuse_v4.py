@@ -44,7 +44,9 @@ def reset_tracing_state(monkeypatch):
     monkeypatch.setattr(tracing_setup, "_tracing_initialized", False)
     monkeypatch.setattr(tracing_setup, "_tracing_provider", None)
     monkeypatch.setattr(
-        tracing_setup, "_legacy_session_context", (tracing_setup._default_session_id, "anonymous")
+        tracing_setup,
+        "_legacy_session_context",
+        (tracing_setup._default_session_id, "anonymous"),
     )
     monkeypatch.setattr(tracing_setup, "_langfuse_client", None)
     monkeypatch.setattr(tracing_setup, "_langfuse_preprocessor", None)
@@ -75,7 +77,9 @@ class _FakeTracerProvider:
         self.processors.append(processor)
 
 
-def _install_fake_setup(monkeypatch, *, auth_result=True, auth_error=None, attach_exporter=True):
+def _install_fake_setup(
+    monkeypatch, *, auth_result=True, auth_error=None, attach_exporter=True
+):
     import langfuse
     from openinference.instrumentation import llama_index as instrumentation
     from openinference.instrumentation.llama_index import _handler
@@ -224,7 +228,9 @@ def test_setup_rejects_preexisting_langfuse_exporter(monkeypatch, caplog, wrappe
 
 
 def test_setup_rejects_same_key_client_owned_by_another_provider(monkeypatch, caplog):
-    provider, clients, _exporter, _calls = _install_fake_setup(monkeypatch, attach_exporter=False)
+    provider, clients, _exporter, _calls = _install_fake_setup(
+        monkeypatch, attach_exporter=False
+    )
 
     tracing_setup.setup_tracing(_langfuse_config())
 
@@ -245,7 +251,9 @@ def test_setup_rejects_same_key_client_owned_by_another_provider(monkeypatch, ca
         ("", "", "", tracing_setup.DEFAULT_LANGFUSE_BASE_URL),
     ],
 )
-def test_langfuse_base_url_precedence(monkeypatch, explicit, base_env, legacy_env, expected):
+def test_langfuse_base_url_precedence(
+    monkeypatch, explicit, base_env, legacy_env, expected
+):
     if base_env:
         monkeypatch.setenv("LANGFUSE_BASE_URL", base_env)
     if legacy_env:
@@ -280,7 +288,9 @@ def test_processor_normalizes_agent_and_llm_metadata():
                 executor=SimpleNamespace(vision=False),
                 fast_agent=SimpleNamespace(vision=True),
             ),
-            device=SimpleNamespace(platform="android", serial="emulator", use_tcp=False),
+            device=SimpleNamespace(
+                platform="android", serial="emulator", use_tcp=False
+            ),
         ),
         output_model=None,
         fast_agent_llm=LLM(),
@@ -322,7 +332,9 @@ class _CollectingExporter(SpanExporter):
         pass
 
 
-@pytest.mark.parametrize("span_name", ["droidrun.screenshot", "LLM.achat", "LLM.acomplete"])
+@pytest.mark.parametrize(
+    "span_name", ["droidrun.screenshot", "LLM.achat", "LLM.acomplete"]
+)
 def test_public_v4_client_exports_custom_span_once_and_uploads_native_media(
     monkeypatch,
     span_name,
@@ -397,7 +409,9 @@ def test_public_v4_client_exports_custom_span_once_and_uploads_native_media(
         assert len(media_jobs) == 1
         assert media_jobs[0]["content_bytes"] == b"png-bytes"
         assert media_jobs[0]["media_id"] in attrs[media_field]
-        assert media_jobs[0]["observation_id"] == format(exporter.spans[0].context.span_id, "016x")
+        assert media_jobs[0]["observation_id"] == format(
+            exporter.spans[0].context.span_id, "016x"
+        )
         original = before.get_finished_spans()[0]
         assert after.get_finished_spans()[0] is original
         assert original.attributes == started_attrs
@@ -473,7 +487,9 @@ def test_snapshot_preserves_span_metadata_and_dropped_counts():
         with tracer.start_as_current_span("parent") as parent:
             links = [trace.Link(parent.get_span_context()) for _ in range(2)]
             with tracer.start_as_current_span("child", links=links) as span:
-                span.set_attributes({"dropped": "yes", "kept": "yes", "output.value": "result"})
+                span.set_attributes(
+                    {"dropped": "yes", "kept": "yes", "output.value": "result"}
+                )
                 span.add_event("dropped-event")
                 span.add_event("kept-event", {"event-key": "value"})
                 span.set_status(trace.Status(trace.StatusCode.ERROR, "test-status"))
@@ -585,7 +601,9 @@ def test_native_image_size_and_error_handling(monkeypatch, caplog):
 
 
 @pytest.mark.parametrize("nested", [False, True])
-def test_rejected_image_bytes_are_not_restored_to_observation_attributes(monkeypatch, nested):
+def test_rejected_image_bytes_are_not_restored_to_observation_attributes(
+    monkeypatch, nested
+):
     monkeypatch.setattr(langfuse_processor, "MAX_IMAGE_SIZE_KB", 0)
     encoded = base64.b64encode(b"oversized-image").decode()
     message = {
@@ -620,7 +638,9 @@ def test_rejected_serialized_content_media_is_removed(monkeypatch):
                         "content": [
                             {
                                 "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{encoded}"
+                                },
                             }
                         ],
                     }
@@ -680,7 +700,9 @@ def test_mixed_serialized_content_preserves_text_and_removes_oversized_media(
 
 
 def test_malformed_base64_serialized_media_is_removed(caplog):
-    attrs = {"input.value": json.dumps({"url": "data:image/png;base64,not-valid-base64"})}
+    attrs = {
+        "input.value": json.dumps({"url": "data:image/png;base64,not-valid-base64"})
+    }
 
     LangfuseSpanProcessor()._process_field(attrs, "input")
 
@@ -711,7 +733,9 @@ def test_session_context_sets_langfuse_trace_attributes(
     assert get_current() is before
 
 
-@pytest.mark.parametrize("session_id,user_id", [("legacy-session", "legacy-user"), (None, None)])
+@pytest.mark.parametrize(
+    "session_id,user_id", [("legacy-session", "legacy-user"), (None, None)]
+)
 def test_legacy_apply_session_context_remains_importable_and_uses_latest_setup(
     monkeypatch, session_id, user_id
 ):
@@ -722,7 +746,9 @@ def test_legacy_apply_session_context_remains_importable_and_uses_latest_setup(
 
     monkeypatch.setattr(tracing_setup, "_setup_langfuse_tracing", lambda *args: True)
     tracing_setup.setup_tracing(
-        TracingConfig(enabled=True, provider="langfuse", langfuse_session_id="earlier-session")
+        TracingConfig(
+            enabled=True, provider="langfuse", langfuse_session_id="earlier-session"
+        )
     )
     tracing_setup.setup_tracing(
         TracingConfig(
@@ -793,7 +819,9 @@ def test_concurrent_mobile_agents_keep_their_tracing_context(monkeypatch, outcom
                 await barrier.wait()
                 expected = (self._tracing_session_id, self._tracing_user_id)
                 for index in range(3):
-                    with tracer.start_as_current_span(f"{self.shared_state.instruction}-{index}"):
+                    with tracer.start_as_current_span(
+                        f"{self.shared_state.instruction}-{index}"
+                    ):
                         await asyncio.sleep(0)
                         actual = (
                             get_value(SpanAttributes.SESSION_ID),
@@ -906,7 +934,10 @@ def test_concurrent_mobile_agents_keep_their_tracing_metadata(monkeypatch):
                     await asyncio.sleep(0)
                     current = langfuse_processor._current_agent.get()
                     assert current is self
-                    assert await asyncio.to_thread(langfuse_processor._current_agent.get) is self
+                    assert (
+                        await asyncio.to_thread(langfuse_processor._current_agent.get)
+                        is self
+                    )
                     name = self.shared_state.instruction
                     observations[name] = current.shared_state.instruction
                     span.set_attribute("test.agent", name)
@@ -952,7 +983,8 @@ def test_mobile_agent_restores_context_if_workflow_start_fails(monkeypatch):
     monkeypatch.setattr(tracing_setup, "_tracing_initialized", True)
     monkeypatch.setattr(tracing_setup, "_tracing_provider", "langfuse")
     agent = MobileAgent(
-        "Test context cleanup", config=MobileConfig(agent=AgentConfig(name="context-test-agent"))
+        "Test context cleanup",
+        config=MobileConfig(agent=AgentConfig(name="context-test-agent")),
     )
     monkeypatch.setattr(Workflow, "run", Mock(side_effect=RuntimeError("cannot start")))
     before = get_current()
@@ -965,7 +997,9 @@ def test_mobile_agent_restores_context_if_workflow_start_fails(monkeypatch):
 
 
 @pytest.mark.parametrize("method", ["get_state", "get_final_state"])
-def test_android_state_processing_runs_in_thread_with_unchanged_output(monkeypatch, method):
+def test_android_state_processing_runs_in_thread_with_unchanged_output(
+    monkeypatch, method
+):
     from mobilerun.tools.filters import ConciseFilter
     from mobilerun.tools.formatters import IndexedFormatter
     from mobilerun.tools.ui.provider import AndroidStateProvider
@@ -977,13 +1011,21 @@ def test_android_state_processing_runs_in_thread_with_unchanged_output(monkeypat
             "children": [
                 {
                     "text": "Wi-Fi",
-                    "boundsInScreen": {"left": 10, "top": 20, "right": 200, "bottom": 100},
+                    "boundsInScreen": {
+                        "left": 10,
+                        "top": 20,
+                        "right": 200,
+                        "bottom": 100,
+                    },
                     "children": None,
                 }
             ],
         },
         "device_context": {"screen_bounds": {"width": 1080, "height": 2400}},
-        "phone_state": {"packageName": "com.android.settings", "currentApp": "Settings"},
+        "phone_state": {
+            "packageName": "com.android.settings",
+            "currentApp": "Settings",
+        },
     }
     driver = SimpleNamespace(get_ui_tree=AsyncMock(side_effect=lambda: deepcopy(data)))
     provider = AndroidStateProvider(
@@ -1006,7 +1048,9 @@ def test_android_state_processing_runs_in_thread_with_unchanged_output(monkeypat
 
 @pytest.mark.parametrize("method", ["get_state", "get_final_state"])
 @pytest.mark.parametrize("cancelled", [False, True], ids=["overlapping", "cancelled"])
-def test_android_state_workers_cannot_corrupt_other_observations(monkeypatch, method, cancelled):
+def test_android_state_workers_cannot_corrupt_other_observations(
+    monkeypatch, method, cancelled
+):
     from mobilerun.tools.filters import ConciseFilter
     from mobilerun.tools.formatters import IndexedFormatter
     from mobilerun.tools.ui.provider import AndroidStateProvider
@@ -1021,11 +1065,21 @@ def test_android_state_workers_cannot_corrupt_other_observations(monkeypatch, me
         return {
             "a11y_tree": {
                 "text": "Settings",
-                "boundsInScreen": {"left": 0, "top": 0, "right": width, "bottom": height},
+                "boundsInScreen": {
+                    "left": 0,
+                    "top": 0,
+                    "right": width,
+                    "bottom": height,
+                },
                 "children": [
                     {
                         "text": "Wi-Fi",
-                        "boundsInScreen": {"left": 0, "top": 0, "right": 1000, "bottom": 1000},
+                        "boundsInScreen": {
+                            "left": 0,
+                            "top": 0,
+                            "right": 1000,
+                            "bottom": 1000,
+                        },
                     }
                 ],
             },
@@ -1099,7 +1153,9 @@ def test_android_state_workers_cannot_corrupt_other_observations(monkeypatch, me
     async def exercise():
         first = asyncio.create_task(getattr(provider, method)())
         try:
-            assert await asyncio.to_thread(entered.wait, 5), "first worker did not pause"
+            assert await asyncio.to_thread(
+                entered.wait, 5
+            ), "first worker did not pause"
             if cancelled:
                 first.cancel()
                 with pytest.raises(asyncio.CancelledError):
@@ -1146,7 +1202,9 @@ def test_android_state_workers_cannot_corrupt_other_observations(monkeypatch, me
     ],
     ids=["pixel-grid", "normalized", "legacy", "unchanged"],
 )
-def test_async_screenshot_resize_preserves_output_and_offloads_work(monkeypatch, attributes):
+def test_async_screenshot_resize_preserves_output_and_offloads_work(
+    monkeypatch, attributes
+):
     from PIL import Image
 
     from mobilerun.tools.ui import provider as module
@@ -1180,7 +1238,9 @@ def test_async_screenshot_resize_preserves_output_and_offloads_work(monkeypatch,
     actual = asyncio.run(module.resize_model_screenshot_async(provider, screenshot))
     assert actual == expected
     if should_resize:
-        assert worker_threads and all(thread != loop_thread for thread in worker_threads)
+        assert worker_threads and all(
+            thread != loop_thread for thread in worker_threads
+        )
     else:
         assert actual is screenshot
         assert not worker_threads
