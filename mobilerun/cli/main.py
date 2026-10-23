@@ -39,6 +39,8 @@ from mobilerun import MobileAgent, ResultEvent
 from mobilerun.agent.external import list_agents
 from mobilerun.agent.utils.android_device import (
     AndroidDeviceSelectionError,
+    create_android_portal_http_driver,
+    is_portal_http_url,
     resolve_android_serial,
 )
 from mobilerun.agent.utils.errors import describe_error
@@ -359,7 +361,7 @@ async def _cleanup_android_keyboard(
 
     # Without a selected device the keyboard was never enabled.
     serial = serial or config.device.serial
-    if not serial:
+    if not serial or is_portal_http_url(serial):
         return
 
     try:
@@ -475,7 +477,12 @@ except Exception:
 @cli.command()
 @click.argument("command", type=str)
 @click.option("--config", "-c", help="Path to custom config file", default=None)
-@click.option("--device", "-d", help="Device serial number or IP address", default=None)
+@click.option(
+    "--device",
+    "-d",
+    help="Device serial number, IP address, or Portal HTTP URL",
+    default=None,
+)
 @click.option(
     "--agent",
     "-a",
@@ -1031,7 +1038,12 @@ async def setup(
 
 
 @cli.command()
-@click.option("--device", "-d", help="Device serial number or IP address", default=None)
+@click.option(
+    "--device",
+    "-d",
+    help="Device serial number, IP address, or Portal HTTP URL",
+    default=None,
+)
 @click.option(
     "--tcp/--no-tcp",
     default=None,
@@ -1046,6 +1058,17 @@ async def ping(device: str | None, tcp: bool | None, debug: bool | None):
     use_tcp_mode = tcp if tcp is not None else False
 
     try:
+        if is_portal_http_url(device):
+            token = ConfigLoader.load(None).device.resolve_auth_token()
+            driver = create_android_portal_http_driver(device, token)
+            await driver.connect()
+            await driver.get_ui_tree()
+            console.print(
+                "[bold green]Portal HTTP is reachable and serving the UI tree. "
+                "You're good to go![/]"
+            )
+            return
+
         device_obj = await adb.device(device)
         if not device_obj:
             console.print(f"[bold red]Error:[/] Could not find device {device}")

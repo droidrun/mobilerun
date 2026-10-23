@@ -59,7 +59,11 @@ from mobilerun.agent.manager import ManagerAgent, StatelessManagerAgent
 from mobilerun.agent.manager.prompts import ManagerResponseValidationError
 from mobilerun.agent.oneflows.structured_output_agent import StructuredOutputAgent
 from mobilerun.agent.trajectory import TrajectoryWriter
-from mobilerun.agent.utils.android_device import resolve_android_serial
+from mobilerun.agent.utils.android_device import (
+    create_android_portal_http_driver,
+    is_portal_http_url,
+    resolve_android_serial,
+)
 from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.llm_loader import (
     load_agent_llms,
@@ -557,6 +561,11 @@ class MobileAgent(Workflow):
 
             # Resolve device serial and get raw AdbDevice
             device_serial = self.resolved_device_config.serial
+            if is_portal_http_url(device_serial):
+                raise ValueError(
+                    "External agents need an ADB device; a Portal HTTP URL is "
+                    "not supported."
+                )
             if device_serial is None:
                 device_serial = await resolve_android_serial()
                 logger.info(f"📱 Using device: {device_serial}")
@@ -678,6 +687,14 @@ class MobileAgent(Workflow):
             driver = await create_ios_driver(
                 ios_url,
                 token=self.resolved_device_config.resolve_auth_token(),
+            )
+            await driver.connect()
+        elif is_portal_http_url(self.resolved_device_config.serial):
+            # Portal HTTP talks to the app directly: no ADB serial, auto-setup,
+            # or keyboard cleanup.
+            driver = create_android_portal_http_driver(
+                self.resolved_device_config.serial,
+                self.resolved_device_config.resolve_auth_token(),
             )
             await driver.connect()
         else:
@@ -844,7 +861,11 @@ class MobileAgent(Workflow):
             self.executor_agent.action_ctx = self.action_ctx
 
         # ── 6. Fetch device date once ─────────────────────────────────
-        self.shared_state.device_date = await driver.get_date()
+        try:
+            self.shared_state.device_date = await driver.get_date()
+        except NotImplementedError:
+            # Optional prompt context; older Portal HTTP drivers have no date.
+            self.shared_state.device_date = ""
 
         # ── 7. Telemetry init event ───────────────────────────────────
         capture(

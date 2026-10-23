@@ -26,6 +26,8 @@ from rich.console import Console
 
 from mobilerun.agent.utils.android_device import (
     AndroidDeviceSelectionError,
+    create_android_portal_http_driver,
+    is_portal_http_url,
     resolve_android_serial,
 )
 from mobilerun.agent.utils.portal_setup import portal_version_kwargs
@@ -88,7 +90,7 @@ def device_options(f):
     f = click.option(
         "--device",
         "-d",
-        help="Device serial/IP (local) or cloud device UUID "
+        help="Device serial/IP or Portal HTTP URL (local), or cloud device UUID "
         "(auto-detected when authenticated)",
         default=None,
     )(f)
@@ -181,6 +183,16 @@ async def _create_driver(
         return driver, True
 
     serial = config.device.serial
+    if is_portal_http_url(serial):
+        try:
+            driver = create_android_portal_http_driver(
+                serial, config.device.resolve_auth_token()
+            )
+        except ValueError as e:
+            raise click.ClickException(str(e)) from None
+        await driver.connect()
+        return driver, False
+
     if serial is None:
         try:
             serial = await resolve_android_serial()

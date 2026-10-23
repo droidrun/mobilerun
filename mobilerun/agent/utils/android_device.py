@@ -3,10 +3,28 @@
 import os
 
 from async_adbutils import adb
+from mobilerun_core_local.driver.android import AndroidPortalHttpDriver
 
 
 class AndroidDeviceSelectionError(ValueError):
     """No single Android device could be selected."""
+
+
+def is_portal_http_url(device: str | None) -> bool:
+    """True when ``device`` is a Portal HTTP base URL rather than an ADB serial."""
+    return bool(device) and device.lower().startswith(("http://", "https://"))
+
+
+def create_android_portal_http_driver(
+    url: str, token: str | None
+) -> AndroidPortalHttpDriver:
+    """Return an unconnected driver that reaches Portal over HTTP, without ADB."""
+    if not token:
+        raise ValueError(
+            "Android Portal HTTP needs the Portal auth token. Copy it from the "
+            "Portal app and set MOBILERUN_DEVICE_TOKEN or device.auth_token."
+        )
+    return AndroidPortalHttpDriver(url, token)
 
 
 async def resolve_android_serial(serial: str | None = None) -> str:

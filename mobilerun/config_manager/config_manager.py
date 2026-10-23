@@ -173,9 +173,10 @@ class DeviceConfig:
     platform: str = "android"  # "android" or "ios"
     portal_mode: Literal["auto", "required", "disabled"] = "auto"
     auto_setup: bool = True  # auto-install/fix portal before each run
-    # Bearer token for portal-HTTP device URLs (a mobilerun-ios --local server
-    # started with --local-token). Loopback servers need no token. The
-    # MOBILERUN_DEVICE_TOKEN env var overrides this value.
+    # Bearer token for portal-HTTP device URLs: the Android Portal app's token
+    # (always required) or a mobilerun-ios --local server's --local-token
+    # (loopback servers need none). The MOBILERUN_DEVICE_TOKEN env var
+    # overrides this value.
     auth_token: Optional[str] = None
 
     def resolve_auth_token(self) -> Optional[str]:

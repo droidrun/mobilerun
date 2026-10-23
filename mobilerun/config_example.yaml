@@ -126,7 +126,8 @@ llm_profiles:
 
 # === Device Settings ===
 device:
-  # Default device serial (null = auto-detect)
+  # Default device serial (null = auto-detect). An Android http(s):// Portal URL
+  # connects over Portal HTTP without ADB (needs auth_token).
   serial: null
   # Optional backend override. null = platform default, visual-remote = compatible screenshot/action server
   control_backend: null
@@ -141,8 +142,9 @@ device:
   # Android only: auto-install/update Portal APK and enable accessibility before each run.
   # iOS requires a running iOS Portal URL or discovery through iproxy.
   auto_setup: true
-  # Bearer token for portal-HTTP device URLs (e.g. a `mobilerun-ios --local`
-  # server started with --local-token). Loopback servers need no token.
+  # Bearer token for portal-HTTP device URLs: the token shown in the Android
+  # Portal app (always required), or a `mobilerun-ios --local` server's
+  # --local-token (loopback servers need none).
   # The MOBILERUN_DEVICE_TOKEN env var overrides this value.
   auth_token: null
 
