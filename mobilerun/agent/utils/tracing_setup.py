@@ -87,8 +87,20 @@ def _check_phoenix_reachable(endpoint: str, timeout: float = 3.0) -> bool:
 
 def _setup_phoenix_tracing() -> bool:
     """Set up Arize Phoenix tracing. Returns True if successful."""
+    endpoint = os.getenv("PHOENIX_URL", "http://0.0.0.0:6006")
+    # The handler imports its OpenTelemetry dependencies lazily, so a broken
+    # install can surface while creating it as well as on import.
     try:
         from mobilerun.telemetry.phoenix import arize_phoenix_callback_handler
+
+        if not _check_phoenix_reachable(endpoint):
+            logger.warning(
+                f"⚠️  Phoenix server is not reachable at {endpoint}. "
+                "Tracing will be disabled for this session."
+            )
+            return False
+
+        handler = arize_phoenix_callback_handler()
     except ImportError:
         logger.warning(
             "⚠️  Phoenix tracing dependencies are missing.\n"
@@ -98,15 +110,6 @@ def _setup_phoenix_tracing() -> bool:
         )
         return False
 
-    endpoint = os.getenv("PHOENIX_URL", "http://0.0.0.0:6006")
-    if not _check_phoenix_reachable(endpoint):
-        logger.warning(
-            f"⚠️  Phoenix server is not reachable at {endpoint}. "
-            "Tracing will be disabled for this session."
-        )
-        return False
-
-    handler = arize_phoenix_callback_handler()
     llama_index.core.global_handler = handler
     logger.debug("🔍 Arize Phoenix tracing enabled globally")
     return True
