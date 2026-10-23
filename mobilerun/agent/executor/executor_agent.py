@@ -32,8 +32,7 @@ from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.config_manager.config_manager import AgentConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
 from mobilerun.tools.ui.provider import (
-    resize_model_screenshot_with_grid,
-    should_resize_model_screenshot,
+    resize_model_screenshot_async,
 )
 
 if TYPE_CHECKING:
@@ -141,10 +140,9 @@ class ExecutorAgent(Workflow):
         if self.vision:
             screenshot = self.shared_state.screenshot
             if screenshot is not None:
-                if should_resize_model_screenshot(self.action_ctx.state_provider):
-                    screenshot = resize_model_screenshot_with_grid(
-                        self.action_ctx.state_provider, screenshot
-                    )
+                screenshot = await resize_model_screenshot_async(
+                    self.action_ctx.state_provider, screenshot
+                )
                 messages[0].blocks.append(ImageBlock(image=screenshot))
                 logger.debug("📸 Using screenshot for Executor")
             else:
