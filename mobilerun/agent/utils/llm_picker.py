@@ -1,7 +1,7 @@
 import inspect
 import logging
 from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from llama_index.core.base.llms.types import (
     ChatMessage,
@@ -255,6 +255,8 @@ def _load_openai_responses(*, grok: bool = False, **kwargs: Any) -> LLM:
     _patch_responses_output_parser(OpenAIResponses)
 
     class MobilerunOpenAIResponses(OpenAIResponses):
+        supports_native_tool_calls: ClassVar[bool] = True
+
         @staticmethod
         def _validate_gpt6_reasoning(model: str, reasoning: object) -> None:
             if reasoning is None:

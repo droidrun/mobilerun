@@ -21,6 +21,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("mobilerun")
 
+_JSON_SCHEMA_TYPES = {"string", "number", "integer", "boolean", "array", "object"}
+
+
+def _json_schema_for_type(type_name: str) -> Dict[str, Any]:
+    """Map a registry parameter type to a JSON Schema fragment."""
+    if type_name in ("list", "array"):
+        return {"type": "array", "items": {}}
+    if type_name in _JSON_SCHEMA_TYPES:
+        return {"type": type_name}
+    # Unknown types (e.g. "any") accept any JSON value.
+    return {}
+
 
 @dataclass
 class ToolEntry:
@@ -202,6 +214,39 @@ class ToolRegistry:
             lines.append(f"<function>{self._spec_to_json(name, entry)}</function>")
         lines.append("</functions>")
         return "\n".join(lines)
+
+    def get_function_tool_specs(
+        self, exclude: Optional[Set[str]] = None
+    ) -> list[Dict[str, Any]]:
+        """Build OpenAI Responses function tools for native tool calling."""
+        exclude = exclude or set()
+        specs = []
+        for name, entry in self.tools.items():
+            if name in exclude:
+                continue
+            properties = {}
+            required = []
+            for param_name, param_info in entry.params.items():
+                schema = _json_schema_for_type(param_info.get("type", "string"))
+                if param_info.get("description"):
+                    schema["description"] = param_info["description"]
+                properties[param_name] = schema
+                if param_info.get("required", True):
+                    required.append(param_name)
+            specs.append(
+                {
+                    "type": "function",
+                    "name": name,
+                    "description": entry.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                    "strict": False,
+                }
+            )
+        return specs
 
     def get_tool_descriptions_text(self, exclude: Optional[Set[str]] = None) -> str:
         """Build text tool descriptions for executor prompts."""

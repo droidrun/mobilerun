@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer as HTTPServer
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Any, ClassVar, Dict, Literal, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
@@ -39,6 +39,8 @@ from llama_index.core.base.llms.types import (
     ChatResponseGen,
     LLMMetadata,
     MessageRole,
+    TextBlock,
+    ToolCallBlock,
 )
 from llama_index.core.types import PydanticProgramMode
 from llama_index.llms.openai import OpenAI
@@ -606,6 +608,8 @@ class OpenAIOAuthSessionManager:
 class OpenAIOAuth(OpenAI):
     """OpenAI LLM backed by ChatGPT OAuth refresh/access tokens."""
 
+    supports_native_tool_calls: ClassVar[bool] = True
+
     reasoning_effort: Optional[
         Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
     ] = None
@@ -1137,11 +1141,15 @@ class OpenAIOAuth(OpenAI):
             )
         return merged
 
-    def _collect_stream_text_sync(self, events: Any) -> tuple[str, Any]:
+    def _collect_stream_text_sync(
+        self, events: Any
+    ) -> tuple[str, Any, list[ToolCallBlock]]:
         text_parts: list[str] = []
         final_response: Any = None
+        tool_calls: list[ToolCallBlock] = []
         try:
             for event in events:
+                tool_calls.extend(self._done_function_calls(event))
                 event_type = getattr(event, "type", "")
                 if event_type == "response.output_text.delta":
                     delta = getattr(event, "delta", None)
@@ -1156,20 +1164,24 @@ class OpenAIOAuth(OpenAI):
 
         collected = "".join(text_parts)
         if collected:
-            return collected, final_response
+            return collected, final_response, tool_calls
 
         if final_response is not None:
             final_text = getattr(final_response, "output_text", None)
             if isinstance(final_text, str) and final_text:
-                return final_text, final_response
+                return final_text, final_response, tool_calls
 
-        return collected, final_response
+        return collected, final_response, tool_calls
 
-    async def _collect_stream_text_async(self, events: Any) -> tuple[str, Any]:
+    async def _collect_stream_text_async(
+        self, events: Any
+    ) -> tuple[str, Any, list[ToolCallBlock]]:
         text_parts: list[str] = []
         final_response: Any = None
+        tool_calls: list[ToolCallBlock] = []
         try:
             async for event in events:
+                tool_calls.extend(self._done_function_calls(event))
                 event_type = getattr(event, "type", "")
                 if event_type == "response.output_text.delta":
                     delta = getattr(event, "delta", None)
@@ -1182,14 +1194,14 @@ class OpenAIOAuth(OpenAI):
 
         collected = "".join(text_parts)
         if collected:
-            return collected, final_response
+            return collected, final_response, tool_calls
 
         if final_response is not None:
             final_text = getattr(final_response, "output_text", None)
             if isinstance(final_text, str) and final_text:
-                return final_text, final_response
+                return final_text, final_response, tool_calls
 
-        return collected, final_response
+        return collected, final_response, tool_calls
 
     @staticmethod
     def _is_not_found_error(exc: Exception) -> bool:
@@ -1214,10 +1226,50 @@ class OpenAIOAuth(OpenAI):
             "store": False,
             "stream": True,
         }
-        for key in ("reasoning", "include", "service_tier", "text"):
+        for key in (
+            "reasoning",
+            "include",
+            "service_tier",
+            "text",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+        ):
             if key in kwargs and kwargs[key] is not None:
                 request_kwargs[key] = kwargs[key]
         return request_kwargs
+
+    @staticmethod
+    def _function_call_blocks(items: Any) -> list[ToolCallBlock]:
+        return [
+            ToolCallBlock(
+                tool_name=item.name,
+                tool_call_id=item.call_id,
+                tool_kwargs=item.arguments,
+            )
+            for item in items or []
+            if getattr(item, "type", None) == "function_call"
+        ]
+
+    @classmethod
+    def _response_message(
+        cls, text: str, response: Any, tool_calls: list[ToolCallBlock]
+    ) -> ChatMessage:
+        # Codex may omit output from the completed event, so calls are
+        # collected from output_item.done events first.
+        tool_calls = tool_calls or cls._function_call_blocks(
+            getattr(response, "output", None)
+        )
+        if not tool_calls:
+            return ChatMessage(role=MessageRole.ASSISTANT, content=text)
+        blocks = [TextBlock(text=text)] if text else []
+        return ChatMessage(role=MessageRole.ASSISTANT, blocks=[*blocks, *tool_calls])
+
+    @classmethod
+    def _done_function_calls(cls, event: Any) -> list[ToolCallBlock]:
+        if getattr(event, "type", "") != "response.output_item.done":
+            return []
+        return cls._function_call_blocks([getattr(event, "item", None)])
 
     def _should_fall_back_to_backend_api(self, exc: Exception) -> bool:
         return self._responses_api_base == DEFAULT_CODEX_API_BASE and (
@@ -1263,18 +1315,18 @@ class OpenAIOAuth(OpenAI):
 
         try:
             events = client.responses.create(input=payload, **request_kwargs)
-            text, response = self._collect_stream_text_sync(events)
+            text, response, tool_calls = self._collect_stream_text_sync(events)
         except Exception as exc:
             if self._should_fall_back_to_backend_api(exc):
                 self._use_backend_api_base()
                 client = self._get_client()
                 events = client.responses.create(input=payload, **request_kwargs)
-                text, response = self._collect_stream_text_sync(events)
+                text, response, tool_calls = self._collect_stream_text_sync(events)
             else:
                 raise
 
         return ChatResponse(
-            message=ChatMessage(role=MessageRole.ASSISTANT, content=text),
+            message=self._response_message(text, response, tool_calls),
             raw=response,
             additional_kwargs={},
         )
@@ -1288,18 +1340,20 @@ class OpenAIOAuth(OpenAI):
 
         try:
             events = await aclient.responses.create(input=payload, **request_kwargs)
-            text, response = await self._collect_stream_text_async(events)
+            text, response, tool_calls = await self._collect_stream_text_async(events)
         except Exception as exc:
             if self._should_fall_back_to_backend_api(exc):
                 self._use_backend_api_base()
                 aclient = self._get_aclient()
                 events = await aclient.responses.create(input=payload, **request_kwargs)
-                text, response = await self._collect_stream_text_async(events)
+                text, response, tool_calls = await self._collect_stream_text_async(
+                    events
+                )
             else:
                 raise
 
         return ChatResponse(
-            message=ChatMessage(role=MessageRole.ASSISTANT, content=text),
+            message=self._response_message(text, response, tool_calls),
             raw=response,
             additional_kwargs={},
         )
@@ -1326,11 +1380,17 @@ class OpenAIOAuth(OpenAI):
 
         def gen() -> ChatResponseGen:
             text = ""
+            tool_calls: list[ToolCallBlock] = []
             try:
                 for event in events:
+                    tool_calls.extend(self._done_function_calls(event))
                     chunk = self._stream_event_chunk(event, text)
                     if chunk is not None:
                         text = chunk.message.content or ""
+                        if getattr(event, "type", "") == "response.completed":
+                            chunk.message = self._response_message(
+                                text, chunk.raw, tool_calls
+                            )
                         yield chunk
             finally:
                 close = getattr(events, "close", None)
@@ -1360,11 +1420,17 @@ class OpenAIOAuth(OpenAI):
 
         async def gen() -> ChatResponseAsyncGen:
             text = ""
+            tool_calls: list[ToolCallBlock] = []
             try:
                 async for event in events:
+                    tool_calls.extend(self._done_function_calls(event))
                     chunk = self._stream_event_chunk(event, text)
                     if chunk is not None:
                         text = chunk.message.content or ""
+                        if getattr(event, "type", "") == "response.completed":
+                            chunk.message = self._response_message(
+                                text, chunk.raw, tool_calls
+                            )
                         yield chunk
             finally:
                 await _aclose_events(events)

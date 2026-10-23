@@ -30,6 +30,9 @@ agent:
     # Allow multiple tool calls in a single response when safe
     # Reduces round-trips by combining actions that don't depend on screen changes
     parallel_tools: true
+    # Tool-call protocol: auto (native function calling for OpenAI and xAI models,
+    # XML text for others) or xml (always XML text)
+    tool_calling: auto
     # System prompt path (relative or absolute)
     system_prompt: config/prompts/fast_agent/system.jinja2
     # User prompt path (relative or absolute)

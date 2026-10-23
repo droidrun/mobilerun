@@ -50,6 +50,8 @@ class ToolCall:
     name: str
     parameters: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
+    # Native tool calls carry the provider's id for matching results.
+    call_id: Optional[str] = None
 
 
 class ToolCallParseStatus(str, Enum):

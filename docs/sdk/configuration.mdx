@@ -78,6 +78,7 @@ AgentConfig(
 FastAgentConfig(
     vision=False,                                              # Enable screenshots
     parallel_tools=True,                                       # Encourage multiple tool calls in a single response
+    tool_calling="auto",                                       # auto: native tool calls for OpenAI and xAI models; xml: always XML
     system_prompt="config/prompts/fast_agent/system.jinja2",   # Path to system prompt template
     user_prompt="config/prompts/fast_agent/user.jinja2",       # Path to user prompt template
 )
@@ -492,6 +493,7 @@ agent:
   fast_agent:
     vision: false
     parallel_tools: true
+    tool_calling: auto
     system_prompt: config/prompts/fast_agent/system.jinja2
     user_prompt: config/prompts/fast_agent/user.jinja2
 

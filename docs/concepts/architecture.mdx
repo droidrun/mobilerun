@@ -23,10 +23,10 @@ Goal → Manager (plan) → Executor (action) → Manager (check) → Executor (
 ```
 
 ### Direct Mode (`reasoning=False`)
-FastAgent executes immediately via XML tool-calling without planning overhead. Best for simple tasks.
+FastAgent executes immediately via tool calling without planning overhead. Best for simple tasks.
 
 ```
-Goal → FastAgent (XML tool-calling) → Done
+Goal → FastAgent (tool calling) → Done
 ```
 
 ## Core Agents
@@ -51,7 +51,7 @@ Executes atomic actions for each subgoal. Reasoning mode only.
 **Workflow**: `prepare_context()` → `get_response()` → `process_response()` → `execute()` → `finalize()`
 
 ### FastAgent (Direct Executor)
-Uses XML tool-calling for device interaction. Direct mode only.
+Uses native tool calling for OpenAI and xAI models and XML tool calling for other providers. Direct mode only.
 
 **Location**: `mobilerun/agent/fast_agent/fast_agent.py`
 

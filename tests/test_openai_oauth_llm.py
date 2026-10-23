@@ -727,3 +727,87 @@ def test_oauth_gpt_6_1_sol_rejects_none_effort_locally(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="does not support reasoning effort 'none'"):
         llm._sanitize_reasoning_kwargs({"reasoning": {"effort": "none"}})
+
+
+def _function_call_event(call_id: str, name: str, arguments: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        type="response.output_item.done",
+        item=SimpleNamespace(
+            type="function_call", call_id=call_id, name=name, arguments=arguments
+        ),
+    )
+
+
+_NATIVE_TOOLS = {
+    "tools": [{"type": "function", "name": "click"}],
+    "tool_choice": "required",
+    "parallel_tool_calls": False,
+}
+
+
+def test_achat_forwards_tools_and_returns_function_calls(tmp_path, monkeypatch) -> None:
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-luna")
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        return _AsyncEvents(
+            [
+                *_stream_events("Tapping.")[:-1],
+                _function_call_event("call_1", "click", '{"index": 3}'),
+                _stream_events("Tapping.")[-1],
+            ]
+        )
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(OpenAIOAuth, "_get_aclient", lambda _self: client)
+
+    response = asyncio.run(
+        llm.achat(
+            [ChatMessage(role=MessageRole.USER, content="Tap it.")], **_NATIVE_TOOLS
+        )
+    )
+
+    assert llm.supports_native_tool_calls is True
+    [request] = calls
+    assert {key: request[key] for key in _NATIVE_TOOLS} == _NATIVE_TOOLS
+    assert response.message.content == "Tapping."
+    [call] = [b for b in response.message.blocks if isinstance(b, ToolCallBlock)]
+    assert (call.tool_call_id, call.tool_name, call.tool_kwargs) == (
+        "call_1",
+        "click",
+        '{"index": 3}',
+    )
+
+
+def test_astream_chat_final_chunk_carries_function_calls(tmp_path, monkeypatch) -> None:
+    llm = _streaming_oauth_llm(tmp_path, "gpt-6-luna")
+    final = SimpleNamespace(
+        output_text="",
+        usage=None,
+        output=[
+            SimpleNamespace(
+                type="function_call", call_id="call_2", name="complete", arguments="{}"
+            )
+        ],
+    )
+
+    async def create(**kwargs):
+        return _AsyncEvents(
+            [SimpleNamespace(type="response.completed", response=final)]
+        )
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(OpenAIOAuth, "_get_aclient", lambda _self: client)
+
+    async def run():
+        stream = await llm.astream_chat(
+            [ChatMessage(role=MessageRole.USER, content="Finish.")], **_NATIVE_TOOLS
+        )
+        return [chunk async for chunk in stream]
+
+    chunks = asyncio.run(run())
+
+    [call] = chunks[-1].message.blocks
+    assert isinstance(call, ToolCallBlock)
+    assert call.tool_call_id == "call_2"

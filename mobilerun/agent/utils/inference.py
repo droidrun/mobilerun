@@ -6,6 +6,7 @@ from llama_index.core.base.llms.types import (
     ChatMessage,
     ChatResponse,
     CompletionResponse,
+    ToolCallBlock,
 )
 from llama_index.core.prompts import PromptTemplate
 from pydantic import BaseModel
@@ -37,6 +38,7 @@ async def acall_with_retries(
     timeout: float = 500,
     delay: float = 1.0,
     stream: bool = False,
+    **chat_kwargs,
 ) -> ChatResponse:
     """
     Call LLM with retries and timeout handling.
@@ -48,6 +50,7 @@ async def acall_with_retries(
         timeout: Timeout in seconds for each attempt
         delay: Base delay between retries (multiplied by attempt number)
         stream: If True, stream response chunks to console in real-time
+        chat_kwargs: Extra request arguments, such as native tool definitions
 
     Returns:
         The LLM ChatResponse object
@@ -57,21 +60,23 @@ async def acall_with_retries(
     for attempt in range(1, retries + 1):
         try:
             if stream:
-                response = await _stream_response(llm, messages, timeout)
+                response = await _stream_response(llm, messages, timeout, **chat_kwargs)
             else:
                 response = await asyncio.wait_for(
-                    llm.achat(messages=messages),
+                    llm.achat(messages=messages, **chat_kwargs),
                     timeout=timeout,
                 )
 
-            # Validate response
-            if (
-                response is not None
-                and getattr(response, "message", None) is not None
-                and getattr(response.message, "content", None)
+            # Validate response; a native tool call may have no text.
+            message = getattr(response, "message", None)
+            if message is not None and (
+                getattr(message, "content", None)
+                or any(
+                    isinstance(b, ToolCallBlock) for b in getattr(message, "blocks", [])
+                )
             ):
-                if not stream:
-                    logger.info(f"{response.message.content}")
+                if not stream and message.content:
+                    logger.info(f"{message.content}")
                 return response
             else:
                 logger.warning(f"Attempt {attempt} returned empty content")
@@ -98,7 +103,9 @@ async def acall_with_retries(
     raise ValueError("All attempts returned empty response content")
 
 
-async def _stream_response(llm, messages: list, timeout: float) -> ChatResponse:
+async def _stream_response(
+    llm, messages: list, timeout: float, **chat_kwargs
+) -> ChatResponse:
     """
     Stream LLM response chunks to console and return accumulated response.
 
@@ -115,7 +122,7 @@ async def _stream_response(llm, messages: list, timeout: float) -> ChatResponse:
 
     async def stream_chunks():
         nonlocal content, last_chunk
-        async for chunk in await llm.astream_chat(messages=messages):
+        async for chunk in await llm.astream_chat(messages=messages, **chat_kwargs):
             delta = chunk.delta or ""
             if delta:
                 logger.info(delta, extra={"stream": True})

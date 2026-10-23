@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer as HTTPServer
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, ClassVar, Iterator
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
@@ -710,6 +710,8 @@ class GrokOAuthAuth(httpx.Auth):
 
 class GrokOAuth(OpenAIResponses):
     """LlamaIndex Responses adapter backed only by Mobilerun's xAI OAuth slot."""
+
+    supports_native_tool_calls: ClassVar[bool] = True
 
     @classmethod
     def class_name(cls) -> str:

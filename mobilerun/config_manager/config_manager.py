@@ -88,6 +88,9 @@ class LLMProfile:
 class FastAgentConfig:
     vision: bool = False
     parallel_tools: bool = True
+    # "auto" uses native tool calling when the LLM supports it; "xml" always
+    # uses the <function_calls> text protocol.
+    tool_calling: str = "auto"
     system_prompt: str = "config/prompts/fast_agent/system.jinja2"
     user_prompt: str = "config/prompts/fast_agent/user.jinja2"
 

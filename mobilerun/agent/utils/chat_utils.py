@@ -86,9 +86,17 @@ def limit_history(
 
     if preserve_first and messages:
         first = messages[0]
-        tail = messages[-max_messages + 1 :]
+        tail = _drop_orphaned_tool_results(messages[-max_messages + 1 :])
         if first not in tail:
             return [first] + tail
         return tail
 
-    return messages[-max_messages:]
+    return _drop_orphaned_tool_results(messages[-max_messages:])
+
+
+def _drop_orphaned_tool_results(messages: list[ChatMessage]) -> list[ChatMessage]:
+    """Drop leading tool results whose tool call was trimmed away."""
+    start = 0
+    while start < len(messages) and messages[start].role == "tool":
+        start += 1
+    return messages[start:]
