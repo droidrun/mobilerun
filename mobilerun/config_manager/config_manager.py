@@ -85,6 +85,41 @@ class LLMProfile:
 
 
 @dataclass
+class DecisionProfile:
+    """Native decision model profile, parallel to LLMProfile."""
+
+    provider: str = "TypeSafe"
+    model: str | None = None
+    api_key_source: Literal["auto", "env", "file"] = "auto"
+    base_url: str | None = None
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    def to_load_decision_kwargs(self) -> Dict[str, Any]:
+        """Convert a profile to native decision-provider constructor options."""
+        result = {}
+        if self.model is not None:
+            result["model"] = self.model
+        if self.base_url:
+            result["base_url"] = self.base_url
+        result.update(self.kwargs)
+        if self.provider.strip().lower() == "typesafe" and "api_key" not in result:
+            sources = load_env_key_sources()["typesafe"]
+            if self.api_key_source == "env":
+                api_key = sources.shell
+            elif self.api_key_source == "file":
+                api_key = sources.saved
+            else:
+                api_key = sources.saved or sources.shell
+            if not api_key:
+                raise ValueError(
+                    "No API key found for provider 'TypeSafe'. Set TYPESAFE_API_KEY "
+                    "or save a key in the auth-profiles file."
+                )
+            result["api_key"] = api_key
+        return result
+
+
+@dataclass
 class FastAgentConfig:
     vision: bool = False
     parallel_tools: bool = True
@@ -108,6 +143,20 @@ class ManagerConfig:
 class ExecutorConfig:
     vision: bool = False
     system_prompt: str = "config/prompts/executor/system.jinja2"
+
+
+@dataclass
+class DecisionConfig:
+    system_prompt: str = "config/prompts/decision/system.jinja2"
+
+
+@dataclass
+class DelegationConfig:
+    """Named LLM/decision profiles for an explicit, model-chosen handoff."""
+
+    primary: str | None = None  # Defaults to executor or fast_agent for the active mode.
+    delegate: str = "delegate"
+    description: str = "Ask the delegate model to choose the next action when you need its capabilities."
 
 
 @dataclass
@@ -141,6 +190,8 @@ class AgentConfig:
     manager: ManagerConfig = field(default_factory=ManagerConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
     app_cards: AppCardConfig = field(default_factory=AppCardConfig)
+    decision: DecisionConfig = field(default_factory=DecisionConfig)
+    delegation: DelegationConfig | None = None
 
     def get_fast_agent_system_prompt_path(self) -> str:
         return str(PathResolver.resolve(self.fast_agent.system_prompt, must_exist=True))
@@ -163,6 +214,9 @@ class AgentConfig:
 
     def get_executor_system_prompt_path(self) -> str:
         return str(PathResolver.resolve(self.executor.system_prompt, must_exist=True))
+
+    def get_decision_system_prompt_path(self) -> str:
+        return str(PathResolver.resolve(self.decision.system_prompt, must_exist=True))
 
 
 @dataclass
@@ -259,6 +313,7 @@ class MobileConfig:
     credentials: CredentialsConfig = field(default_factory=CredentialsConfig)
     external_agents: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    decision_profiles: Dict[str, DecisionProfile] = field(default_factory=dict)
 
     def __post_init__(self):
         """Ensure default profiles exist."""
@@ -371,6 +426,11 @@ class MobileConfig:
             manager=manager_config,
             executor=executor_config,
             app_cards=app_cards_config,
+            decision=DecisionConfig(**(agent_data.get("decision") or {})),
+            delegation=(
+                DelegationConfig(**agent_data["delegation"])
+                if agent_data.get("delegation") is not None else None
+            ),
         )
 
         # External agents config - just pass through as-is
@@ -408,6 +468,10 @@ class MobileConfig:
             credentials=CredentialsConfig(**(data.get("credentials") or {})),
             external_agents=external_agents,
             mcp=mcp_config,
+            decision_profiles={
+                name: DecisionProfile(**profile)
+                for name, profile in (data.get("decision_profiles") or {}).items()
+            },
         )
 
     @classmethod

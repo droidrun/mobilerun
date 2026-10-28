@@ -63,6 +63,9 @@ def test_sdk_debug_config_logs_app_card_loading(
     records = _Records()
     mobilerun_logger.addHandler(records)
     monkeypatch.setattr(agent_module, "setup_tracing", lambda *a, **kw: None)
+    monkeypatch.setattr(agent_module, "load_agent_llms", lambda **kw: {
+        name: MockLLM() for name in ("manager", "executor", "app_opener")
+    })
 
     agent_module.MobileAgent(
         "Open the app",
@@ -73,7 +76,6 @@ def test_sdk_debug_config_logs_app_card_loading(
             logging=LoggingConfig(debug=True),
             telemetry=TelemetryConfig(enabled=False),
         ),
-        llms=MockLLM(),
     )
 
     assert "Loaded android/app_cards.json with 1 entries" in records.messages

@@ -13,6 +13,7 @@ import warnings
 from contextlib import nullcontext
 from functools import wraps
 from pathlib import Path
+from typing import Any
 
 import click
 from async_adbutils import adb
@@ -37,6 +38,7 @@ from rich.text import Text
 
 from mobilerun import MobileAgent, ResultEvent
 from mobilerun.agent.external import list_agents
+from mobilerun.agent.selectors import LlamaIndexLLMSelector
 from mobilerun.agent.utils.android_device import (
     AndroidDeviceSelectionError,
     create_android_portal_http_driver,
@@ -276,14 +278,15 @@ async def run_command(
             logger.info("🔍 Tracing enabled")
 
         # Build MobileAgent kwargs for LLM loading
-        droid_agent_kwargs = {"runtype": "cli"}
+        # Constructor options include strings, numeric overrides, and mappings.
+        droid_agent_kwargs: dict[str, Any] = {"runtype": "cli"}
         llm = None
 
         if provider or model:
             assert (
                 provider and model
             ), "Either both provider and model must be provided or none of them"
-            llm_kwargs = {}
+            llm_kwargs: dict[str, Any] = {}
             if temperature is not None:
                 llm_kwargs["temperature"] = temperature
             if base_url is not None:
@@ -298,10 +301,11 @@ async def run_command(
                 droid_agent_kwargs["base_url"] = base_url
             if api_base is not None:
                 droid_agent_kwargs["api_base"] = api_base
+            droid_agent_kwargs.update(kwargs)
 
         droid_agent = MobileAgent(
             goal=command,
-            llms=llm,
+            action_selectors=LlamaIndexLLMSelector(llm) if llm is not None else None,
             config=config,
             timeout=1000,
             **droid_agent_kwargs,

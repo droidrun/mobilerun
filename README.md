@@ -145,6 +145,171 @@ mobilerun run "Open Settings" --steps 30 --debug
 
 Read the full [framework documentation](https://docs.mobilerun.ai/framework/quickstart).
 
+### Custom action selection
+
+ExecutorAgent and FastAgent take an `action_selector`, not an `llm`.
+Legacy `llm=` keyword calls remain supported through `**kwargs`: the LLM is
+wrapped in `LlamaIndexLLMSelector` and a DEBUG deprecation message is logged.
+An explicit `action_selector` takes precedence if both are supplied.
+MobileAgent accepts one selector through `action_selectors=selector`, or
+`action_selectors={"fast_agent": selector, "executor": selector}` for per-role
+overrides. The active role is `fast_agent` without reasoning and
+`executor` with reasoning. Supplied selectors are preserved; missing active roles
+are loaded from config (decision profiles take precedence over LLM profiles).
+Planning and helper LLMs still load from `config.llm_profiles`.
+
+An explicitly supplied `action_selectors=LlamaIndexLLMSelector(llm)` reuses that
+same native LLM for planning, execution, app opening, and structured output,
+matching the previous single-LLM input. Other selectors use config profiles
+for any planning and helper LLMs.
+
+Legacy `MobileAgent(llms=llm)` and `MobileAgent(llms={...}, config=config)`
+remain supported with a deprecation warning. The active action LLM is wrapped
+in a `LlamaIndexLLMSelector`; per-role assignments and config merging are preserved.
+If both are supplied, `action_selectors` takes precedence and a warning reports
+that the legacy `llms` argument was ignored.
+
+```python
+from mobilerun import MobileAgent
+from mobilerun.agent.selectors import (
+    DecisionSelector,
+    FallbackSelector,
+    LlamaIndexLLMSelector,
+)
+
+agent = MobileAgent(
+    "Open settings",
+    config=config,
+    action_selectors={
+        "fast_agent": FallbackSelector(
+            primary=DecisionSelector(decision_model),
+            fallbacks=[LlamaIndexLLMSelector(llm)],
+        ),
+        "executor": DecisionSelector(decision_model),
+    },
+)
+```
+
+`LlamaIndexLLMSelector` uses your native LlamaIndex LLM unchanged. Subclass
+`BaseActionSelector` and implement `async select(request)` to support another model family;
+return `ActionSelection` containing `ToolCall` actions, or `None` to abstain.
+Selectors implement the explicit abstract `ActionSelector` contract:
+`requires_action_llm` controls loading an additional action-role LLM profile,
+`shared_llm` provides an LLM to reuse for planning/helpers, and
+`abstention_reason` supplies the message used when selection returns `None`.
+`requires_action_candidates`, `screenshot_max_side`, and `llms` describe candidate,
+vision-sizing, and telemetry requirements.
+Built-ins inherit `BaseActionSelector`, which defaults to no additional action
+LLM, no shared helper LLM, and the standard abstention message. Custom selectors
+inherit this base for defaults or implement all abstract properties and `select`
+directly on `ActionSelector`. Capabilities are accessed directly, not discovered
+with `getattr` fallbacks.
+Selectors never execute tools. `FallbackSelector` handles abstention, empty
+selections, and configured exceptions before execution, not tool failures.
+Add selectors to `fallbacks` in priority order; the last selector's exceptions
+propagate if the chain is exhausted.
+
+For an explicit, model-chosen handoff instead of an automatic fallback:
+
+```python
+from mobilerun.agent.selectors import DelegatingSelector
+
+agent = MobileAgent(
+    "Find Alice and send a message",
+    action_selectors=DelegatingSelector(
+        primary=DecisionSelector(jev),
+        delegate=LlamaIndexLLMSelector(llm),
+        description="Ask the LLM to choose the next action when text entry or another unsupported action is needed.",
+    ),
+)
+```
+
+The primary can choose a virtual `delegate` action. The second selector receives
+the original observation and selects this step's action; the next step starts
+with the primary again. Reverse the selectors for LLM → Jev delegation. The
+virtual action is never executed by the tool registry and must be selected alone.
+Errors and abstention propagate normally; wrap the chain in `FallbackSelector`
+if automatic recovery is also wanted. Supply `config` when planning/helper LLMs
+are needed; the delegate LLM is not automatically reused for those roles.
+
+The CLI also supports delegation through `agent.delegation` in YAML:
+
+```yaml
+agent:
+  delegation:
+    primary: fast_agent
+    delegate: delegate
+    description: Ask the LLM to generate and type text when needed.
+```
+
+Each name refers to a profile in `decision_profiles` or `llm_profiles`;
+decision profiles take precedence if both have the same name. Omit `primary`
+to use the active `fast_agent`/`executor` role. Omit `delegation` (or set it to
+`null`) to keep the normal single-selector behavior. Explicit selectors,
+including CLI `--provider`/`--model` overrides, take precedence over this config.
+
+`jev-test-delegation.yaml` configures Jev → OpenAI delegation:
+
+```bash
+uv run --extra typesafe --env-file .env mobilerun run \
+  "Check whether a timer is running in Clock. If none is running, write a six-sentence note reminding me to set a timer tomorrow." \
+  --config jev-test-delegation.yaml --device emulator-5554 --steps 30
+```
+
+Decision models implement `async decide(request)` and return
+`Decision(option_index=...)`, using a zero-based index into `request.options`.
+Missing/empty options and invalid indices raise `ValueError`. Providers supply
+deterministic click/long-press candidates; unavailable tools are filtered out.
+Override `StateProvider.get_action_candidates(state)` for other actions or
+parameterized input. The request includes the goal, UI, available tools,
+variables, screenshot, recent history, and persistent memory separately.
+
+For decision-only FastAgent completion, return
+`Decision(success=True, message="Finished")` (or `success=False`); this uses
+the existing `complete` tool and is rejected by ExecutorAgent. A selector-only
+MobileAgent can run without config or an LLM. Named Android app opening and
+structured-output extraction require their helper LLMs. When config is supplied,
+the original LLM-profile loading and dictionary-merging behavior is preserved.
+
+Decision providers can be loaded separately from the workflow:
+
+```python
+from mobilerun.agent.utils.decision_loader import (
+    load_decision_model,
+    register_decision_provider,
+)
+
+# MyDecisionModel implements async decide(request).
+register_decision_provider("my-provider", MyDecisionModel)
+decision_model = load_decision_model("my-provider", model="my-model")
+```
+
+Provider factories receive constructor options unchanged. No decision-provider
+SDK or transport is assumed; register your integration's factory explicitly.
+
+#### Decision-model prompts
+
+Native decision models use `mobilerun/config/prompts/decision/system.jinja2`,
+rendered with the same `PromptLoader` and `PromptResolver` as LLM agents.
+The default prompt describes only selectable action candidates: without a typing
+candidate it avoids search fields, and with swipe candidates it explains scrolling.
+
+Configure a custom template file:
+
+```yaml
+agent:
+  decision:
+    system_prompt: prompts/my_decision_system.jinja2
+```
+
+Or supply an inline Jinja2 template with
+`MobileAgent(..., prompts={"decision_system": "..."})`; inline overrides take
+precedence over the file. Templates receive `goal`, `protocol`, `available_tools`
+(candidate tools plus completion when supported), `registered_tools`, `can_type`,
+`can_scroll`, `can_complete`, `vision`, and `variables`. The rendered instructions
+are passed to decision models as `SelectionRequest.instructions`, including in
+fallback chains. LLM selectors continue using their existing chat prompts.
+
 ## ⚙️ Features
 
 - **CLI:** Run one-off natural language tasks, inspect devices, replay macros, and debug from the terminal.

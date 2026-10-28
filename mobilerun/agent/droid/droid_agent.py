@@ -8,6 +8,7 @@ Architecture:
 """
 
 import asyncio
+import inspect
 import logging
 import os
 import time
@@ -58,19 +59,23 @@ from mobilerun.agent.fast_agent.events import FastAgentOutputEvent
 from mobilerun.agent.manager import ManagerAgent, StatelessManagerAgent
 from mobilerun.agent.manager.prompts import ManagerResponseValidationError
 from mobilerun.agent.oneflows.structured_output_agent import StructuredOutputAgent
+from mobilerun.agent.selectors import (
+    ActionSelector,
+    DecisionSelector,
+    LlamaIndexLLMSelector,
+)
 from mobilerun.agent.trajectory import TrajectoryWriter
 from mobilerun.agent.utils.android_device import (
     create_android_portal_http_driver,
     is_portal_http_url,
     resolve_android_serial,
 )
+from mobilerun.agent.utils.decision_loader import load_agent_decision_models
 from mobilerun.agent.utils.errors import describe_error
-from mobilerun.agent.utils.llm_loader import (
-    load_agent_llms,
-    merge_llms_with_config,
-)
+from mobilerun.agent.utils.llm_loader import load_agent_llms, merge_llms_with_config
 from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
+from mobilerun.agent.utils.selector_loader import load_delegating_selector
 from mobilerun.agent.utils.signatures import build_tool_registry
 from mobilerun.agent.utils.tracing_setup import (
     record_langfuse_screenshot,
@@ -298,7 +303,7 @@ class MobileAgent(Workflow):
         self,
         goal: str,
         config: MobileConfig | None = None,
-        llms: dict[str, LLM] | LLM | None = None,
+        action_selectors: ActionSelector | dict[str, ActionSelector] | None = None,
         custom_tools: dict = None,
         credentials: Union[dict, "CredentialManager", None] = None,
         variables: dict | None = None,
@@ -310,7 +315,48 @@ class MobileAgent(Workflow):
         *args,
         **kwargs,
     ):
+        """Initialize from action selectors or configured profiles.
+
+        action_selectors accepts one shared selector or per-role overrides
+        (fast_agent/executor).
+        Missing active roles are loaded from config without replacing supplied selectors.
+        Legacy llms in kwargs are deprecated and wrapped internally.
+        """
         self._configure_default_logging(debug=bool(config and config.logging.debug))
+        if "action_selector" in kwargs:
+            raise TypeError("Use action_selectors, not action_selector=")
+        if isinstance(action_selectors, dict):
+            for role, selector in action_selectors.items():
+                if not isinstance(selector, ActionSelector):
+                    raise TypeError(f"Action selector for '{role}' must implement ActionSelector")
+        elif action_selectors is not None and not isinstance(action_selectors, ActionSelector):
+            raise TypeError("action_selectors must be a selector or a dictionary of role names to selectors implementing ActionSelector")
+        self.action_selectors: dict[str, ActionSelector] = (
+            dict(action_selectors) if isinstance(action_selectors, dict) else {}
+        )
+        action_role = "executor" if config and config.agent.reasoning else "fast_agent"
+        action_selector = (
+            self.action_selectors.get(action_role)
+            if isinstance(action_selectors, dict) else action_selectors
+        )
+        if "decision_model" in kwargs:
+            raise TypeError("Pass a DecisionSelector via action_selectors, not decision_model=")
+        if "llms" in kwargs:
+            logger.warning(
+                "MobileAgent(llms=...) is deprecated. Use "
+                "action_selectors=LlamaIndexLLMSelector(llm) for action selection "
+                "and config.llm_profiles for planning and helper LLMs."
+            )
+        llms = kwargs.pop("llms", None)
+        if llms is not None and action_selector is not None:
+            logger.warning(
+                "Both llms and action_selectors were supplied; using action_selectors. "
+                "The supplied llms argument was ignored."
+            )
+            llms = None
+        elif action_selector is None and isinstance(llms, LLM):
+            action_selector = LlamaIndexLLMSelector(llms)
+        self.action_selector: ActionSelector | None = action_selector
         self.user_id = kwargs.pop("user_id", None)
         self.runtype = kwargs.pop("runtype", "developer")
         self.shared_state = MobileAgentState(
@@ -356,6 +402,7 @@ class MobileAgent(Workflow):
             credentials=config.credentials if config else CredentialsConfig(),
             external_agents=config.external_agents if config else {},
             mcp=config.mcp if config else MCPConfig(),
+            decision_profiles=config.decision_profiles if config else {},
         )
         self.shared_state.telemetry_config_enabled = self.config.telemetry.enabled
         control_backend = _normalize_control_backend(
@@ -378,7 +425,11 @@ class MobileAgent(Workflow):
         self.action_ctx = None
         self.state_provider = None
 
-        super().__init__(*args, timeout=timeout, **kwargs)
+        workflow_parameters = inspect.signature(Workflow.__init__).parameters
+        workflow_kwargs = {
+            name: value for name, value in kwargs.items() if name in workflow_parameters
+        }
+        super().__init__(*args, timeout=timeout, **workflow_kwargs)
 
         self._tracing_session_id = self.config.tracing.langfuse_session_id
         self._tracing_user_id = self.config.tracing.langfuse_user_id
@@ -387,6 +438,19 @@ class MobileAgent(Workflow):
         # Check if using external agent - skip LLM loading
         _BUILTIN_AGENT_NAMES = {"mobilerun", "droidrun"}
         self._using_external_agent = self.config.agent.name not in _BUILTIN_AGENT_NAMES
+
+        if (
+            not self._using_external_agent
+            and self.action_selector is None
+            and llms is None
+        ):
+            if self.config.agent.delegation is not None:
+                self.action_selector = load_delegating_selector(self.config, **kwargs)
+            else:
+                decision_models = load_agent_decision_models(self.config)
+                role = "executor" if self.config.agent.reasoning else "fast_agent"
+                if role in decision_models:
+                    self.action_selector = DecisionSelector(decision_models[role])
 
         self._stream_screenshots = (
             os.environ.get("MOBILERUN_STREAM_SCREENSHOTS")
@@ -403,7 +467,21 @@ class MobileAgent(Workflow):
         self.mcp_manager = None
 
         # Only load LLMs for native Mobilerun agents
-        if not self._using_external_agent:
+        llm_loading_kwargs = dict(kwargs)
+        if (
+            (self.action_selector is not None and not self.action_selector.requires_action_llm)
+            or (isinstance(action_selectors, dict) and action_selector is not None)
+        ):
+            # The selector supplies actions; only planning/helper LLMs are needed.
+            llm_loading_kwargs["load_action_llm"] = False
+        if llms is None and not isinstance(action_selectors, dict):
+            llms = action_selector.shared_llm if action_selector is not None else None
+        selector_only = (
+            action_selector is not None
+            and llms is None
+            and config is None
+        )
+        if not self._using_external_agent and not selector_only:
             if llms is None:
                 if config is None:
                     raise ValueError(
@@ -414,11 +492,11 @@ class MobileAgent(Workflow):
                 logger.debug("🔄 Loading LLMs from config (llms not provided)...")
 
                 llms = load_agent_llms(
-                    config=self.config, output_model=output_model, **kwargs
+                    config=self.config, output_model=output_model, **llm_loading_kwargs
                 )
             if isinstance(llms, dict):
                 llms = merge_llms_with_config(
-                    self.config, llms, output_model=output_model, **kwargs
+                    self.config, llms, output_model=output_model, **llm_loading_kwargs
                 )
             elif isinstance(llms, LLM):
                 pass
@@ -440,12 +518,27 @@ class MobileAgent(Workflow):
                 self.app_opener_llm = llms
                 self.structured_output_llm = llms
         else:
-            logger.debug(f"🔄 Using external agent: {self.config.agent.name}")
+            if self._using_external_agent:
+                logger.debug(f"🔄 Using external agent: {self.config.agent.name}")
             self.manager_llm = None
             self.executor_llm = None
             self.fast_agent_llm = None
             self.app_opener_llm = None
             self.structured_output_llm = None
+
+        if not self._using_external_agent and self.action_selector is None:
+            self.action_selector = LlamaIndexLLMSelector(
+                self.executor_llm if self.config.agent.reasoning else self.fast_agent_llm
+            )
+
+        if not self._using_external_agent and self.action_selector is not None:
+            self.action_selectors[action_role] = self.action_selector
+            shared_llm = self.action_selector.shared_llm
+            if isinstance(action_selectors, dict) and shared_llm is not None:
+                if action_role == "executor":
+                    self.executor_llm = shared_llm
+                else:
+                    self.fast_agent_llm = shared_llm
 
         self.trajectory = None
         self.trajectory_writer = None
@@ -476,7 +569,7 @@ class MobileAgent(Workflow):
                 timeout=self.timeout,
             )
             self.executor_agent = ExecutorAgent(
-                llm=self.executor_llm,
+                action_selector=self._require_action_selector(),
                 registry=None,
                 action_ctx=None,
                 shared_state=self.shared_state,
@@ -493,6 +586,13 @@ class MobileAgent(Workflow):
         self._init_timeout = timeout
 
         logger.debug("✅ MobileAgent initialized successfully.")
+
+    def _require_action_selector(self) -> ActionSelector:
+        """Return the selector required by native agent execution paths."""
+        action_selector = self.action_selector
+        if action_selector is None:
+            raise ValueError("Native agent execution requires an action_selector")
+        return action_selector
 
     def run(self, *args, **kwargs) -> Awaitable[ResultEvent] | WorkflowHandler:
         # Workflow tasks inherit this context when run() schedules them.
@@ -591,6 +691,8 @@ class MobileAgent(Workflow):
 
             return FinalizeEvent(success=result["success"], reason=result["reason"])
 
+        action_selector = self._require_action_selector()
+
         # ── 1. Create driver ──────────────────────────────────────────
         if self.config.agent.reasoning:
             # The executor emits the coordinate actions, so its vision flag
@@ -609,31 +711,28 @@ class MobileAgent(Workflow):
         # that will receive a screenshot, so the declared coordinate space equals
         # what each model actually grounds on after any provider-side downsize.
         # Conservative: use the smallest effective size across all recipients.
-        if self.config.agent.reasoning:
-            vision_llms = [
-                llm
-                for use, llm in (
-                    (
-                        self.config.agent.vision_only
-                        or self.config.agent.manager.vision,
-                        self.manager_llm,
-                    ),
-                    (
-                        self.config.agent.vision_only
-                        or self.config.agent.executor.vision,
-                        self.executor_llm,
-                    ),
+        coordinate_agent_vision = self.config.agent.vision_only or (
+            self.config.agent.executor.vision
+            if self.config.agent.reasoning
+            else self.config.agent.fast_agent.vision
+        )
+        vision_llms = []
+        if self.config.agent.reasoning and (
+            self.config.agent.vision_only or self.config.agent.manager.vision
+        ):
+            vision_llms.append(self.manager_llm)
+        max_side_cap = self.config.agent.model_screenshot_max_side
+        if coordinate_agent_vision:
+            vision_llms.extend(action_selector.llms)
+            selector_cap = action_selector.screenshot_max_side
+            if selector_cap is not None:
+                max_side_cap = (
+                    min(max_side_cap, selector_cap)
+                    if max_side_cap and max_side_cap > 0
+                    else selector_cap
                 )
-                if use and llm is not None
-            ]
-        elif (
-            self.config.agent.vision_only or self.config.agent.fast_agent.vision
-        ) and self.fast_agent_llm is not None:
-            vision_llms = [self.fast_agent_llm]
-        else:
-            vision_llms = []
         vision_resize_policy = VisionResizePolicy.from_llms(
-            vision_llms, max_side_cap=self.config.agent.model_screenshot_max_side
+            vision_llms, max_side_cap=max_side_cap
         )
         # In reasoning mode the Executor only sees a screenshot when the Manager
         # also captured one (manager.vision=True), so require both before
@@ -648,18 +747,11 @@ class MobileAgent(Workflow):
         # The agent that emits coordinate actions decides the coordinate space.
         # Its own vision flag counts: the Manager also captures screenshots for
         # trajectories and streaming.
-        coordinate_llm = (
-            self.executor_llm if self.config.agent.reasoning else self.fast_agent_llm
-        )
-        coordinate_agent_vision = self.config.agent.vision_only or (
-            self.config.agent.executor.vision
-            if self.config.agent.reasoning
-            else self.config.agent.fast_agent.vision
-        )
         use_normalized = self.config.agent.use_normalized_coordinates or (
             coordinate_agent_vision
-            and model_uses_normalized_coordinates(
-                str(getattr(coordinate_llm, "model", "") or "")
+            and any(
+                model_uses_normalized_coordinates(str(getattr(llm, "model", "") or ""))
+                for llm in action_selector.llms
             )
         )
 
@@ -799,7 +891,7 @@ class MobileAgent(Workflow):
             supported_buttons=driver.supported_buttons,
             credential_manager=self.credential_manager,
             platform="ios" if driver.platform.lower() == "ios" else "android",
-            exact_app_launch=is_visual_remote,
+            exact_app_launch=is_visual_remote or action_selector.requires_action_candidates,
             screenshot_only=getattr(
                 self.state_provider,
                 "requires_coordinate_tools",
@@ -875,6 +967,9 @@ class MobileAgent(Workflow):
             self.shared_state.device_date = ""
 
         # ── 7. Telemetry init event ───────────────────────────────────
+        action_model_names = ",".join(
+            llm.class_name() for llm in action_selector.llms
+        ) or "None"
         capture(
             MobileAgentInitEvent(
                 goal=self.shared_state.instruction,
@@ -882,13 +977,14 @@ class MobileAgent(Workflow):
                     "manager": (
                         self.manager_llm.class_name() if self.manager_llm else "None"
                     ),
+                    "action_selector": type(action_selector).__name__,
                     "executor": (
-                        self.executor_llm.class_name() if self.executor_llm else "None"
+                        self.executor_llm.class_name() if self.executor_llm is not None
+                        else action_model_names if self.config.agent.reasoning else "None"
                     ),
                     "fast_agent": (
-                        self.fast_agent_llm.class_name()
-                        if self.fast_agent_llm
-                        else "None"
+                        self.fast_agent_llm.class_name() if self.fast_agent_llm is not None
+                        else action_model_names if not self.config.agent.reasoning else "None"
                     ),
                     "app_opener": (
                         self.app_opener_llm.class_name()
@@ -958,7 +1054,7 @@ class MobileAgent(Workflow):
 
         try:
             agent = FastAgent(
-                llm=self.fast_agent_llm,
+                action_selector=self._require_action_selector(),
                 agent_config=self.config.agent,
                 registry=self.registry,
                 action_ctx=self.action_ctx,

@@ -134,9 +134,14 @@ class LangfuseSpanProcessor(SpanProcessor):
     def agent(self) -> Optional["MobileAgent"]:
         return _current_agent.get()
 
-    def _extract_agent_input(self) -> Optional[dict]:
+    def _extract_agent_input(self) -> Optional[dict[str, Any]]:
+        """Collect run settings and active LLM metadata for the root observation.
+
+        Action selectors may expose multiple native LLMs, or none for non-LLM
+        decision models. Keep planning/helper roles separate from action models.
+        """
         agent = self.agent
-        if not agent:
+        if agent is None:
             return None
 
         try:
@@ -171,23 +176,27 @@ class LangfuseSpanProcessor(SpanProcessor):
             input_data["vision_enabled"] = any(vision_state.values())
             input_data["vision"] = vision_state
 
-            llm_attrs = (
-                ["manager_llm", "executor_llm"]
-                if agent.config.agent.reasoning
-                else ["fast_agent_llm"]
-            )
-            llm_attrs.append("app_opener_llm")
+            # The selector owns action selection now. Legacy executor_llm and
+            # fast_agent_llm attributes may not describe the active model(s).
+            action_role = "executor" if agent.config.agent.reasoning else "fast_agent"
+            role_llms = []
+            if agent.config.agent.reasoning:
+                role_llms.append(("manager", agent.manager_llm))
+            action_selector = agent.action_selector
+            if action_selector is not None:
+                role_llms.extend(
+                    (action_role, llm) for llm in action_selector.llms
+                )
+            role_llms.append(("app_opener", agent.app_opener_llm))
             if agent.output_model:
-                llm_attrs.append("structured_output_llm")
+                role_llms.append(("structured_output", agent.structured_output_llm))
 
             active_llms = []
-            for llm_attr in llm_attrs:
-                llm = getattr(agent, llm_attr, None)
+            for role, llm in role_llms:
                 if llm is None:
                     continue
 
-                role = llm_attr.replace("_llm", "")
-                llm_info = {
+                llm_info: dict[str, Any] = {
                     "role": role,
                     "provider": (
                         llm.class_name() if hasattr(llm, "class_name") else "unknown"
@@ -218,8 +227,9 @@ class LangfuseSpanProcessor(SpanProcessor):
     def on_start(self, span: Span, parent_context: Optional[Context] = None) -> None:
         del parent_context
 
+        agent = self.agent
         attrs = getattr(span, "_attributes", None)
-        if attrs is None or not self.agent:
+        if attrs is None or agent is None:
             return
 
         try:
@@ -243,20 +253,20 @@ class LangfuseSpanProcessor(SpanProcessor):
                 "ExecutorAgent.run",
             ):
                 set_last_step_span_context(span)
-                agent = self.agent
                 memory = agent.shared_state.agent_memory
-                input_data = {
+                # Step counts/subgoals have a narrower schema than root metadata.
+                step_input: dict[str, int | str] = {
                     "memory_size": len(memory) if memory else 0,
                     "message_history_count": len(agent.shared_state.message_history)
                     + 1,
                 }
 
                 if span.name == "ExecutorAgent.run":
-                    input_data["subgoal"] = (
+                    step_input["subgoal"] = (
                         agent.shared_state.current_subgoal or "Unknown"
                     )
 
-                attrs["langfuse.observation.input"] = json.dumps(input_data)
+                attrs["langfuse.observation.input"] = json.dumps(step_input)
                 if agent.shared_state.error_flag_plan:
                     attrs["langfuse.trace.tags"] = ["error_recovery"]
         except Exception as error:

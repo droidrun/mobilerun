@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from copy import copy, deepcopy
 from types import SimpleNamespace
@@ -28,6 +29,8 @@ from mobilerun.tools.ui.stealth_state import StealthUIState
 if TYPE_CHECKING:
     from mobilerun_core_local.driver.base import DeviceDriver
 
+    from mobilerun.agent.action_context import ActionContext
+    from mobilerun.agent.selectors.base import ActionCandidate
     from mobilerun.tools.filters import TreeFilter
     from mobilerun.tools.formatters import TreeFormatter
 
@@ -222,6 +225,171 @@ class StateProvider:
     async def get_final_state(self) -> UIState:
         """Read the final observation; subclasses may make this narrower."""
         return await self.get_state()
+
+    def get_action_candidates(self, state: UIState) -> tuple[ActionCandidate, ...]:
+        """Enumerate deterministic element actions; providers may override this."""
+        from mobilerun.agent.fast_agent.xml_parser import ToolCall
+        from mobilerun.agent.selectors.base import ActionCandidate
+
+        options = []
+        seen = set()
+        for element in UIState._collect_all(state.elements):
+            index = element.get("index")
+            if (
+                type(index) is not int
+                or index in seen
+                or element.get("isEnabled") is False
+                or element.get("isVisibleToUser") is False
+            ):
+                continue
+            seen.add(index)
+            bounds = element.get("bounds")
+            if not isinstance(bounds, str):
+                continue
+            try:
+                left, top, right, bottom = map(int, bounds.split(","))
+                if right <= left or bottom <= top:
+                    continue
+                if state.screen_width and (right <= 0 or left >= state.screen_width):
+                    continue
+                if state.screen_height and (bottom <= 0 or top >= state.screen_height):
+                    continue
+                UIState._avoid_tap_blockers(
+                    state, element, ((left + right) // 2, (top + bottom) // 2)
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            label = element.get("text") or element.get("resourceId") or str(index)
+            if element.get("isClickable", True):
+                options.append(
+                    ActionCandidate(ToolCall("click", {"index": index}), f"Click {label}")
+                )
+            if element.get("isLongClickable", False):
+                options.append(
+                    ActionCandidate(ToolCall("long_press", {"index": index}), f"Long press {label}")
+                )
+        return tuple(options)
+
+    async def build_action_candidates(
+        self,
+        ctx: ActionContext,
+        tools: dict[str, Any],
+        *,
+        include_device_actions: bool = False,
+    ) -> tuple[ActionCandidate, ...]:
+        """Keep provider overrides and add only enabled, supported device actions."""
+        from mobilerun.agent.fast_agent.xml_parser import ToolCall
+        from mobilerun.agent.selectors.base import ActionCandidate
+
+        options = list(self.get_action_candidates(ctx.ui)) if ctx.ui is not None else []
+        if not include_device_actions:
+            return tuple(options)
+
+        if "system_button" in tools:
+            navigation = {"back", "home", "enter", "recent", "recents", "app_switch", "overview"}
+            for button in sorted(getattr(self.driver, "supported_buttons", set()) & navigation):
+                options.append(ActionCandidate(
+                    ToolCall("system_button", {"button": button}),
+                    f"Press {button}: " + {
+                        "back": "go back or dismiss the keyboard/dialog",
+                        "home": "go to the home screen without closing apps",
+                        "enter": "submit the focused field",
+                    }.get(button, "show recent apps"),
+                ))
+
+        if "swipe" in tools:
+            options.extend(self._swipe_candidates(ctx.ui))
+        if "wait" in tools:
+            options.append(ActionCandidate(
+                ToolCall("wait", {"duration": 1.0}),
+                "Wait 1 second for a loading screen, animation, or UI update",
+            ))
+        if "open_app" in tools and "get_apps" in getattr(self.driver, "supported", set()):
+            options.extend(await self._app_candidates(ctx, tools["open_app"]))
+
+        # A provider may already supply some device actions. Preserve its order and
+        # avoid duplicate choices without touching the executable parameters.
+        unique: list[ActionCandidate] = []
+        for option in options:
+            if option.action.name in tools and not any(option.action == item.action for item in unique):
+                unique.append(option)
+        return tuple(unique)
+
+    def _swipe_candidates(self, state: UIState | None) -> list[ActionCandidate]:
+        from mobilerun.agent.fast_agent.xml_parser import ToolCall
+        from mobilerun.agent.selectors.base import ActionCandidate
+
+        if state is None or not state.screen_width or not state.screen_height:
+            return []
+        if (
+            getattr(self, "requires_active_contract_for_coords", False)
+            and not state.coordinate_contract_active
+        ):
+            return []
+        if state.use_normalized:
+            width = height = 1000
+        elif getattr(self, "requires_coordinate_tools", False):
+            width, height = state.screen_width, state.screen_height
+        else:
+            try:
+                width = state.screen_width / state.coordinate_scale_x
+                height = state.screen_height / state.coordinate_scale_y
+            except (TypeError, ValueError, ZeroDivisionError):
+                return []
+        if not all(math.isfinite(value) and value >= 4 for value in (width, height)):
+            return []
+
+        def point(x: float, y: float) -> list[int]:
+            return [round((width - 1) * x), round((height - 1) * y)]
+
+        return [ActionCandidate(
+            ToolCall("swipe", {"coordinate": point(*start), "coordinate2": point(*end), "duration": 0.5}),
+            description,
+        ) for start, end, description in (
+            ((0.5, 0.8), (0.5, 0.2), "Swipe up to scroll down or reveal apps from the home screen"),
+            ((0.5, 0.2), (0.5, 0.8), "Swipe down to scroll up"),
+            ((0.8, 0.5), (0.2, 0.5), "Swipe left to the next page or panel"),
+            ((0.2, 0.5), (0.8, 0.5), "Swipe right to the previous page or panel"),
+        )]
+
+    async def _app_candidates(
+        self, ctx: ActionContext, signature: dict[str, Any],
+    ) -> list[ActionCandidate]:
+        from mobilerun.agent.action_context import ActionCandidateApp
+        from mobilerun.agent.fast_agent.xml_parser import ToolCall
+        from mobilerun.agent.selectors.base import ActionCandidate
+
+        params = signature.get("parameters", {})
+        parameter = next((name for name in ("app_id", "bundle_id", "text") if name in params), None)
+        if parameter is None:
+            return []
+        if ctx.action_candidate_apps is None:
+            try:
+                apps = await self.driver.get_apps(include_system=True)
+            except DeviceDisconnectedError:
+                raise
+            except Exception as exc:
+                logger.warning("Could not list apps for decision candidates: %s", exc)
+                return []
+            installed: dict[str, ActionCandidateApp] = {}
+            for app in apps:
+                if not isinstance(app, dict) or app.get("launchable") is False:
+                    continue
+                identifier = next((app.get(key) for key in (
+                    "package", "package_name", "bundle_id", "app_id",
+                ) if isinstance(app.get(key), str) and app[key].strip()), None)
+                if identifier:
+                    label = app.get("label") or app.get("name") or identifier
+                    installed[identifier] = ActionCandidateApp(identifier=identifier, label=str(label))
+            ctx.action_candidate_apps = tuple(sorted(
+                installed.values(), key=lambda app: (app.label.casefold(), app.identifier),
+            ))
+
+        current_app = ctx.ui.phone_state.get("packageName") if ctx.ui is not None else None
+        return [ActionCandidate(
+            ToolCall("open_app", {parameter: app.identifier}),
+            f"Open app {app.label} ({app.identifier})",
+        ) for app in ctx.action_candidate_apps if app.identifier != current_app]
 
 
 def should_resize_model_screenshot(state_provider: Any) -> bool:

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from mobilerun.agent.droid.state import MobileAgentState
 from mobilerun.agent.executor.executor_agent import ExecutorAgent
+from mobilerun.agent.selectors import LlamaIndexLLMSelector
 from mobilerun.agent.tool_registry import ToolRegistry
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.app_cards.providers.local_provider import LocalAppCardProvider
@@ -43,7 +44,7 @@ class AppCardsTest(unittest.TestCase):
                 platform="Android",
             )
             agent = ExecutorAgent(
-                llm=SimpleNamespace(),
+                action_selector=LlamaIndexLLMSelector(SimpleNamespace()),
                 registry=ToolRegistry(),
                 action_ctx=None,
                 shared_state=shared_state,

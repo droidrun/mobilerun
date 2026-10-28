@@ -68,6 +68,7 @@ anthropic = [
     "llama-index-llms-anthropic>=0.8.6,<0.9.0",
 ]
 deepseek = []
+typesafe = ["typesafe-sdk>=0.7.5,<0.8.0"]
 dev = [
     "black==26.10.1",
     "ruff>=0.13.0",

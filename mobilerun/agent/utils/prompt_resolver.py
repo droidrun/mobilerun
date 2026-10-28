@@ -27,7 +27,7 @@ class PromptResolver:
         Args:
             custom_prompts: Dict mapping prompt keys to Jinja2 template strings.
                            Keys: "fast_agent_system", "fast_agent_user", "manager_system",
-                                 "executor_system"
+                                  "executor_system", "decision_system"
         """
         self.custom_prompts = custom_prompts or {}
 
@@ -63,4 +63,5 @@ class PromptResolver:
             "fast_agent_user",
             "manager_system",
             "executor_system",
+            "decision_system",
         ]
