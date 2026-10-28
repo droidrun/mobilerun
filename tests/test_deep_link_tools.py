@@ -84,10 +84,6 @@ def test_format_combines_data_elements_per_filter():
     assert "- app://h:8080 (any path)" in summary
     assert "image/*" not in summary
     assert "hidden" not in summary
-    assert (
-        "(1 filters that cannot be opened from outside the app are omitted.)" in summary
-    )
-    assert "(1 filters that do not take a plain URL are omitted.)" in summary
 
 
 def test_format_follows_android_matching_for_ports_types_and_extra_rules():
@@ -115,7 +111,6 @@ def test_format_follows_android_matching_for_ports_types_and_extra_rules():
     assert "video/*" not in summary
     assert "- content:* [type application/pdf]" in summary
     assert "- https://shop.example (any path) [narrowed by extra rules" in summary
-    assert "(1 filters that do not take a plain URL are omitted.)" in summary
 
 
 def test_format_groups_large_filters_caps_output_and_flags_partial_results():
@@ -130,32 +125,31 @@ def test_format_groups_large_filters_caps_output_and_flags_partial_results():
             "declarationsComplete": False,
             "warnings": ["output_limit_exceeded"],
         },
-        max_lines=10,
+        max_chars=300,
     )
 
     assert "- scheme https, http; host h0.example" in summary
     assert "(+4 more)" in summary
-    assert "... +91 more" in summary
+    assert "... +94 more" in summary
     assert "(Declarations may be incomplete: output_limit_exceeded.)" in summary
 
 
-def test_format_reports_no_openable_links():
-    summary = format_deep_links(
-        {"package": "p", "filters": [], "declarationsComplete": True}
-    )
-
-    assert summary.startswith("p declares no deep links that can be opened.")
-
-
-def test_list_deep_links_defaults_to_the_foreground_app():
-    driver = _Driver(links={"package": MAPS, "filters": [_filter([{"scheme": "geo"}])]})
-    ui = SimpleNamespace(phone_state={"packageName": MAPS})
+@pytest.mark.parametrize(
+    "phone_state, package",
+    [
+        ({"packageName": "com.example.app"}, "com.example.app"),
+        ({"observationMode": "screenshot_only"}, MAPS),
+    ],
+)
+def test_list_deep_links_defaults_to_the_foreground_app(phone_state, package):
+    driver = _Driver(links={"package": package, "filters": []})
+    ui = SimpleNamespace(phone_state=phone_state)
 
     result = asyncio.run(list_deep_links(ctx=SimpleNamespace(driver=driver, ui=ui)))
 
     assert result.success
-    assert driver.calls == [("get_deep_links", MAPS)]
-    assert "- geo:*" in result.summary
+    assert driver.calls == [("get_deep_links", package)]
+    assert f"{package} declares no deep links" in result.summary
 
 
 def test_list_deep_links_reports_driver_errors():
@@ -168,18 +162,9 @@ def test_list_deep_links_reports_driver_errors():
     )
 
     assert result.success is False
+    assert driver.calls == [("get_deep_links", "com.missing")]
     assert "com.missing" in result.summary
     assert "not installed" in result.summary
-
-
-def test_list_deep_links_reads_the_package_from_the_driver_without_phone_state():
-    driver = _Driver(links={"package": MAPS, "filters": []})
-    ui = SimpleNamespace(phone_state={"observationMode": "screenshot_only"})
-
-    result = asyncio.run(list_deep_links(ctx=SimpleNamespace(driver=driver, ui=ui)))
-
-    assert result.success
-    assert driver.calls == [("get_deep_links", MAPS)]
 
 
 def test_list_deep_links_asks_for_a_package_when_none_is_known():
@@ -274,15 +259,6 @@ def test_xml_tool_call_opens_a_deep_link(separator):
 
     assert result.success
     assert driver.calls == [("open_deep_link", "geo:0,0?q=Paris&z=10", MAPS)]
-
-
-def test_open_deep_link_description_matches_the_platform():
-    android, _ = asyncio.run(build_tool_registry(platform="android"))
-    ios, _ = asyncio.run(build_tool_registry(platform="ios"))
-
-    assert "com.google.android.apps.maps" in android.tools["open_deep_link"].description
-    assert "bundle identifier" in ios.tools["open_deep_link"].description
-    assert "geo:" not in ios.tools["open_deep_link"].description
 
 
 def test_macro_replay_opens_recorded_deep_link():

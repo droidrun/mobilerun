@@ -24,11 +24,7 @@ _MAX_LIST_ITEMS = 8
 
 
 def _unique(values: Iterable[Any]) -> list[str]:
-    seen: list[str] = []
-    for value in values:
-        if value and str(value) not in seen:
-            seen.append(str(value))
-    return seen
+    return list(dict.fromkeys(str(v) for v in values if v))
 
 
 def _formatted(data: list[dict], formats) -> list[str]:
@@ -89,15 +85,11 @@ def _filter_line(intent_filter: dict) -> str | None:
     return line
 
 
-def format_deep_links(
-    result: dict, *, max_lines: int = 40, max_chars: int = 4000
-) -> str:
+def format_deep_links(result: dict, *, max_chars: int = 4000) -> str:
     """Summarize a Portal ``app/deep-links`` result for the model."""
     package = result.get("package", "")
     filters = [f for f in result.get("filters") or [] if isinstance(f, dict)]
-    callable_filters = [f for f in filters if f.get("callable")]
-    rendered = [_filter_line(f) for f in callable_filters]
-    lines = _unique(rendered)
+    lines = _unique(_filter_line(f) for f in filters if f.get("callable"))
 
     if not lines:
         summary = f"{package} declares no deep links that can be opened."
@@ -108,7 +100,7 @@ def format_deep_links(
         )
         shown: list[str] = []
         size = len(summary)
-        for line in lines[:max_lines]:
+        for line in lines:
             entry = f"- {line}"
             if size + len(entry) + 1 > max_chars:
                 break
@@ -118,12 +110,6 @@ def format_deep_links(
         if len(shown) < len(lines):
             summary += f"\n... +{len(lines) - len(shown)} more"
 
-    skipped = len(filters) - len(callable_filters)
-    if skipped:
-        summary += f"\n({skipped} filters that cannot be opened from outside the app are omitted.)"
-    no_url = rendered.count(None)
-    if no_url:
-        summary += f"\n({no_url} filters that do not take a plain URL are omitted.)"
     if not result.get("declarationsComplete", True):
         warnings = ", ".join(str(w) for w in result.get("warnings") or [])
         summary += (
