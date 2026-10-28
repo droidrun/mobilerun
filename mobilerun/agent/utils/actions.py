@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.oneflows.app_starter_workflow import AppStarter
+from mobilerun.agent.utils.deep_links import format_deep_links
 from mobilerun.agent.utils.errors import describe_error
 from mobilerun.tools.helpers.coordinate import NORMALIZED_MAX, to_normalized
 
@@ -595,6 +596,75 @@ async def open_bundle_id(
             success=False,
             summary=f"Failed to open app '{identifier}': {e.__class__.__name__}: {e}\n{hint}",
         )
+
+
+async def list_deep_links(package: str = "", *, ctx: "ActionContext") -> ActionResult:
+    """List the deep-link URL patterns an installed app declares."""
+    package = str(package or "").strip() or await _foreground_package(ctx)
+    if not package:
+        return ActionResult(
+            success=False,
+            summary=(
+                "Failed to list deep links: pass the app's package name, "
+                "e.g. com.google.android.apps.maps."
+            ),
+        )
+    try:
+        summary = format_deep_links(await ctx.driver.get_deep_links(package))
+    except Exception as e:
+        return ActionResult(
+            success=False,
+            summary=f"Failed to list deep links for '{package}': {e.__class__.__name__}: {e}",
+        )
+    return ActionResult(success=True, summary=summary)
+
+
+async def _foreground_package(ctx: "ActionContext") -> str:
+    phone_state = getattr(getattr(ctx, "ui", None), "phone_state", None) or {}
+    package = phone_state.get("packageName")
+    if not package:
+        # Screenshot-only state has no package; ask the driver.
+        try:
+            tree = await ctx.driver.get_ui_tree()
+            package = (tree.get("phone_state") or {}).get("packageName")
+        except Exception as e:
+            logger.debug(f"Could not read the foreground package: {e}")
+    return str(package or "")
+
+
+async def open_deep_link(
+    deep_link: str, package: str = "", *, ctx: "ActionContext"
+) -> ActionResult:
+    """Open a deep link, optionally only in the given app."""
+    # Tool-call parameters are raw text, but models sometimes XML-escape '&'.
+    link = str(deep_link or "").strip().replace("&amp;", "&")
+    target = str(package or "").strip() or None
+    if not link:
+        return ActionResult(
+            success=False,
+            summary="Failed to open deep link: deep_link is required.",
+        )
+    try:
+        pre_ui = await _macro_pre_ui(ctx)
+        await ctx.driver.open_deep_link(link, target)
+        await asyncio.sleep(1)
+    except Exception as e:
+        return ActionResult(
+            success=False,
+            summary=(
+                f"Failed to open deep link '{link}': {e.__class__.__name__}: {e}\n"
+                "Check the link, or open the app with open_app and navigate instead."
+            ),
+        )
+    _record_macro_action(
+        ctx,
+        {"action_type": "open_deep_link", "deep_link": link, "package": target},
+        pre_ui=pre_ui,
+    )
+    return ActionResult(
+        success=True,
+        summary=f"Opened deep link {link}" + (f" in {target}" if target else ""),
+    )
 
 
 async def wait(duration: float = 1.0, *, ctx: "ActionContext") -> ActionResult:
