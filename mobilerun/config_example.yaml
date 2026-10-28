@@ -198,7 +198,7 @@ tools:
   #   - wait           # Wait for duration
   #   - open_app       # Open apps by name
   #   - open_deep_link # Open a deep link or URL
-  #   - list_deep_links # List an app's declared deep links (Portal in TCP mode)
+  #   - list_deep_links # List an app's declared deep links
   #   - type_secret    # Type credentials (requires credentials.enabled: true)
   # Coordinate-based tools (click_at, click_area, long_press_at) are
   # disabled by default. When an action agent has vision enabled, click_at
