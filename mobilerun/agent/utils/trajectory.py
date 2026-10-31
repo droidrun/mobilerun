@@ -101,14 +101,14 @@ class Trajectory:
             # Load main trajectory
             trajectory_json_path = os.path.join(trajectory_folder, "trajectory.json")
             if os.path.exists(trajectory_json_path):
-                with open(trajectory_json_path, "r") as f:
+                with open(trajectory_json_path, "r", encoding="utf-8") as f:
                     result["trajectory_data"] = json.load(f)
                 logger.debug(f"📖 Loaded trajectory data from {trajectory_json_path}")
 
             # Load macro sequence
             macro_json_path = os.path.join(trajectory_folder, "macro.json")
             if os.path.exists(macro_json_path):
-                with open(macro_json_path, "r") as f:
+                with open(macro_json_path, "r", encoding="utf-8") as f:
                     result["macro_data"] = json.load(f)
                 logger.debug(f"📖 Loaded macro data from {macro_json_path}")
 
@@ -140,7 +140,7 @@ class Trajectory:
             macro_file_path = os.path.join(macro_file_path, "macro.json")
 
         try:
-            with open(macro_file_path, "r") as f:
+            with open(macro_file_path, "r", encoding="utf-8") as f:
                 macro_data = json.load(f)
 
             if macro_data.get("macro_schema_version") != MACRO_SCHEMA_VERSION:

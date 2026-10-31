@@ -71,7 +71,7 @@ def resolve_cloud_api_key() -> Optional[str]:
 
         cred_path = OAUTH_CREDENTIAL_DIR / "mobilerun-cloud.json"
         if cred_path.exists():
-            data = json.loads(cred_path.read_text())
+            data = json.loads(cred_path.read_text(encoding="utf-8"))
             key = data.get("api_key") or data.get("access_token")
             if key:
                 return key

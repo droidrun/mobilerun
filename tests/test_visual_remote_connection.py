@@ -97,7 +97,7 @@ class ScreenshotOnlyStateProviderTest(unittest.TestCase):
         repo = Path(__file__).resolve().parents[1]
         template = (
             repo / "mobilerun/config/prompts/fast_agent/system.jinja2"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         return PromptLoader.render_template(
             template,
             {
@@ -336,7 +336,7 @@ class ScreenshotOnlyStateProviderTest(unittest.TestCase):
         ]
 
         for path in agent_files:
-            self.assertIn("resize_model_screenshot_async", path.read_text())
+            self.assertIn("resize_model_screenshot_async", path.read_text(encoding="utf-8"))
 
     def test_visual_remote_exact_app_launch_tool_needs_only_start_app(self):
         async def run():

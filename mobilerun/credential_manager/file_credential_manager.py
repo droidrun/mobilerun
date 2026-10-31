@@ -83,7 +83,7 @@ class FileCredentialManager(CredentialManager):
             Dict of enabled secrets {secret_id: secret_value}
         """
         path = PathResolver.resolve(file_path, must_exist=True)
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         if not data or "secrets" not in data:
