@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
+
+pytest.importorskip("langfuse")
 from opentelemetry import trace
 from opentelemetry.attributes import BoundedAttributes
 from opentelemetry.sdk.resources import Resource
