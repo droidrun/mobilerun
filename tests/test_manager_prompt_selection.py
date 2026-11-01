@@ -51,8 +51,12 @@ def test_manager_auto_prompt_uses_the_mode_appropriate_bundled_template():
         manager=ManagerConfig(stateless=True)
     ).get_manager_system_prompt_path()
 
-    assert Path(stateful_path).as_posix().endswith(DEFAULT_MANAGER_SYSTEM_PROMPT)
-    assert Path(stateless_path).as_posix().endswith(DEFAULT_STATELESS_MANAGER_SYSTEM_PROMPT)
+    stateful = Path(stateful_path).as_posix()
+    stateless = Path(stateless_path).as_posix()
+
+    assert stateful.endswith(DEFAULT_MANAGER_SYSTEM_PROMPT)
+    assert stateless.endswith(DEFAULT_STATELESS_MANAGER_SYSTEM_PROMPT)
+
 
 def test_runtime_custom_prompt_precedes_an_explicit_manager_prompt(monkeypatch):
     configured_prompt = REPO_ROOT / "mobilerun/config/prompts/manager/trained.jinja2"
