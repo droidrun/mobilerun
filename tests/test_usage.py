@@ -1,12 +1,15 @@
 import json
 from types import SimpleNamespace
 
+import pytest
 from llama_index.core.base.llms.types import ChatMessage, ChatResponse, MessageRole
+from llama_index.core.callbacks import CallbackManager
 
 from mobilerun.agent.usage import (
     TokenCountingHandler,
     create_tracker,
     get_usage_from_response,
+    llm_callback,
     track_usage,
 )
 from mobilerun.agent.utils.llm_picker import load_llm
@@ -411,3 +414,27 @@ def test_openai_like_does_not_double_count_reasoning_inside_completion() -> None
         103,
         135,
     )
+
+
+@pytest.mark.parametrize("error_type", [None, RuntimeError, KeyboardInterrupt])
+def test_llm_callback_removes_temporary_handlers_on_exit(
+    error_type: type[BaseException] | None,
+) -> None:
+    existing = TokenCountingHandler("OpenAIResponses")
+    temporary = [TokenCountingHandler("OpenAIResponses") for _ in range(2)]
+    manager = CallbackManager([existing])
+    llm = SimpleNamespace(callback_manager=manager)
+
+    def run_with_callbacks() -> None:
+        with llm_callback(llm, *temporary):
+            assert manager.handlers == [existing, *temporary]
+            if error_type is not None:
+                raise error_type("LLM call interrupted")
+
+    if error_type is None:
+        run_with_callbacks()
+    else:
+        with pytest.raises(error_type, match="LLM call interrupted"):
+            run_with_callbacks()
+
+    assert manager.handlers == [existing]

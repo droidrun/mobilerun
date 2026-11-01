@@ -280,9 +280,11 @@ class TokenCountingHandler(BaseCallbackHandler):
 def llm_callback(llm: LLM, *args: List[BaseCallbackHandler]):
     for arg in args:
         llm.callback_manager.add_handler(arg)
-    yield
-    for arg in args:
-        llm.callback_manager.remove_handler(arg)
+    try:
+        yield
+    finally:
+        for arg in args:
+            llm.callback_manager.remove_handler(arg)
 
 
 def create_tracker(llm: LLM) -> TokenCountingHandler:
