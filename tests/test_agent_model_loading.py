@@ -61,7 +61,7 @@ def test_legacy_shared_llm_is_wrapped_and_preserves_roles(
     assert agent.action_selector.llm is llm
     if reasoning:
         assert agent.executor_agent.action_selector is agent.action_selector
-    assert "MobileAgent(llms=...) is deprecated" in caplog.text
+    assert "deprecated" not in caplog.text
     load.assert_not_called()
 
 
@@ -114,70 +114,73 @@ def test_legacy_llm_takes_precedence_over_configured_decision_model(monkeypatch)
     load.assert_not_called()
 
 
+def test_partial_llms_still_use_configured_decision_model(monkeypatch):
+    from mobilerun.config_manager import DecisionProfile
+
+    config = MobileConfig()
+    config.decision_profiles["fast_agent"] = DecisionProfile()
+    for profile in config.llm_profiles.values():
+        profile.kwargs["api_key"] = "test-key"
+    helper = MockLLM()
+    monkeypatch.setattr(
+        "mobilerun.agent.utils.llm_picker.load_llm", Mock(return_value=helper)
+    )
+    model = SimpleNamespace(decide=AsyncMock())
+    monkeypatch.setattr(
+        droid_agent,
+        "load_agent_decision_models",
+        Mock(return_value={"fast_agent": model}),
+    )
+
+    agent = MobileAgent("Select", config=config, llms={"app_opener": helper})
+
+    assert isinstance(agent.action_selector, DecisionSelector)
+    assert agent.action_selector.model is model
+    assert agent.app_opener_llm is helper
+
+
 @pytest.mark.parametrize("llm_selector", [False, True])
-@pytest.mark.parametrize("dictionary", [False, True])
-def test_explicit_selector_ignores_legacy_llms(
-    monkeypatch, caplog, llm_selector, dictionary
+def test_explicit_selector_keeps_supplied_llms_for_helpers(
+    monkeypatch, caplog, llm_selector
 ):
-    legacy_llm = MockLLM()
-    selected_llm = MockLLM() if llm_selector else None
+    supplied_llm = MockLLM()
     selector = (
-        LlamaIndexLLMSelector(selected_llm)
+        LlamaIndexLLMSelector(MockLLM())
         if llm_selector
         else StubSelector(select=AsyncMock())
     )
-    legacy_llms = {"fast_agent": legacy_llm} if dictionary else legacy_llm
-    load = Mock(side_effect=AssertionError("Explicit selector needs no config here"))
+    load = Mock(side_effect=AssertionError("Supplied llms need no config here"))
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
     monkeypatch.setattr(logging.getLogger("mobilerun"), "propagate", True)
 
-    agent = MobileAgent("Select", llms=legacy_llms, action_selectors=selector)
+    agent = MobileAgent("Select", llms=supplied_llm, action_selectors=selector)
 
     assert agent.action_selector is selector
-    for role in (
-        "manager",
-        "executor",
-        "fast_agent",
-        "app_opener",
-        "structured_output",
-    ):
-        assert getattr(agent, f"{role}_llm") is selected_llm
-    warnings = [
-        record for record in caplog.records if record.levelno == logging.WARNING
-    ]
-    assert len(warnings) == 2
-    assert "MobileAgent(llms=...) is deprecated" in warnings[0].message
-    assert "The supplied llms argument was ignored" in warnings[1].message
+    for role in ("manager", "app_opener", "structured_output"):
+        assert getattr(agent, f"{role}_llm") is supplied_llm
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
     load.assert_not_called()
 
 
 @pytest.mark.parametrize("reasoning", [False, True])
-def test_selector_with_legacy_llms_still_loads_helpers_from_config(
-    monkeypatch, reasoning
-):
+def test_selector_with_llms_uses_them_for_helpers_over_config(monkeypatch, reasoning):
     config = MobileConfig()
     config.agent.reasoning = reasoning
-    legacy_llm = MockLLM()
-    configured_llm = MockLLM()
+    supplied_llm = MockLLM()
     selector = StubSelector(select=AsyncMock())
-    load = Mock(
-        return_value=dict.fromkeys(
-            ("manager", "executor", "fast_agent", "app_opener"),
-            configured_llm,
-        )
-    )
+    load = Mock(side_effect=AssertionError("Supplied llms need no config here"))
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
 
     agent = MobileAgent(
-        "Select", config=config, llms=legacy_llm, action_selectors=selector
+        "Select", config=config, llms=supplied_llm, action_selectors=selector
     )
 
     assert agent.action_selector is selector
-    assert agent.app_opener_llm is configured_llm
+    assert agent.app_opener_llm is supplied_llm
     if reasoning:
-        assert agent.manager_llm is configured_llm
+        assert agent.manager_llm is supplied_llm
         assert agent.executor_agent.action_selector is selector
-    load.assert_called_once_with(config=agent.config, output_model=None)
+    load.assert_not_called()
 
 
 def test_legacy_none_llms_still_loads_config(monkeypatch, caplog):
@@ -189,22 +192,26 @@ def test_legacy_none_llms_still_loads_config(monkeypatch, caplog):
     agent = MobileAgent("Select", config=MobileConfig(), llms=None)
 
     assert agent.action_selector.llm is llm
-    assert "MobileAgent(llms=...) is deprecated" in caplog.text
+    assert "deprecated" not in caplog.text
     load.assert_called_once()
 
 
-def test_action_selectors_can_be_supplied_positionally(monkeypatch):
+def test_llms_can_be_supplied_positionally(monkeypatch):
     llm = MockLLM()
     load = Mock(side_effect=AssertionError("A supplied LLM must not load profiles"))
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
 
-    selector = LlamaIndexLLMSelector(llm)
-    agent = MobileAgent("Select", None, selector)
+    agent = MobileAgent("Select", None, llm)
 
+    assert isinstance(agent.action_selector, LlamaIndexLLMSelector)
     assert agent.action_selector.llm is llm
-    assert agent.action_selector is selector
     assert agent.app_opener_llm is llm
     load.assert_not_called()
+
+
+def test_action_selectors_are_keyword_only():
+    with pytest.raises(ValueError, match="Invalid LLM type"):
+        MobileAgent("Select", None, StubSelector(select=AsyncMock()))
 
 
 def test_decision_selector_needs_no_config_or_llms(monkeypatch):

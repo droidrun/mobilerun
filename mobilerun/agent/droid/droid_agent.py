@@ -303,7 +303,7 @@ class MobileAgent(Workflow):
         self,
         goal: str,
         config: MobileConfig | None = None,
-        action_selectors: ActionSelector | dict[str, ActionSelector] | None = None,
+        llms: dict[str, LLM] | LLM | None = None,
         custom_tools: dict = None,
         credentials: Union[dict, "CredentialManager", None] = None,
         variables: dict | None = None,
@@ -313,14 +313,14 @@ class MobileAgent(Workflow):
         state_provider: "StateProvider | None" = None,
         timeout: int = 1000,
         *args,
+        action_selectors: ActionSelector | dict[str, ActionSelector] | None = None,
         **kwargs,
     ):
-        """Initialize from action selectors or configured profiles.
+        """Initialize from LLMs, action selectors, or configured profiles.
 
         action_selectors accepts one shared selector or per-role overrides
-        (fast_agent/executor).
-        Missing active roles are loaded from config without replacing supplied selectors.
-        Legacy llms in kwargs are deprecated and wrapped internally.
+        (fast_agent/executor) and takes precedence over llms for action selection.
+        Missing roles are loaded from config.
         """
         self._configure_default_logging(debug=bool(config and config.logging.debug))
         if "action_selector" in kwargs:
@@ -350,20 +350,10 @@ class MobileAgent(Workflow):
             raise TypeError(
                 "Pass a DecisionSelector via action_selectors, not decision_model="
             )
-        if "llms" in kwargs:
-            logger.warning(
-                "MobileAgent(llms=...) is deprecated. Use "
-                "action_selectors=LlamaIndexLLMSelector(llm) for action selection "
-                "and config.llm_profiles for planning and helper LLMs."
-            )
-        llms = kwargs.pop("llms", None)
-        if llms is not None and action_selector is not None:
-            logger.warning(
-                "Both llms and action_selectors were supplied; using action_selectors. "
-                "The supplied llms argument was ignored."
-            )
-            llms = None
-        elif action_selector is None and isinstance(llms, LLM):
+        caller_action_llm = isinstance(llms, LLM) or (
+            isinstance(llms, dict) and llms.get(action_role) is not None
+        )
+        if action_selector is None and isinstance(llms, LLM):
             action_selector = LlamaIndexLLMSelector(llms)
         self.action_selector: ActionSelector | None = action_selector
         self.user_id = kwargs.pop("user_id", None)
@@ -451,7 +441,7 @@ class MobileAgent(Workflow):
         if (
             not self._using_external_agent
             and self.action_selector is None
-            and llms is None
+            and not caller_action_llm
         ):
             if self.config.agent.delegation is not None:
                 self.action_selector = load_delegating_selector(self.config, **kwargs)

@@ -58,9 +58,7 @@ def _node_key_set(
     state: Dict[str, Any], skip: set[str] = frozenset()
 ) -> set[Tuple[Any, ...]]:
     keys = (node_semantic_key(node, skip) for node in state.get("nodes", []))
-    return {
-        key for key in keys if any(part is not None and part != "" for part in key)
-    }
+    return {key for key in keys if any(part is not None and part != "" for part in key)}
 
 
 def _phone_score(saved_state: Dict[str, Any], current_state: Dict[str, Any]) -> float:

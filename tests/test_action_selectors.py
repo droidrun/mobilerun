@@ -837,9 +837,7 @@ def test_agent_requires_a_selection_dependency(agent_class):
 
 @pytest.mark.parametrize("agent_class", [ExecutorAgent, FastAgent])
 @pytest.mark.parametrize("explicit_selector", [False, True])
-def test_agents_accept_legacy_llm_from_kwargs(
-    monkeypatch, caplog, agent_class, explicit_selector
-):
+def test_agents_accept_llm_keyword(monkeypatch, caplog, agent_class, explicit_selector):
     config, registry, action_ctx, shared, provider, _ = _dependencies()
     llm = MockLLM()
     selector = DecisionSelector(_model(Decision(0))) if explicit_selector else None
@@ -865,12 +863,20 @@ def test_agents_accept_legacy_llm_from_kwargs(
     else:
         assert isinstance(agent.action_selector, LlamaIndexLLMSelector)
         assert agent.action_selector.llm is llm
-    deprecations = [
-        record for record in caplog.records if "deprecated" in record.message
-    ]
-    assert len(deprecations) == 1
-    assert deprecations[0].levelno == logging.DEBUG
-    assert f"{agent_class.__name__}(llm=...) is deprecated" in deprecations[0].message
+    assert not [record for record in caplog.records if "deprecated" in record.message]
+
+
+@pytest.mark.parametrize("agent_class", [ExecutorAgent, FastAgent])
+def test_agents_accept_positional_llm(agent_class):
+    config, registry, action_ctx, shared, provider, _ = _dependencies()
+    llm = MockLLM()
+    if agent_class is FastAgent:
+        agent = agent_class(llm, config, registry, action_ctx, provider)
+    else:
+        agent = agent_class(llm, registry, action_ctx, shared, config)
+
+    assert isinstance(agent.action_selector, LlamaIndexLLMSelector)
+    assert agent.action_selector.llm is llm
 
 
 @pytest.mark.parametrize("agent_class", [ExecutorAgent, FastAgent])

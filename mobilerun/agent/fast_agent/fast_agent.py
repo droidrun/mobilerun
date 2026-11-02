@@ -14,6 +14,7 @@ import os
 from typing import TYPE_CHECKING, Optional, Type
 
 from llama_index.core.base.llms.types import ChatMessage, ImageBlock, TextBlock
+from llama_index.core.llms.llm import LLM
 from llama_index.core.workflow import Context, StartEvent, StopEvent, Workflow, step
 from mobilerun_core_local.driver.base import DeviceDisconnectedError
 from opentelemetry import trace
@@ -146,11 +147,9 @@ class FastAgent(Workflow):
         *args,
         **kwargs,
     ):
-        if "llm" in kwargs:
-            logger.debug(
-                "FastAgent(llm=...) is deprecated. Use action_selector=LlamaIndexLLMSelector(llm)."
-            )
         llm = kwargs.pop("llm", None)
+        if isinstance(action_selector, LLM):
+            action_selector, llm = None, action_selector
         if action_selector is None and llm is not None:
             action_selector = LlamaIndexLLMSelector(llm)
         if action_selector is None:

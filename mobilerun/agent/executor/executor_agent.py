@@ -15,6 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from llama_index.core.base.llms.types import ChatMessage, ImageBlock, TextBlock
+from llama_index.core.llms.llm import LLM
 from llama_index.core.workflow import Context, StartEvent, StopEvent, Workflow, step
 
 from mobilerun.agent.executor.events import (
@@ -64,11 +65,9 @@ class ExecutorAgent(Workflow):
         prompt_resolver: Optional[PromptResolver] = None,
         **kwargs,
     ):
-        if "llm" in kwargs:
-            logger.debug(
-                "ExecutorAgent(llm=...) is deprecated. Use action_selector=LlamaIndexLLMSelector(llm)."
-            )
         llm = kwargs.pop("llm", None)
+        if isinstance(action_selector, LLM):
+            action_selector, llm = None, action_selector
         if action_selector is None and llm is not None:
             action_selector = LlamaIndexLLMSelector(llm)
         if action_selector is None:
