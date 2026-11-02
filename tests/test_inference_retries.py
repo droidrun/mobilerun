@@ -36,6 +36,10 @@ def _chat(content: str = "", **kwargs) -> ChatResponse:
     )
 
 
+def _msg(**kwargs) -> ChatResponse:
+    return ChatResponse(message=ChatMessage(role="assistant", **kwargs))
+
+
 @pytest.mark.parametrize(
     ("response", "stream", "category", "finish_reason"),
     [
@@ -62,71 +66,31 @@ def _chat(content: str = "", **kwargs) -> ChatResponse:
             None,
         ),
         (
-            ChatResponse(
-                message=ChatMessage(
-                    role="assistant",
-                    content="",
-                    additional_kwargs={
-                        "tool_calls": [{"id": "toolu_1", "name": "harmless"}]
-                    },
-                )
-            ),
+            _msg(additional_kwargs={"tool_calls": [{"id": "toolu_1"}]}),
             False,
             "tool_calls_only",
             None,
         ),
         (
-            ChatResponse(
-                message=ChatMessage(
-                    role="assistant",
-                    blocks=[
-                        ToolCallBlock(tool_name="harmless", tool_call_id="c1"),
-                    ],
-                )
-            ),
+            _msg(blocks=[ToolCallBlock(tool_name="harmless", tool_call_id="c1")]),
             False,
             "tool_calls_only",
             None,
         ),
         (
-            ChatResponse(
-                message=ChatMessage(
-                    role="assistant",
-                    content="",
-                    additional_kwargs={
-                        "content_blocks": [
-                            {
-                                "type": "tool_use",
-                                "id": "toolu_1",
-                                "name": "harmless",
-                                "input": {},
-                            }
-                        ]
-                    },
-                )
-            ),
+            _msg(additional_kwargs={"content_blocks": [{"type": "tool_use"}]}),
             False,
             "tool_calls_only",
             None,
         ),
         (
-            ChatResponse(
-                message=ChatMessage(
-                    role="assistant", blocks=[ThinkingBlock(content="t")]
-                )
-            ),
+            _msg(blocks=[ThinkingBlock(content="t")]),
             False,
             "thinking_only",
             None,
         ),
         (
-            ChatResponse(
-                message=ChatMessage(
-                    role="assistant",
-                    content="",
-                    additional_kwargs={"thinking": {"type": "thinking"}},
-                )
-            ),
+            _msg(additional_kwargs={"thinking": {"type": "thinking"}}),
             False,
             "thinking_only",
             None,
@@ -158,7 +122,6 @@ def _responses_raw(reason: str) -> dict:
         "id": "resp_1",
         "status": "incomplete",
         "incomplete_details": {"reason": reason},
-        "output": [],
     }
 
 
@@ -171,22 +134,12 @@ def _responses_raw(reason: str) -> dict:
             "max_output_tokens",
             "truncated",
         ),
-        (
-            ChatMessage(role="assistant", content=""),
-            "content_filter",
-            "provider_blocked",
-        ),
+        (ChatMessage(role="assistant"), "content_filter", "provider_blocked"),
     ],
 )
-@pytest.mark.parametrize("as_model", [False, True])
-def test_responses_incomplete_reason_is_classified(
-    message, reason, category, as_model
-) -> None:
-    raw = _responses_raw(reason)
-    if as_model:
-        raw = SimpleNamespace(model_dump=lambda: _responses_raw(reason))
+def test_responses_incomplete_reason_is_classified(message, reason, category) -> None:
     diagnostics = _empty_response_diagnostics(
-        ChatResponse(message=message, raw=raw), SimpleNamespace()
+        ChatResponse(message=message, raw=_responses_raw(reason)), SimpleNamespace()
     )
 
     assert diagnostics["category"] == category
@@ -195,8 +148,21 @@ def test_responses_incomplete_reason_is_classified(
     assert diagnostics["provider_request_id"] == "resp_1"
 
 
+def test_responses_incomplete_reason_reads_model_dump() -> None:
+    raw = SimpleNamespace(model_dump=lambda: _responses_raw("max_output_tokens"))
+    response = _msg(blocks=[ThinkingBlock(content="t")])
+    response.raw = raw
+
+    diagnostics = _empty_response_diagnostics(response, SimpleNamespace())
+
+    assert diagnostics["category"] == "truncated"
+
+
 def test_http_status_diagnostic_keeps_integer_status_only() -> None:
-    diagnostics = _empty_response_diagnostics(_chat(raw={"status_code": 200}), None)
+    response = _chat(
+        raw={"status": "incomplete"}, additional_kwargs={"status_code": 200}
+    )
+    diagnostics = _empty_response_diagnostics(response, None)
 
     assert diagnostics["http_status"] == 200
 
@@ -306,52 +272,6 @@ def test_empty_responses_log_category_and_still_retry(call, category) -> None:
         pytest.raises(ValueError, match="Empty response"),
     ):
         asyncio.run(call(llm))
-
-    diagnostics = [m for m in messages if "LLM response unusable" in m]
-    assert llm.calls == 3
-    assert len(diagnostics) == 3
-    assert f"'category': '{category}'" in diagnostics[0]
-    assert "hello" not in diagnostics[0]
-
-
-class ScriptedChatLLM:
-    def __init__(self, response: ChatResponse) -> None:
-        self.calls = 0
-        self._response = response
-
-    async def achat(self, *, messages):
-        self.calls += 1
-        return self._response
-
-
-@pytest.mark.parametrize(
-    ("response", "category"),
-    [
-        (
-            ChatResponse(
-                message=ChatMessage(
-                    role="assistant",
-                    content="",
-                    additional_kwargs={
-                        "tool_calls": [{"id": "toolu_1", "name": "harmless"}]
-                    },
-                )
-            ),
-            "tool_calls_only",
-        ),
-        (
-            _chat(raw={"response": {"candidates": [{"finishReason": "MAX_TOKENS"}]}}),
-            "truncated",
-        ),
-    ],
-)
-def test_adapter_empty_shapes_log_category_and_still_retry(response, category) -> None:
-    llm = ScriptedChatLLM(response)
-    with (
-        _captured_logs() as messages,
-        pytest.raises(ValueError, match="Empty response"),
-    ):
-        asyncio.run(acall_with_retries(llm, ["hello"], retries=3, delay=0))
 
     diagnostics = [m for m in messages if "LLM response unusable" in m]
     assert llm.calls == 3

@@ -37,7 +37,8 @@ def _as_dict(value: object) -> dict:
         return value
     dump = getattr(value, "model_dump", None)
     try:
-        return dump() if callable(dump) and isinstance(dump(), dict) else {}
+        dumped = dump() if callable(dump) else None
+        return dumped if isinstance(dumped, dict) else {}
     except Exception:
         return {}
 
@@ -47,17 +48,6 @@ def _first_choice(mapping: dict, key: str) -> dict:
     if isinstance(value, list) and value:
         return _as_dict(value[0])
     return {}
-
-
-def _content_block_types(message_extra: dict) -> list[str]:
-    blocks = message_extra.get("content_blocks")
-    if not isinstance(blocks, list):
-        return []
-    types: list[str] = []
-    for block in blocks:
-        if isinstance(block, dict) and isinstance(block.get("type"), str):
-            types.append(block["type"])
-    return types
 
 
 def _empty_response_diagnostics(
@@ -83,15 +73,22 @@ def _empty_response_diagnostics(
         _first_choice(nested, "candidates"),
     ]
 
-    def scalar(*names: str) -> object | None:
+    def scalar(
+        *names: str, types: tuple[type, ...] = (str, int, float, bool)
+    ) -> object | None:
         for src in sources:
             for name in names:
-                if isinstance(src.get(name), (str, int, float, bool)):
+                if type(src.get(name)) in types:  # exact: int must not match bool
                     return src[name]
         return None
 
     blocks = [type(b).__name__ for b in getattr(message, "blocks", None) or []]
-    block_types = _content_block_types(message_extra)
+    content_blocks = message_extra.get("content_blocks")
+    block_types = [
+        b["type"]
+        for b in (content_blocks if isinstance(content_blocks, list) else [])
+        if isinstance(b, dict) and isinstance(b.get("type"), str)
+    ]
     tool_calls = bool(
         getattr(message, "tool_calls", None)
         or extra.get("tool_calls")
@@ -132,9 +129,6 @@ def _empty_response_diagnostics(
     else:
         category = "empty_stream" if stream else "empty_content"
 
-    # Responses API "status" is a string like "incomplete", not an HTTP code.
-    http_status = scalar("status_code", "statusCode", "status")
-
     return {
         "category": category,
         "stream": stream,
@@ -145,7 +139,8 @@ def _empty_response_diagnostics(
         "block_types": blocks,
         "has_tool_calls": tool_calls,
         "provider_request_id": scalar("request_id", "requestId", "id"),
-        "http_status": http_status if type(http_status) is int else None,
+        # Responses "status" is a string like "incomplete", not an HTTP code.
+        "http_status": scalar("status_code", "statusCode", "status", types=(int,)),
         "raw_keys": sorted(map(str, raw)),
         "additional_kwargs_keys": sorted(map(str, extra)),
     }
@@ -227,7 +222,6 @@ async def acall_with_retries(
                     logger.info(f"{message.content}")
                 return response
             else:
-                logger.warning(f"Attempt {attempt} returned empty content")
                 _log_empty_response(response, llm, attempt, stream=stream)
                 last_exception = ValueError("Empty response content")
 
@@ -337,7 +331,6 @@ async def acomplete_with_retries(
                     logger.info(f"{response.text}")
                 return response
             else:
-                logger.warning(f"Attempt {attempt} returned empty content")
                 _log_empty_response(response, llm, attempt, stream=stream)
                 last_exception = ValueError("Empty response content")
 
