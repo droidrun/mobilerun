@@ -45,3 +45,21 @@ def test_normalized_matching_ignores_bounds_movement():
     moved = normalize_ui_state(_state(bounds="50,100,250,180"))
 
     assert compare_states(saved, moved, threshold=0.85).matches
+
+
+def test_snapshots_without_flags_match_states_with_flags():
+    unflagged = {"clickable": None, "enabled": None, "focused": None}
+    saved = normalize_ui_state(_state(extra=unflagged))
+    current = normalize_ui_state(
+        _state(extra={"clickable": None, "isClickable": True, "isEnabled": True})
+    )
+
+    assert compare_states(saved, current, threshold=0.85).matches
+    assert compare_states(current, saved, threshold=0.85).matches
+
+
+def test_recorded_flags_are_still_compared():
+    saved = normalize_ui_state(_state())
+    disabled = normalize_ui_state(_state(extra={"enabled": False}))
+
+    assert not compare_states(saved, disabled, threshold=0.85).matches
