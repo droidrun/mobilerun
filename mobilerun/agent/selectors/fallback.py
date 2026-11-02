@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,8 @@ from mobilerun.agent.selectors.base import (
 
 if TYPE_CHECKING:
     from llama_index.core.llms.llm import LLM
+
+logger = logging.getLogger("mobilerun")
 
 
 class FallbackSelector(BaseActionSelector):
@@ -54,6 +57,8 @@ class FallbackSelector(BaseActionSelector):
                 selection = await selector.select(request)
                 if selection is not None and selection.actions:
                     return selection
-            except self.errors:
-                pass
+            except self.errors as e:
+                logger.warning(
+                    "%s failed, falling back: %s", type(selector).__name__, e
+                )
         return await selectors[-1].select(request)

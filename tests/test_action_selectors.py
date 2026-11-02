@@ -463,6 +463,24 @@ def test_executor_selects_without_llm_and_receives_memory():
     asyncio.run(run())
 
 
+def test_executor_reports_abstention_as_failed_step():
+    async def run():
+        config, registry, action_ctx, shared, _, click = _dependencies()
+        agent = ExecutorAgent(
+            action_selector=DecisionSelector(_model(None)),
+            agent_config=config,
+            registry=registry,
+            action_ctx=action_ctx,
+            shared_state=shared,
+        )
+        result = await agent.run(subgoal="Select the contact")
+        assert result["outcome"] is False
+        assert result["action"] == {"action": "invalid"}
+        click.assert_not_awaited()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("agent_kind", ["fast_agent", "executor"])
 @pytest.mark.parametrize("prompt_source", ["default", "file", "inline"])
 @pytest.mark.parametrize("fallback", [False, True])

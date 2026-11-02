@@ -123,7 +123,7 @@ class TypeSafeDecisionModel:
             "memory": request.memory,
             "history": [
                 (
-                    {"role": str(item.role), "content": item.content or ""}
+                    {"role": item.role.value, "content": item.content or ""}
                     if isinstance(item, ChatMessage)
                     else item
                 )

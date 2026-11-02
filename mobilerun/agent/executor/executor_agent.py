@@ -24,7 +24,9 @@ from mobilerun.agent.executor.events import (
     ExecutorContextEvent,
     ExecutorResponseEvent,
 )
+from mobilerun.agent.fast_agent.xml_parser import ToolCall
 from mobilerun.agent.selectors import (
+    ActionSelection,
     ActionSelector,
     LlamaIndexLLMSelector,
     SelectionRequest,
@@ -187,11 +189,7 @@ class ExecutorAgent(Workflow):
                 include_device_actions=True,
             )
         else:
-            options = (
-                self.action_ctx.state_provider.get_action_candidates(self.action_ctx.ui)
-                if self.action_ctx.ui is not None
-                else ()
-            )
+            options = ()
         request = SelectionRequest(
             goal=ev.subgoal,
             state=self.action_ctx.ui,
@@ -225,7 +223,16 @@ class ExecutorAgent(Workflow):
                 )
         selection = await self.action_selector.select(request)
         if selection is None:
-            raise ValueError("Action selector abstained without a fallback")
+            # Report the abstention as a failed step so the Manager can replan.
+            reason = self.action_selector.abstention_reason
+            logger.warning(f"Executor action selector abstained: {reason}")
+            selection = ActionSelection(
+                actions=[ToolCall("invalid")],
+                thought=reason,
+                description=reason,
+                action_json=json.dumps({"action": "invalid"}),
+                response_text=reason,
+            )
         if len(selection.actions) > 1 or (
             not selection.actions and selection.action_json is None
         ):

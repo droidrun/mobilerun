@@ -327,3 +327,18 @@ def test_interrupted_requests_close_client_and_leave_no_background_tasks(
     asyncio.run(run())
     sdk.exit_client.assert_awaited_once()
     assert sdk.exit_client.call_args.args[0] is asyncio.CancelledError
+
+
+def test_chat_history_roles_are_plain_strings(sdk):
+    from llama_index.core.base.llms.types import ChatMessage
+
+    request = _request(
+        history=[
+            ChatMessage(role="user", content="Open Battery"),
+            ChatMessage(role="assistant", content="Clicked Settings"),
+        ]
+    )
+    asyncio.run(TypeSafeDecisionModel(api_key="test-only").decide(request))
+
+    history = sdk.client.system_one.call_args.kwargs["state"]["history"]
+    assert [item["role"] for item in history] == ["user", "assistant"]

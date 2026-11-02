@@ -195,6 +195,19 @@ class FastAgent(Workflow):
         self.native_tools = (
             tool_calling == "auto" and self.action_selector.supports_native_tool_calls
         )
+        if (
+            tool_calling == "auto"
+            and not self.native_tools
+            and any(
+                getattr(llm, "supports_native_tool_calls", False)
+                for llm in self.action_selector.llms
+            )
+        ):
+            logger.warning(
+                "%s does not support native tool calls; using XML tool calling. "
+                "Models that need native tool calls may produce no valid actions.",
+                type(self.action_selector).__name__,
+            )
 
         # Build tool descriptions and param types from registry
         self.tool_descriptions = self.registry.get_tool_descriptions_xml()
@@ -441,11 +454,7 @@ class FastAgent(Workflow):
                 include_device_actions=True,
             )
         else:
-            options = (
-                self.state_provider.get_action_candidates(ui_state)
-                if ui_state is not None
-                else ()
-            )
+            options = ()
         request = SelectionRequest(
             goal=await ctx.store.get(
                 "selection_goal", default=self.shared_state.instruction

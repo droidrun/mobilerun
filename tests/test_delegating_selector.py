@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -17,7 +18,7 @@ from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.droid.state import MobileAgentState
 from mobilerun.agent.executor.executor_agent import ExecutorAgent
 from mobilerun.agent.fast_agent.fast_agent import FastAgent
-from mobilerun.agent.fast_agent.xml_parser import ToolCall
+from mobilerun.agent.fast_agent.xml_parser import ToolCall, ToolCallParseStatus
 from mobilerun.agent.selectors import (
     ActionCandidate,
     ActionSelection,
@@ -207,12 +208,14 @@ def test_primary_errors_and_cancellation_propagate_without_delegating(error):
 )
 def test_delegation_cannot_be_batched_with_other_actions_or_take_parameters(actions):
     delegate = _selector(None)
-    with pytest.raises(ValueError, match="only selected action"):
-        asyncio.run(
-            DelegatingSelector(_selector(ActionSelection(actions)), delegate).select(
-                _request()
-            )
+    selection = asyncio.run(
+        DelegatingSelector(_selector(ActionSelection(actions)), delegate).select(
+            _request()
         )
+    )
+    assert selection.actions == []
+    assert selection.parse_result.status == ToolCallParseStatus.MALFORMED
+    assert "only selected action" in selection.parse_error
     delegate.select.assert_not_called()
 
 
@@ -240,8 +243,10 @@ def test_delegate_cannot_leak_virtual_action_to_execution(delegated):
     selector = DelegatingSelector(
         _selector(ActionSelection([ToolCall("delegate")])), _selector(delegated)
     )
-    with pytest.raises(ValueError, match="must select a real action"):
-        asyncio.run(selector.select(_request()))
+    selection = asyncio.run(selector.select(_request()))
+    assert selection.actions == []
+    assert selection.parse_result.status == ToolCallParseStatus.MALFORMED
+    assert "must select a real action" in selection.parse_error
 
 
 def test_json_only_custom_selector_can_delegate():
@@ -263,8 +268,9 @@ def test_json_only_delegation_also_rejects_unexpected_parameters():
         ),
         delegate,
     )
-    with pytest.raises(ValueError, match="takes no parameters"):
-        asyncio.run(selector.select(_request("executor")))
+    selection = asyncio.run(selector.select(_request("executor")))
+    assert json.loads(selection.action_json) == {"action": "invalid"}
+    assert "takes no parameters" in selection.parse_error
     delegate.select.assert_not_called()
 
 

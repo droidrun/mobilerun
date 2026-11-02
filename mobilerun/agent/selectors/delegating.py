@@ -129,15 +129,19 @@ class DelegatingSelector(BaseActionSelector):
         if len(actions) > 1 or any(
             action.name != "delegate" or action.parameters for action in actions
         ):
-            raise ValueError(
-                "Delegation must be the only selected action and takes no parameters"
+            return self._invalid(
+                selection,
+                request,
+                "Delegation must be the only selected action and takes no parameters",
             )
 
         logger.info("Delegating action selection to %s", type(self.delegate).__name__)
         delegated = await self.delegate.select(request)
         if self._calls_delegate(delegated):
-            raise ValueError(
-                "The delegate must select a real action, not delegate again"
+            return self._invalid(
+                delegated,
+                request,
+                "The delegate must select a real action, not delegate again",
             )
         if delegated is None:
             return None
@@ -166,6 +170,38 @@ class DelegatingSelector(BaseActionSelector):
             )
         )
         return replace(delegated, usage=usage, memory_update=memory_update)
+
+    @staticmethod
+    def _invalid(
+        selection: ActionSelection, request: SelectionRequest, error: str
+    ) -> ActionSelection:
+        """Report an unusable delegation like malformed output, not a crash."""
+        from mobilerun.agent.fast_agent.xml_parser import (
+            ToolCall,
+            ToolCallParseResult,
+            ToolCallParseStatus,
+        )
+
+        logger.warning(error)
+        if request.protocol == "executor":
+            return replace(
+                selection,
+                actions=[ToolCall("invalid")],
+                action_json=json.dumps({"action": "invalid"}),
+                parse_error=error,
+            )
+        end = selection.parse_result.end if selection.parse_result else None
+        return replace(
+            selection,
+            actions=[],
+            parse_error=error,
+            parse_result=ToolCallParseResult(
+                thought=selection.thought,
+                calls=[],
+                status=ToolCallParseStatus.MALFORMED,
+                end=end,
+            ),
+        )
 
     @staticmethod
     def _calls_delegate(selection: ActionSelection | None) -> bool:
