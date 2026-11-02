@@ -29,7 +29,7 @@ _BLOCKED = {
     "content_filter",
     "refusal",
 }
-_TRUNCATED = {"max_tokens", "length"}
+_TRUNCATED = {"max_tokens", "length", "max_output_tokens"}
 
 
 def _as_dict(value: object) -> dict:
@@ -104,8 +104,15 @@ def _empty_response_diagnostics(
         or message_extra.get("thinking")
         or "thinking" in block_types
     )
+    # OpenAI Responses reports truncation as status="incomplete" plus
+    # incomplete_details.reason instead of a finish_reason.
+    incomplete = _as_dict(raw.get("incomplete_details")) or _as_dict(
+        nested.get("incomplete_details")
+    )
+    incomplete_reason = incomplete.get("reason")
     reason = str(
-        scalar("finish_reason", "finishReason", "stop_reason", "stopReason") or ""
+        scalar("finish_reason", "finishReason", "stop_reason", "stopReason")
+        or (incomplete_reason if isinstance(incomplete_reason, str) else "")
     ).lower()
 
     if response is None:
@@ -125,6 +132,9 @@ def _empty_response_diagnostics(
     else:
         category = "empty_stream" if stream else "empty_content"
 
+    # Responses API "status" is a string like "incomplete", not an HTTP code.
+    http_status = scalar("status_code", "statusCode", "status")
+
     return {
         "category": category,
         "stream": stream,
@@ -135,7 +145,7 @@ def _empty_response_diagnostics(
         "block_types": blocks,
         "has_tool_calls": tool_calls,
         "provider_request_id": scalar("request_id", "requestId", "id"),
-        "http_status": scalar("status_code", "statusCode", "status"),
+        "http_status": http_status if type(http_status) is int else None,
         "raw_keys": sorted(map(str, raw)),
         "additional_kwargs_keys": sorted(map(str, extra)),
     }

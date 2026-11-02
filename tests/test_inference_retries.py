@@ -153,6 +153,54 @@ def test_empty_response_category(response, stream, category, finish_reason) -> N
     assert diagnostics["finish_reason"] == finish_reason
 
 
+def _responses_raw(reason: str) -> dict:
+    return {
+        "id": "resp_1",
+        "status": "incomplete",
+        "incomplete_details": {"reason": reason},
+        "output": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("message", "reason", "category"),
+    [
+        (ChatMessage(role="assistant", content=""), "max_output_tokens", "truncated"),
+        (
+            ChatMessage(role="assistant", blocks=[ThinkingBlock(content="t")]),
+            "max_output_tokens",
+            "truncated",
+        ),
+        (
+            ChatMessage(role="assistant", content=""),
+            "content_filter",
+            "provider_blocked",
+        ),
+    ],
+)
+@pytest.mark.parametrize("as_model", [False, True])
+def test_responses_incomplete_reason_is_classified(
+    message, reason, category, as_model
+) -> None:
+    raw = _responses_raw(reason)
+    if as_model:
+        raw = SimpleNamespace(model_dump=lambda: _responses_raw(reason))
+    diagnostics = _empty_response_diagnostics(
+        ChatResponse(message=message, raw=raw), SimpleNamespace()
+    )
+
+    assert diagnostics["category"] == category
+    assert diagnostics["finish_reason"] == reason
+    assert diagnostics["http_status"] is None
+    assert diagnostics["provider_request_id"] == "resp_1"
+
+
+def test_http_status_diagnostic_keeps_integer_status_only() -> None:
+    diagnostics = _empty_response_diagnostics(_chat(raw={"status_code": 200}), None)
+
+    assert diagnostics["http_status"] == 200
+
+
 def test_empty_response_diagnostics_never_leak_content() -> None:
     response = ChatResponse(
         message=ChatMessage(
