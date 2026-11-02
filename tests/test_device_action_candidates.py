@@ -338,3 +338,16 @@ def test_native_decision_run_uses_exact_app_launch_and_matching_image_dimensions
         )
 
     asyncio.run(run())
+
+
+def test_elements_with_off_screen_centres_are_not_clickable_candidates():
+    ctx = _context(
+        elements=[
+            {"index": 1, "text": "Visible", "bounds": "0,2300,1080,2460"},
+            {"index": 2, "text": "Scrolled away", "bounds": "0,-300,1080,100"},
+        ]
+    )
+
+    options = ctx.state_provider.get_action_candidates(ctx.ui)
+
+    assert [option.description for option in options] == ["Click Visible"]

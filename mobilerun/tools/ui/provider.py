@@ -250,13 +250,13 @@ class StateProvider:
                 left, top, right, bottom = map(int, bounds.split(","))
                 if right <= left or bottom <= top:
                     continue
-                if state.screen_width and (right <= 0 or left >= state.screen_width):
+                center = ((left + right) // 2, (top + bottom) // 2)
+                # Clicks tap the centre, so it must be on screen.
+                if state.screen_width and not 0 <= center[0] < state.screen_width:
                     continue
-                if state.screen_height and (bottom <= 0 or top >= state.screen_height):
+                if state.screen_height and not 0 <= center[1] < state.screen_height:
                     continue
-                UIState._avoid_tap_blockers(
-                    state, element, ((left + right) // 2, (top + bottom) // 2)
-                )
+                UIState._avoid_tap_blockers(state, element, center)
             except (KeyError, TypeError, ValueError):
                 continue
             label = element.get("text") or element.get("resourceId") or str(index)
