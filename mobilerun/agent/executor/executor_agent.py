@@ -232,6 +232,7 @@ class ExecutorAgent(Workflow):
                 description=reason,
                 action_json=json.dumps({"action": "invalid"}),
                 response_text=reason,
+                failure=reason,
             )
         if len(selection.actions) > 1 or (
             not selection.actions and selection.action_json is None
@@ -250,6 +251,14 @@ class ExecutorAgent(Workflow):
         """Translate the selection to the existing execution event."""
         logger.debug("⚙️ Processing executor response...")
         selection = await ctx.store.get("executor_selection")
+        if selection.failure is not None:
+            await ctx.store.set("executor_failure", selection.failure)
+            return ExecutorActionEvent(
+                action_json=json.dumps({"action": "invalid"}),
+                thought=selection.thought,
+                description=selection.failure,
+                full_response=ev.response,
+            )
         if selection.parse_error is not None:
             logger.error(
                 f"❌ Failed to parse executor response: {selection.parse_error}"
@@ -283,6 +292,19 @@ class ExecutorAgent(Workflow):
     ) -> ExecutorActionResultEvent:
         """Execute the action."""
         logger.debug(f"⚡ Executing action: {ev.description}")
+
+        failure = await ctx.store.get("executor_failure", default=None)
+        if failure is not None:
+            event = ExecutorActionResultEvent(
+                action={"action": "invalid"},
+                success=False,
+                error=failure,
+                summary=failure,
+                thought=ev.thought,
+                full_response=ev.full_response,
+            )
+            ctx.write_event_to_stream(event)
+            return event
 
         try:
             action_dict = json.loads(ev.action_json)

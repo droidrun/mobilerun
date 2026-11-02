@@ -95,6 +95,13 @@ def _malformed_tool_call_correction(attempt: int) -> str:
     )
 
 
+def _selection_failure_correction(failure: str, attempt: int) -> str:
+    return (
+        f"{failure} (attempt {attempt}/{_MALFORMED_TOOL_CALL_LIMIT}). "
+        "No tool was executed. Respond again with a valid action."
+    )
+
+
 def _truncate_message_text(message: ChatMessage, end: int) -> ChatMessage:
     """Cut text at offset ``end`` of ``message.content``, keeping non-text blocks."""
     blocks = []
@@ -486,6 +493,9 @@ class FastAgent(Workflow):
                     decision_variables,
                 )
         selection = await self.action_selector.select(request)
+        await ctx.store.set(
+            "selection_failure", selection.failure if selection else None
+        )
 
         if selection is None:
             return FastAgentEndEvent(
@@ -566,6 +576,7 @@ class FastAgent(Workflow):
         has_tool_calls = ev.code is not None
 
         if ev.tool_call_status == ToolCallParseStatus.MALFORMED and not has_tool_calls:
+            failure = await ctx.store.get("selection_failure", default=None)
             self._consecutive_malformed_tool_calls += 1
             attempt = self._consecutive_malformed_tool_calls
             logger.warning(
@@ -591,7 +602,10 @@ class FastAgent(Workflow):
                 event = FastAgentEndEvent(
                     success=False,
                     reason=(
-                        "Model produced malformed tool-call markup "
+                        f"{failure} ({_MALFORMED_TOOL_CALL_LIMIT} consecutive times); "
+                        "stopped to prevent a retry loop."
+                        if failure
+                        else "Model produced malformed tool-call markup "
                         f"{_MALFORMED_TOOL_CALL_LIMIT} consecutive times; stopped to prevent "
                         "a retry loop. Switch models or verify tool-call protocol compatibility."
                     ),
@@ -602,7 +616,11 @@ class FastAgent(Workflow):
             self.shared_state.message_history.append(
                 ChatMessage(
                     role="user",
-                    content=_malformed_tool_call_correction(attempt),
+                    content=(
+                        _selection_failure_correction(failure, attempt)
+                        if failure
+                        else _malformed_tool_call_correction(attempt)
+                    ),
                 )
             )
             return FastAgentInputEvent()

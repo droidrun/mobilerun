@@ -74,6 +74,8 @@ class ActionSelection:
     parse_result: ToolCallParseResult | None = None
     parse_error: str | None = None
     action_json: str | None = None
+    # Why this selection cannot run; reported to the model instead of executing.
+    failure: str | None = None
 
 
 class ActionSelector(ABC):

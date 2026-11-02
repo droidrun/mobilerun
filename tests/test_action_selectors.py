@@ -476,6 +476,7 @@ def test_executor_reports_abstention_as_failed_step():
         result = await agent.run(subgoal="Select the contact")
         assert result["outcome"] is False
         assert result["action"] == {"action": "invalid"}
+        assert result["error"] == agent.action_selector.abstention_reason
         click.assert_not_awaited()
 
     asyncio.run(run())

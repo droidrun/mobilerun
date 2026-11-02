@@ -188,13 +188,15 @@ class DelegatingSelector(BaseActionSelector):
                 selection,
                 actions=[ToolCall("invalid")],
                 action_json=json.dumps({"action": "invalid"}),
-                parse_error=error,
+                failure=error,
             )
         end = selection.parse_result.end if selection.parse_result else None
         return replace(
             selection,
             actions=[],
-            parse_error=error,
+            failure=error,
+            # Native tool calls without tool results would break the next request.
+            response=None if request.protocol == "native" else selection.response,
             parse_result=ToolCallParseResult(
                 thought=selection.thought,
                 calls=[],

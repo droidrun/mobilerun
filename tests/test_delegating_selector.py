@@ -215,7 +215,7 @@ def test_delegation_cannot_be_batched_with_other_actions_or_take_parameters(acti
     )
     assert selection.actions == []
     assert selection.parse_result.status == ToolCallParseStatus.MALFORMED
-    assert "only selected action" in selection.parse_error
+    assert "only selected action" in selection.failure
     delegate.select.assert_not_called()
 
 
@@ -246,7 +246,7 @@ def test_delegate_cannot_leak_virtual_action_to_execution(delegated):
     selection = asyncio.run(selector.select(_request()))
     assert selection.actions == []
     assert selection.parse_result.status == ToolCallParseStatus.MALFORMED
-    assert "must select a real action" in selection.parse_error
+    assert "must select a real action" in selection.failure
 
 
 def test_json_only_custom_selector_can_delegate():
@@ -270,7 +270,7 @@ def test_json_only_delegation_also_rejects_unexpected_parameters():
     )
     selection = asyncio.run(selector.select(_request("executor")))
     assert json.loads(selection.action_json) == {"action": "invalid"}
-    assert "takes no parameters" in selection.parse_error
+    assert "takes no parameters" in selection.failure
     delegate.select.assert_not_called()
 
 
@@ -464,3 +464,85 @@ def test_workflows_execute_only_delegated_device_actions(agent_kind, direction):
         assert "delegate" not in registry.tools
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("agent_kind", ["fast_agent", "executor"])
+def test_invalid_delegation_is_reported_to_the_model_and_never_executed(agent_kind):
+    async def run():
+        shared = MobileAgentState(instruction="Select Bob")
+        config = AgentConfig(after_sleep_action=0, streaming=False)
+        registry = ToolRegistry()
+        click = AsyncMock(return_value=ActionResult(success=True, summary="Clicked"))
+        registry.register("click", click, {"index": {"type": "number"}}, "Click")
+        state = UIState(
+            elements=[{"index": 2, "text": "Bob", "bounds": "0,0,40,40"}],
+            formatted_text="Bob",
+            focused_text="",
+            phone_state={},
+            screen_width=100,
+            screen_height=100,
+        )
+        driver = SimpleNamespace(supported=set(), supported_buttons=set())
+        provider = StateProvider(driver)
+        provider.get_state = AsyncMock(return_value=state)
+        action_ctx = ActionContext(driver, state, shared, provider)
+        delegate = _selector(None)
+        kwargs = dict(
+            action_selector=DelegatingSelector(
+                LlamaIndexLLMSelector(MockLLM()), delegate
+            ),
+            agent_config=config,
+            registry=registry,
+            action_ctx=action_ctx,
+            shared_state=shared,
+        )
+        if agent_kind == "fast_agent":
+            from mobilerun.agent.fast_agent.xml_parser import format_tool_calls
+
+            calls = [ToolCall("delegate"), ToolCall("click", {"index": 2})]
+            response = ChatResponse(
+                message=ChatMessage(
+                    role="assistant", content=f"Go\n{format_tool_calls(calls)}"
+                )
+            )
+        else:
+            response = _response("executor", ToolCall("delegate", {"why": "x"}))
+        with patch(
+            "mobilerun.agent.selectors.llama_index_llm.acall_with_retries",
+            new_callable=AsyncMock,
+            return_value=response,
+        ):
+            if agent_kind == "fast_agent":
+                result = await FastAgent(**kwargs, state_provider=provider).run(
+                    input="Select Bob"
+                )
+                assert not result["success"]
+                assert "only selected action" in result["reason"]
+                assert any(
+                    message.role == "user"
+                    and "only selected action" in (message.content or "")
+                    for message in shared.message_history
+                )
+            else:
+                result = await ExecutorAgent(**kwargs).run(subgoal="Select Bob")
+                assert result["outcome"] is False
+                assert "takes no parameters" in result["error"]
+        click.assert_not_awaited()
+        delegate.select.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_invalid_native_delegation_drops_unanswered_tool_calls():
+    response = ChatResponse(message=ChatMessage(role="assistant", content=""))
+    primary = _selector(
+        ActionSelection(
+            [ToolCall("delegate"), ToolCall("click", {"index": 2})],
+            response=response,
+        )
+    )
+    selection = asyncio.run(
+        DelegatingSelector(primary, _selector(None)).select(_request("native"))
+    )
+    assert selection.response is None
+    assert selection.failure
