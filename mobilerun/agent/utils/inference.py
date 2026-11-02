@@ -78,8 +78,11 @@ def _empty_response_diagnostics(
     ) -> object | None:
         for src in sources:
             for name in names:
-                if type(src.get(name)) in types:  # exact: int must not match bool
-                    return src[name]
+                value = src.get(name)
+                if isinstance(value, types) and not (
+                    isinstance(value, bool) and bool not in types
+                ):
+                    return value
         return None
 
     blocks = [type(b).__name__ for b in getattr(message, "blocks", None) or []]

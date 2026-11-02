@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from enum import Enum
 from types import SimpleNamespace
 
 import pytest
@@ -156,6 +157,17 @@ def test_responses_incomplete_reason_reads_model_dump() -> None:
     diagnostics = _empty_response_diagnostics(response, SimpleNamespace())
 
     assert diagnostics["category"] == "truncated"
+
+
+def test_str_enum_finish_reason_is_picked_up() -> None:
+    class FinishReason(str, Enum):
+        STOP = "stop"
+
+    diagnostics = _empty_response_diagnostics(
+        _chat(raw={"finish_reason": FinishReason.STOP}), SimpleNamespace()
+    )
+
+    assert diagnostics["finish_reason"] is not None
 
 
 def test_http_status_diagnostic_keeps_integer_status_only() -> None:
