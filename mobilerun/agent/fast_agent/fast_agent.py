@@ -44,7 +44,11 @@ from mobilerun.agent.fast_agent.xml_parser import (
     format_tool_calls,
     format_tool_results,
 )
-from mobilerun.agent.selectors import ActionSelector, LlamaIndexLLMSelector, SelectionRequest
+from mobilerun.agent.selectors import (
+    ActionSelector,
+    LlamaIndexLLMSelector,
+    SelectionRequest,
+)
 from mobilerun.agent.utils.chat_utils import limit_history
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.agent.utils.tracing_setup import record_langfuse_screenshot
@@ -231,7 +235,8 @@ class FastAgent(Workflow):
             system_text = PromptLoader.render_template(custom_prompt, template_context)
         else:
             system_text = await PromptLoader.load_prompt(
-                self.agent_config.get_fast_agent_system_prompt_path(), template_context,
+                self.agent_config.get_fast_agent_system_prompt_path(),
+                template_context,
             )
         return ChatMessage(role="system", content=system_text)
 
@@ -248,7 +253,8 @@ class FastAgent(Workflow):
             user_text = PromptLoader.render_template(custom_prompt, template_context)
         else:
             user_text = await PromptLoader.load_prompt(
-                self.agent_config.get_fast_agent_user_prompt_path(), template_context,
+                self.agent_config.get_fast_agent_user_prompt_path(),
+                template_context,
             )
         return ChatMessage(role="user", content=user_text)
 
@@ -431,12 +437,20 @@ class FastAgent(Workflow):
         tools = self.registry.get_signatures()
         if self.action_selector.requires_action_candidates:
             options = await self.state_provider.build_action_candidates(
-                self.action_ctx, tools, include_device_actions=True,
+                self.action_ctx,
+                tools,
+                include_device_actions=True,
             )
         else:
-            options = self.state_provider.get_action_candidates(ui_state) if ui_state is not None else ()
+            options = (
+                self.state_provider.get_action_candidates(ui_state)
+                if ui_state is not None
+                else ()
+            )
         request = SelectionRequest(
-            goal=await ctx.store.get("selection_goal", default=self.shared_state.instruction),
+            goal=await ctx.store.get(
+                "selection_goal", default=self.shared_state.instruction
+            ),
             state=ui_state,
             memory=self.shared_state.agent_memory,
             history=limited_history,
@@ -455,10 +469,13 @@ class FastAgent(Workflow):
             decision_variables = request.get_decision_prompt_variables()
             custom_prompt = self.prompt_resolver.get_prompt("decision_system")
             if custom_prompt:
-                request.instructions = PromptLoader.render_template(custom_prompt, decision_variables)
+                request.instructions = PromptLoader.render_template(
+                    custom_prompt, decision_variables
+                )
             else:
                 request.instructions = await PromptLoader.load_prompt(
-                    self.agent_config.get_decision_system_prompt_path(), decision_variables,
+                    self.agent_config.get_decision_system_prompt_path(),
+                    decision_variables,
                 )
         selection = await self.action_selector.select(request)
 
@@ -473,9 +490,11 @@ class FastAgent(Workflow):
         parse_result = selection.parse_result or ToolCallParseResult(
             thought=selection.thought,
             calls=selection.actions,
-            status=ToolCallParseStatus.VALID
-            if selection.actions
-            else ToolCallParseStatus.NO_MARKUP,
+            status=(
+                ToolCallParseStatus.VALID
+                if selection.actions
+                else ToolCallParseStatus.NO_MARKUP
+            ),
         )
         thought = parse_result.thought
         tool_calls = parse_result.calls

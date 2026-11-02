@@ -9,7 +9,11 @@ from selector_helpers import CompletedRun
 
 from mobilerun import DelegationConfig, MobileAgent, MobileConfig
 from mobilerun.agent.droid import droid_agent
-from mobilerun.agent.selectors import DecisionSelector, DelegatingSelector, LlamaIndexLLMSelector
+from mobilerun.agent.selectors import (
+    DecisionSelector,
+    DelegatingSelector,
+    LlamaIndexLLMSelector,
+)
 from mobilerun.agent.utils import llm_loader, selector_loader
 from mobilerun.cli import main as cli_main
 from mobilerun.config_manager import DecisionProfile, LLMProfile
@@ -28,16 +32,26 @@ def _config(reasoning=False, reverse=False):
         config.decision_profiles["delegate"] = DecisionProfile()
     else:
         config.decision_profiles[role] = DecisionProfile()
-        config.llm_profiles["delegate"] = LLMProfile(provider="OpenAI", model="test-delegate")
+        config.llm_profiles["delegate"] = LLMProfile(
+            provider="OpenAI", model="test-delegate"
+        )
     return config
 
 
 def _mock_models(monkeypatch):
     model = SimpleNamespace(decide=AsyncMock())
     llm = MockLLM()
-    decisions = Mock(side_effect=lambda profiles, names: {name: model for name in names})
-    llms = Mock(side_effect=lambda profiles, profile_names, **kw: {name: llm for name in profile_names})
-    monkeypatch.setattr(selector_loader, "load_decision_models_from_profiles", decisions)
+    decisions = Mock(
+        side_effect=lambda profiles, names: {name: model for name in names}
+    )
+    llms = Mock(
+        side_effect=lambda profiles, profile_names, **kw: {
+            name: llm for name in profile_names
+        }
+    )
+    monkeypatch.setattr(
+        selector_loader, "load_decision_models_from_profiles", decisions
+    )
     monkeypatch.setattr(selector_loader, "load_llms_from_profiles", llms)
     return model, llm, decisions, llms
 
@@ -46,13 +60,17 @@ def _mock_models(monkeypatch):
 def test_optional_delegation_config_round_trips(delegation):
     config = MobileConfig.from_dict({"agent": {"delegation": delegation}})
     restored = MobileConfig.from_dict(config.to_dict())
-    assert restored.agent.delegation == (None if delegation is None else DelegationConfig())
+    assert restored.agent.delegation == (
+        None if delegation is None else DelegationConfig()
+    )
     assert MobileConfig().agent.delegation is None
 
 
 @pytest.mark.parametrize("reasoning", [False, True])
 @pytest.mark.parametrize("reverse", [False, True])
-def test_loader_resolves_both_model_families_and_only_overrides_llms(monkeypatch, reasoning, reverse):
+def test_loader_resolves_both_model_families_and_only_overrides_llms(
+    monkeypatch, reasoning, reverse
+):
     config = _config(reasoning, reverse)
     model, llm, decisions, llms = _mock_models(monkeypatch)
     selector = selector_loader.load_delegating_selector(config, temperature=0.2)
@@ -60,7 +78,9 @@ def test_loader_resolves_both_model_families_and_only_overrides_llms(monkeypatch
     decision_role, llm_role = ("delegate", role) if reverse else (role, "delegate")
     decisions.assert_called_once_with(config.decision_profiles, [decision_role])
     llms.assert_called_once_with(
-        config.llm_profiles, profile_names=[llm_role], **{llm_role: {"temperature": 0.2}},
+        config.llm_profiles,
+        profile_names=[llm_role],
+        **{llm_role: {"temperature": 0.2}},
     )
     decision_selector = selector.delegate if reverse else selector.primary
     llm_selector = selector.primary if reverse else selector.delegate
@@ -95,7 +115,9 @@ def test_loader_requires_delegation_config():
 
 @pytest.mark.parametrize("reasoning", [False, True])
 @pytest.mark.parametrize("reverse", [False, True])
-def test_mobile_agent_loads_configured_chain_without_unused_action_llms(monkeypatch, reasoning, reverse):
+def test_mobile_agent_loads_configured_chain_without_unused_action_llms(
+    monkeypatch, reasoning, reverse
+):
     config = _config(reasoning, reverse)
     _mock_models(monkeypatch)
     helper = MockLLM()
@@ -116,7 +138,9 @@ def test_mobile_agent_loads_configured_chain_without_unused_action_llms(monkeypa
 
 
 @pytest.mark.parametrize("override", ["selector", "legacy_llms", "external_agent"])
-def test_explicit_overrides_and_external_agents_do_not_load_configured_chain(monkeypatch, override):
+def test_explicit_overrides_and_external_agents_do_not_load_configured_chain(
+    monkeypatch, override
+):
     config = _config()
     load = Mock(side_effect=AssertionError("The configured chain must not be loaded"))
     monkeypatch.setattr(droid_agent, "load_delegating_selector", load)
@@ -142,7 +166,11 @@ def test_cli_runs_new_config_with_existing_device_and_step_flags(monkeypatch, tm
         encoding="utf-8",
     )
     _mock_models(monkeypatch)
-    monkeypatch.setattr(llm_loader, "load_llms_from_profiles", Mock(return_value={"app_opener": MockLLM()}))
+    monkeypatch.setattr(
+        llm_loader,
+        "load_llms_from_profiles",
+        Mock(return_value={"app_opener": MockLLM()}),
+    )
     monkeypatch.setattr(cli_main, "_setup_cli_logging", lambda _: None)
     monkeypatch.setattr(cli_main, "print_telemetry_message", lambda **kw: None)
     monkeypatch.setattr(cli_main, "_cleanup_android_keyboard", AsyncMock())
@@ -153,10 +181,17 @@ def test_cli_runs_new_config_with_existing_device_and_step_flags(monkeypatch, tm
         return SimpleNamespace(run=lambda: CompletedRun())
 
     monkeypatch.setattr(cli_main, "MobileAgent", initialize)
-    assert asyncio.run(cli_main.run_command(
-        "Check timer and write a note", config_path=str(config_path),
-        device="emulator-5554", steps=30,
-    )) is True
+    assert (
+        asyncio.run(
+            cli_main.run_command(
+                "Check timer and write a note",
+                config_path=str(config_path),
+                device="emulator-5554",
+                steps=30,
+            )
+        )
+        is True
+    )
     assert len(agents) == 1
     agent = agents[0]
     assert isinstance(agent.action_selector, DelegatingSelector)

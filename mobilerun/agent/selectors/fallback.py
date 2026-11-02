@@ -25,23 +25,26 @@ class FallbackSelector(BaseActionSelector):
 
     @property
     def requires_action_candidates(self) -> bool:
-        return any(selector.requires_action_candidates
-                   for selector in (self.primary, *self.fallbacks))
+        return any(
+            selector.requires_action_candidates
+            for selector in (self.primary, *self.fallbacks)
+        )
 
     @property
     def screenshot_max_side(self) -> int | None:
-        limits = [selector.screenshot_max_side
-                  for selector in (self.primary, *self.fallbacks)]
-        return min(limit for limit in limits if limit is not None) if any(
-            limit is not None for limit in limits
-        ) else None
+        limits = [
+            selector.screenshot_max_side for selector in (self.primary, *self.fallbacks)
+        ]
+        return (
+            min(limit for limit in limits if limit is not None)
+            if any(limit is not None for limit in limits)
+            else None
+        )
 
     @property
     def llms(self) -> tuple["LLM", ...]:
         return tuple(
-            llm
-            for selector in (self.primary, *self.fallbacks)
-            for llm in selector.llms
+            llm for selector in (self.primary, *self.fallbacks) for llm in selector.llms
         )
 
     async def select(self, request: SelectionRequest) -> ActionSelection | None:

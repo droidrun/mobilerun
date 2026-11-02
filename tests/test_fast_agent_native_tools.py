@@ -131,7 +131,8 @@ def _run(
         )
         selection_kwargs = (
             {"action_selector": LlamaIndexLLMSelector(llm)}
-            if use_selector else {"llm": llm}
+            if use_selector
+            else {"llm": llm}
         )
         agent = FastAgent(
             **selection_kwargs,

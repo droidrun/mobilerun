@@ -184,9 +184,7 @@ class LangfuseSpanProcessor(SpanProcessor):
                 role_llms.append(("manager", agent.manager_llm))
             action_selector = agent.action_selector
             if action_selector is not None:
-                role_llms.extend(
-                    (action_role, llm) for llm in action_selector.llms
-                )
+                role_llms.extend((action_role, llm) for llm in action_selector.llms)
             role_llms.append(("app_opener", agent.app_opener_llm))
             if agent.output_model:
                 role_llms.append(("structured_output", agent.structured_output_llm))

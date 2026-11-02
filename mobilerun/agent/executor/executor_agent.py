@@ -23,7 +23,11 @@ from mobilerun.agent.executor.events import (
     ExecutorContextEvent,
     ExecutorResponseEvent,
 )
-from mobilerun.agent.selectors import ActionSelector, LlamaIndexLLMSelector, SelectionRequest
+from mobilerun.agent.selectors import (
+    ActionSelector,
+    LlamaIndexLLMSelector,
+    SelectionRequest,
+)
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.config_manager.config_manager import AgentConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
@@ -140,7 +144,8 @@ class ExecutorAgent(Workflow):
             prompt_text = PromptLoader.render_template(custom_prompt, variables)
         else:
             prompt_text = await PromptLoader.load_prompt(
-                self.agent_config.get_executor_system_prompt_path(), variables,
+                self.agent_config.get_executor_system_prompt_path(),
+                variables,
             )
 
         # Build message
@@ -178,17 +183,28 @@ class ExecutorAgent(Workflow):
         tools = self.registry.get_signatures(exclude=self._EXCLUDE_TOOLS)
         if self.action_selector.requires_action_candidates:
             options = await self.action_ctx.state_provider.build_action_candidates(
-                self.action_ctx, tools, include_device_actions=True,
+                self.action_ctx,
+                tools,
+                include_device_actions=True,
             )
         else:
-            options = self.action_ctx.state_provider.get_action_candidates(self.action_ctx.ui) if self.action_ctx.ui is not None else ()
+            options = (
+                self.action_ctx.state_provider.get_action_candidates(self.action_ctx.ui)
+                if self.action_ctx.ui is not None
+                else ()
+            )
         request = SelectionRequest(
             goal=ev.subgoal,
             state=self.action_ctx.ui,
             memory=self.shared_state.agent_memory,
             history=await ctx.store.get("executor_history", default=[]),
-            screenshot=await ctx.store.get("executor_screenshot", default=self.shared_state.screenshot)
-            if self.vision else None,
+            screenshot=(
+                await ctx.store.get(
+                    "executor_screenshot", default=self.shared_state.screenshot
+                )
+                if self.vision
+                else None
+            ),
             tools=tools,
             variables=self.shared_state.custom_variables,
             messages=messages,
@@ -200,15 +216,20 @@ class ExecutorAgent(Workflow):
             decision_variables = request.get_decision_prompt_variables()
             custom_prompt = self.prompt_resolver.get_prompt("decision_system")
             if custom_prompt:
-                request.instructions = PromptLoader.render_template(custom_prompt, decision_variables)
+                request.instructions = PromptLoader.render_template(
+                    custom_prompt, decision_variables
+                )
             else:
                 request.instructions = await PromptLoader.load_prompt(
-                    self.agent_config.get_decision_system_prompt_path(), decision_variables,
+                    self.agent_config.get_decision_system_prompt_path(),
+                    decision_variables,
                 )
         selection = await self.action_selector.select(request)
         if selection is None:
             raise ValueError("Action selector abstained without a fallback")
-        if len(selection.actions) > 1 or (not selection.actions and selection.action_json is None):
+        if len(selection.actions) > 1 or (
+            not selection.actions and selection.action_json is None
+        ):
             raise ValueError("Executor requires exactly one selected action")
         await ctx.store.set("executor_selection", selection)
         response_text = selection.response_text
@@ -224,7 +245,9 @@ class ExecutorAgent(Workflow):
         logger.debug("⚙️ Processing executor response...")
         selection = await ctx.store.get("executor_selection")
         if selection.parse_error is not None:
-            logger.error(f"❌ Failed to parse executor response: {selection.parse_error}")
+            logger.error(
+                f"❌ Failed to parse executor response: {selection.parse_error}"
+            )
             return ExecutorActionEvent(
                 action_json=json.dumps({"action": "invalid"}),
                 thought=selection.thought,

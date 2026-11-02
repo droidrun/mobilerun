@@ -3,7 +3,11 @@ import logging
 
 from llama_index.core.llms.llm import LLM
 
-from mobilerun.agent.selectors.base import ActionSelection, BaseActionSelector, SelectionRequest
+from mobilerun.agent.selectors.base import (
+    ActionSelection,
+    BaseActionSelector,
+    SelectionRequest,
+)
 from mobilerun.agent.usage import get_usage_from_response
 from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.inference import acall_with_retries
@@ -37,7 +41,10 @@ class LlamaIndexLLMSelector(BaseActionSelector):
             native_tool_kwargs,
             parse_native_tool_calls,
         )
-        from mobilerun.agent.fast_agent.xml_parser import ToolCall, parse_tool_calls_detailed
+        from mobilerun.agent.fast_agent.xml_parser import (
+            ToolCall,
+            parse_tool_calls_detailed,
+        )
 
         if not request.messages:
             raise ValueError("LLM selection requires messages in the request")
@@ -71,7 +78,9 @@ class LlamaIndexLLMSelector(BaseActionSelector):
         except Exception as e:
             if request.protocol != "executor":
                 raise
-            raise RuntimeError(f"Error calling LLM in executor: {describe_error(e)}") from e
+            raise RuntimeError(
+                f"Error calling LLM in executor: {describe_error(e)}"
+            ) from e
         if response is None and request.protocol != "executor":
             return None
         usage = None
@@ -97,9 +106,10 @@ class LlamaIndexLLMSelector(BaseActionSelector):
             try:
                 action = json.loads(parsed["action"])
                 actions = [
-                    ToolCall(action["action"], {
-                        k: v for k, v in action.items() if k != "action"
-                    })
+                    ToolCall(
+                        action["action"],
+                        {k: v for k, v in action.items() if k != "action"},
+                    )
                 ]
             except (ValueError, KeyError, TypeError):
                 pass  # Keep the original JSON for the executor's error reporting.
@@ -116,7 +126,9 @@ class LlamaIndexLLMSelector(BaseActionSelector):
         if request.protocol == "native":
             parsed = parse_native_tool_calls(response.message, request.param_types)
         else:
-            parsed = parse_tool_calls_detailed(response.message.content, request.param_types)
+            parsed = parse_tool_calls_detailed(
+                response.message.content, request.param_types
+            )
         return ActionSelection(
             actions=parsed.calls,
             thought=parsed.thought,

@@ -4,7 +4,11 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 from mobilerun.agent.droid.events import ResultEvent
-from mobilerun.agent.selectors import ActionSelection, BaseActionSelector, SelectionRequest
+from mobilerun.agent.selectors import (
+    ActionSelection,
+    BaseActionSelector,
+    SelectionRequest,
+)
 
 if TYPE_CHECKING:
     from llama_index.core.llms.llm import LLM

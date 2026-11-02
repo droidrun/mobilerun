@@ -154,9 +154,13 @@ class DecisionConfig:
 class DelegationConfig:
     """Named LLM/decision profiles for an explicit, model-chosen handoff."""
 
-    primary: str | None = None  # Defaults to executor or fast_agent for the active mode.
+    primary: str | None = (
+        None  # Defaults to executor or fast_agent for the active mode.
+    )
     delegate: str = "delegate"
-    description: str = "Ask the delegate model to choose the next action when you need its capabilities."
+    description: str = (
+        "Ask the delegate model to choose the next action when you need its capabilities."
+    )
 
 
 @dataclass
@@ -429,7 +433,8 @@ class MobileConfig:
             decision=DecisionConfig(**(agent_data.get("decision") or {})),
             delegation=(
                 DelegationConfig(**agent_data["delegation"])
-                if agent_data.get("delegation") is not None else None
+                if agent_data.get("delegation") is not None
+                else None
             ),
         )
 

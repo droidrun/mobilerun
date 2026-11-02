@@ -74,29 +74,42 @@ def test_decision_config_round_trip_and_custom_path(tmp_path, monkeypatch):
     prompt = tmp_path / "decision.jinja2"
     prompt.write_text("Goal: {{ goal }}; scroll={{ can_scroll }}", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    config = MobileConfig.from_dict({
-        "agent": {"decision": {"system_prompt": prompt.name}},
-    })
+    config = MobileConfig.from_dict(
+        {
+            "agent": {"decision": {"system_prompt": prompt.name}},
+        }
+    )
     restored = MobileConfig.from_dict(config.to_dict())
 
     assert isinstance(restored.agent.decision, DecisionConfig)
     assert restored.agent.get_decision_system_prompt_path() == str(prompt)
-    assert asyncio.run(PromptLoader.load_prompt(
-        restored.agent.get_decision_system_prompt_path(),
-        _request("swipe").get_decision_prompt_variables(),
-    )) == "Goal: Check Battery status; scroll=True"
+    assert (
+        asyncio.run(
+            PromptLoader.load_prompt(
+                restored.agent.get_decision_system_prompt_path(),
+                _request("swipe").get_decision_prompt_variables(),
+            )
+        )
+        == "Goal: Check Battery status; scroll=True"
+    )
 
 
 def test_decision_prompt_variables_support_custom_templates():
-    resolver = PromptResolver(custom_prompts={"decision_system": (
-        "{{ goal }} {{ protocol }} {{ can_type }} {{ can_scroll }} "
-        "{{ can_complete }} {{ vision }} {{ variables.name }} "
-        "{{ available_tools | sort | join(',') }} "
-        "registered_type={{ 'type' in registered_tools }}"
-    )})
+    resolver = PromptResolver(
+        custom_prompts={
+            "decision_system": (
+                "{{ goal }} {{ protocol }} {{ can_type }} {{ can_scroll }} "
+                "{{ can_complete }} {{ vision }} {{ variables.name }} "
+                "{{ available_tools | sort | join(',') }} "
+                "registered_type={{ 'type' in registered_tools }}"
+            )
+        }
+    )
     text = PromptLoader.render_template(
         resolver.get_prompt("decision_system"),
-        _request("click", "swipe", variables={"name": "Battery"}).get_decision_prompt_variables(),
+        _request(
+            "click", "swipe", variables={"name": "Battery"}
+        ).get_decision_prompt_variables(),
     )
 
     assert text == (

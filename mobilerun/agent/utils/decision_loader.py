@@ -15,7 +15,9 @@ _providers: dict[str, Callable[..., DecisionModel]] = {
 }
 
 
-def register_decision_provider(name: str, factory: Callable[..., DecisionModel]) -> None:
+def register_decision_provider(
+    name: str, factory: Callable[..., DecisionModel]
+) -> None:
     name = name.strip().lower()
     if not name:
         raise ValueError("Decision provider name cannot be empty")
@@ -40,7 +42,9 @@ def load_decision_model(
     logger.debug(f"🔄 Loading decision model from provider: {name}")
     instance = _providers[name](**kwargs)
     if not callable(getattr(instance, "decide", None)):
-        raise TypeError("Decision provider must return a model implementing decide(request)")
+        raise TypeError(
+            "Decision provider must return a model implementing decide(request)"
+        )
     logger.debug(f"🧠 Decision model ready: {name}")
     return instance
 

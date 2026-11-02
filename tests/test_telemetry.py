@@ -296,9 +296,11 @@ def test_mobile_agent_lifecycle_forwards_disabled_telemetry_config(
     monkeypatch.setattr(agent_module, "build_tool_registry", fake_build_tool_registry)
     monkeypatch.setattr(agent_module, "capture", fake_capture)
     monkeypatch.setattr(agent_module, "flush", fake_flush)
-    monkeypatch.setattr(agent_module, "load_agent_llms", lambda **kw: {
-        name: MockLLM() for name in ("fast_agent", "app_opener")
-    })
+    monkeypatch.setattr(
+        agent_module,
+        "load_agent_llms",
+        lambda **kw: {name: MockLLM() for name in ("fast_agent", "app_opener")},
+    )
 
     agent = agent_module.MobileAgent(
         "Check telemetry lifecycle",

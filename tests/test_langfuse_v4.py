@@ -266,7 +266,9 @@ def test_langfuse_base_url_precedence(
 
 
 @pytest.mark.parametrize("reasoning", [False, True])
-@pytest.mark.parametrize("selector_kind", ["none", "non_llm", "single_llm", "multi_llm"])
+@pytest.mark.parametrize(
+    "selector_kind", ["none", "non_llm", "single_llm", "multi_llm"]
+)
 def test_processor_normalizes_agent_and_llm_metadata(reasoning, selector_kind):
     class LLM:
         model = "test-model"
@@ -330,7 +332,9 @@ def test_processor_normalizes_agent_and_llm_metadata(reasoning, selector_kind):
     assert metadata["output_model"] == "Output"
     assert metadata["reasoning"] is reasoning
     action_role = "executor" if reasoning else "fast_agent"
-    expected_roles = (["manager"] if reasoning else []) + [action_role] * len(selector_llms)
+    expected_roles = (["manager"] if reasoning else []) + [action_role] * len(
+        selector_llms
+    )
     expected_roles.extend(["app_opener", "structured_output"])
     expected_llms = []
     for role in expected_roles:

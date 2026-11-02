@@ -13,7 +13,9 @@ from mobilerun.agent.utils.llm_picker import load_llms_from_profiles
 from mobilerun.config_manager.config_manager import MobileConfig
 
 
-def _load_selector(config: MobileConfig, profile: str, **llm_kwargs: Any) -> ActionSelector:
+def _load_selector(
+    config: MobileConfig, profile: str, **llm_kwargs: Any
+) -> ActionSelector:
     # Match normal action-role resolution: a decision profile takes precedence.
     if profile in config.decision_profiles:
         models = load_decision_models_from_profiles(config.decision_profiles, [profile])
@@ -30,12 +32,18 @@ def _load_selector(config: MobileConfig, profile: str, **llm_kwargs: Any) -> Act
     )
 
 
-def load_delegating_selector(config: MobileConfig, **llm_kwargs: Any) -> DelegatingSelector:
+def load_delegating_selector(
+    config: MobileConfig, **llm_kwargs: Any
+) -> DelegatingSelector:
     """Resolve both sides from named profiles without changing helper LLM roles."""
     delegation = config.agent.delegation
     if delegation is None:
-        raise ValueError("agent.delegation must be configured to load a DelegatingSelector")
-    primary = delegation.primary or ("executor" if config.agent.reasoning else "fast_agent")
+        raise ValueError(
+            "agent.delegation must be configured to load a DelegatingSelector"
+        )
+    primary = delegation.primary or (
+        "executor" if config.agent.reasoning else "fast_agent"
+    )
     return DelegatingSelector(
         primary=_load_selector(config, primary, **llm_kwargs),
         delegate=_load_selector(config, delegation.delegate, **llm_kwargs),

@@ -13,15 +13,23 @@ from mobilerun.agent.decision_models.typesafe import (
     _prepare_screenshot,
 )
 from mobilerun.agent.fast_agent.xml_parser import ToolCall
-from mobilerun.agent.selectors import ActionCandidate, DecisionSelector, SelectionRequest
+from mobilerun.agent.selectors import (
+    ActionCandidate,
+    DecisionSelector,
+    SelectionRequest,
+)
 
 
 @pytest.fixture
 def sdk(monkeypatch):
     """Replace only the external SDK; exercise the real adapter and lifecycle."""
-    client = SimpleNamespace(system_one=AsyncMock(return_value=SimpleNamespace(
-        choices={"action": SimpleNamespace(choice="action_0", confidence=0.9)},
-    )))
+    client = SimpleNamespace(
+        system_one=AsyncMock(
+            return_value=SimpleNamespace(
+                choices={"action": SimpleNamespace(choice="action_0", confidence=0.9)},
+            )
+        )
+    )
     exit_client = AsyncMock(return_value=False)
 
     class ScopedClient:
@@ -32,11 +40,15 @@ def sdk(monkeypatch):
             return await exit_client(*args)
 
     factory = Mock(return_value=ScopedClient())
-    monkeypatch.setitem(sys.modules, "typesafe_sdk", SimpleNamespace(
-        AsyncTypeSafeClient=factory,
-        Choice=lambda **kwargs: kwargs,
-        Image=lambda data: SimpleNamespace(data=data),
-    ))
+    monkeypatch.setitem(
+        sys.modules,
+        "typesafe_sdk",
+        SimpleNamespace(
+            AsyncTypeSafeClient=factory,
+            Choice=lambda **kwargs: kwargs,
+            Image=lambda data: SimpleNamespace(data=data),
+        ),
+    )
     return SimpleNamespace(client=client, factory=factory, exit_client=exit_client)
 
 
@@ -57,15 +69,18 @@ def _image(size, mode="RGB", format="PNG"):
     return output.getvalue()
 
 
-@pytest.mark.parametrize("size,expected", [
-    ((1080, 2400), (706, 1568)),
-    ((2400, 1080), (1568, 706)),
-    ((1568, 1568), (1568, 1568)),
-    ((280, 280), (280, 280)),
-    ((100, 200), (280, 560)),
-    ((100, 2400), (280, 1568)),
-    ((2400, 100), (1568, 280)),
-])
+@pytest.mark.parametrize(
+    "size,expected",
+    [
+        ((1080, 2400), (706, 1568)),
+        ((2400, 1080), (1568, 706)),
+        ((1568, 1568), (1568, 1568)),
+        ((280, 280), (280, 280)),
+        ((100, 200), (280, 560)),
+        ((100, 2400), (280, 1568)),
+        ((2400, 100), (1568, 280)),
+    ],
+)
 def test_screenshot_fits_typesafe_limits_without_cropping(size, expected):
     prepared = _prepare_screenshot(_image(size))
     with Image.open(BytesIO(prepared)) as image:
@@ -113,7 +128,9 @@ def test_screenshot_rejects_invalid_image():
 def test_screenshot_rejects_animation():
     output = BytesIO()
     Image.new("RGB", (400, 400), "red").save(
-        output, format="PNG", save_all=True,
+        output,
+        format="PNG",
+        save_all=True,
         append_images=[Image.new("RGB", (400, 400), "blue")],
     )
     with pytest.raises(ValueError, match="still images"):
@@ -134,11 +151,14 @@ def test_photo_like_screenshot_upload_is_smaller_and_baseline_jpeg():
 
 @pytest.mark.parametrize("vision", [False, True])
 @pytest.mark.parametrize("instructions", ["", "Custom decision instructions"])
-def test_decision_prepares_vision_and_opts_in_only_for_image_requests(sdk, vision, instructions):
+def test_decision_prepares_vision_and_opts_in_only_for_image_requests(
+    sdk, vision, instructions
+):
     headers = {"X-Custom": "preserve"}
     model = TypeSafeDecisionModel(api_key="test-only", headers=headers)
     request = SelectionRequest(
-        "Open Battery", memory="Do not change settings",
+        "Open Battery",
+        memory="Do not change settings",
         history=[{"action": "click", "result": "Opened Settings"}],
         tools={"click": {}},
         options=(ActionCandidate(ToolCall("click", {"index": 7}), "Click Battery"),),
@@ -168,14 +188,20 @@ def test_decision_prepares_vision_and_opts_in_only_for_image_requests(sdk, visio
     sdk.exit_client.assert_awaited_once_with(None, None, None)
 
 
-@pytest.mark.parametrize("choice,confidence,expected_index", [
-    ("action_0", 0.49, None),
-    ("action_0", 0.5, 0),
-    ("abstain", 0.9, None),
-])
-def test_confidence_threshold_and_explicit_abstention(sdk, choice, confidence, expected_index):
+@pytest.mark.parametrize(
+    "choice,confidence,expected_index",
+    [
+        ("action_0", 0.49, None),
+        ("action_0", 0.5, 0),
+        ("abstain", 0.9, None),
+    ],
+)
+def test_confidence_threshold_and_explicit_abstention(
+    sdk, choice, confidence, expected_index
+):
     sdk.client.system_one.return_value.choices["action"] = SimpleNamespace(
-        choice=choice, confidence=confidence,
+        choice=choice,
+        confidence=confidence,
     )
 
     decision = asyncio.run(TypeSafeDecisionModel(min_confidence=0.5).decide(_request()))
@@ -186,7 +212,9 @@ def test_confidence_threshold_and_explicit_abstention(sdk, choice, confidence, e
         assert decision.option_index == expected_index
 
 
-@pytest.mark.parametrize("confidence", [-0.01, 1.01, float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize(
+    "confidence", [-0.01, 1.01, float("nan"), float("inf"), -float("inf")]
+)
 def test_invalid_provider_confidence_is_rejected(sdk, confidence):
     sdk.client.system_one.return_value.choices["action"].confidence = confidence
 
@@ -199,7 +227,9 @@ def test_invalid_provider_confidence_is_rejected(sdk, confidence):
 @pytest.mark.parametrize("choice", [None, "unknown", "complete_success"])
 def test_missing_unknown_and_unavailable_completion_choices_are_rejected(sdk, choice):
     sdk.client.system_one.return_value.choices = (
-        {} if choice is None else {"action": SimpleNamespace(choice=choice, confidence=0.9)}
+        {}
+        if choice is None
+        else {"action": SimpleNamespace(choice=choice, confidence=0.9)}
     )
 
     with pytest.raises(ValueError, match="unknown or missing action choice"):
@@ -216,9 +246,11 @@ def test_completion_choices_require_the_completion_tool(sdk, success):
         "complete_success" if success else "complete_failure"
     )
 
-    decision = asyncio.run(TypeSafeDecisionModel().decide(
-        _request(tools={"click": {}, "complete": {}}),
-    ))
+    decision = asyncio.run(
+        TypeSafeDecisionModel().decide(
+            _request(tools={"click": {}, "complete": {}}),
+        )
+    )
 
     assert decision.success is success
     assert decision.option_index is None
@@ -264,7 +296,9 @@ def test_provider_failure_closes_client_and_stops_progress_task(sdk):
 
 
 @pytest.mark.parametrize("interrupt", ["cancel", "timeout"])
-def test_interrupted_requests_close_client_and_leave_no_background_tasks(sdk, interrupt):
+def test_interrupted_requests_close_client_and_leave_no_background_tasks(
+    sdk, interrupt
+):
     async def run():
         started = asyncio.Event()
 

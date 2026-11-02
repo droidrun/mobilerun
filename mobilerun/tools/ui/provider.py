@@ -262,11 +262,15 @@ class StateProvider:
             label = element.get("text") or element.get("resourceId") or str(index)
             if element.get("isClickable", True):
                 options.append(
-                    ActionCandidate(ToolCall("click", {"index": index}), f"Click {label}")
+                    ActionCandidate(
+                        ToolCall("click", {"index": index}), f"Click {label}"
+                    )
                 )
             if element.get("isLongClickable", False):
                 options.append(
-                    ActionCandidate(ToolCall("long_press", {"index": index}), f"Long press {label}")
+                    ActionCandidate(
+                        ToolCall("long_press", {"index": index}), f"Long press {label}"
+                    )
                 )
         return tuple(options)
 
@@ -286,32 +290,51 @@ class StateProvider:
             return tuple(options)
 
         if "system_button" in tools:
-            navigation = {"back", "home", "enter", "recent", "recents", "app_switch", "overview"}
-            for button in sorted(getattr(self.driver, "supported_buttons", set()) & navigation):
-                options.append(ActionCandidate(
-                    ToolCall("system_button", {"button": button}),
-                    f"Press {button}: " + {
-                        "back": "go back or dismiss the keyboard/dialog",
-                        "home": "go to the home screen without closing apps",
-                        "enter": "submit the focused field",
-                    }.get(button, "show recent apps"),
-                ))
+            navigation = {
+                "back",
+                "home",
+                "enter",
+                "recent",
+                "recents",
+                "app_switch",
+                "overview",
+            }
+            for button in sorted(
+                getattr(self.driver, "supported_buttons", set()) & navigation
+            ):
+                options.append(
+                    ActionCandidate(
+                        ToolCall("system_button", {"button": button}),
+                        f"Press {button}: "
+                        + {
+                            "back": "go back or dismiss the keyboard/dialog",
+                            "home": "go to the home screen without closing apps",
+                            "enter": "submit the focused field",
+                        }.get(button, "show recent apps"),
+                    )
+                )
 
         if "swipe" in tools:
             options.extend(self._swipe_candidates(ctx.ui))
         if "wait" in tools:
-            options.append(ActionCandidate(
-                ToolCall("wait", {"duration": 1.0}),
-                "Wait 1 second for a loading screen, animation, or UI update",
-            ))
-        if "open_app" in tools and "get_apps" in getattr(self.driver, "supported", set()):
+            options.append(
+                ActionCandidate(
+                    ToolCall("wait", {"duration": 1.0}),
+                    "Wait 1 second for a loading screen, animation, or UI update",
+                )
+            )
+        if "open_app" in tools and "get_apps" in getattr(
+            self.driver, "supported", set()
+        ):
             options.extend(await self._app_candidates(ctx, tools["open_app"]))
 
         # A provider may already supply some device actions. Preserve its order and
         # avoid duplicate choices without touching the executable parameters.
         unique: list[ActionCandidate] = []
         for option in options:
-            if option.action.name in tools and not any(option.action == item.action for item in unique):
+            if option.action.name in tools and not any(
+                option.action == item.action for item in unique
+            ):
                 unique.append(option)
         return tuple(unique)
 
@@ -342,25 +365,43 @@ class StateProvider:
         def point(x: float, y: float) -> list[int]:
             return [round((width - 1) * x), round((height - 1) * y)]
 
-        return [ActionCandidate(
-            ToolCall("swipe", {"coordinate": point(*start), "coordinate2": point(*end), "duration": 0.5}),
-            description,
-        ) for start, end, description in (
-            ((0.5, 0.8), (0.5, 0.2), "Swipe up to scroll down or reveal apps from the home screen"),
-            ((0.5, 0.2), (0.5, 0.8), "Swipe down to scroll up"),
-            ((0.8, 0.5), (0.2, 0.5), "Swipe left to the next page or panel"),
-            ((0.2, 0.5), (0.8, 0.5), "Swipe right to the previous page or panel"),
-        )]
+        return [
+            ActionCandidate(
+                ToolCall(
+                    "swipe",
+                    {
+                        "coordinate": point(*start),
+                        "coordinate2": point(*end),
+                        "duration": 0.5,
+                    },
+                ),
+                description,
+            )
+            for start, end, description in (
+                (
+                    (0.5, 0.8),
+                    (0.5, 0.2),
+                    "Swipe up to scroll down or reveal apps from the home screen",
+                ),
+                ((0.5, 0.2), (0.5, 0.8), "Swipe down to scroll up"),
+                ((0.8, 0.5), (0.2, 0.5), "Swipe left to the next page or panel"),
+                ((0.2, 0.5), (0.8, 0.5), "Swipe right to the previous page or panel"),
+            )
+        ]
 
     async def _app_candidates(
-        self, ctx: ActionContext, signature: dict[str, Any],
+        self,
+        ctx: ActionContext,
+        signature: dict[str, Any],
     ) -> list[ActionCandidate]:
         from mobilerun.agent.action_context import ActionCandidateApp
         from mobilerun.agent.fast_agent.xml_parser import ToolCall
         from mobilerun.agent.selectors.base import ActionCandidate
 
         params = signature.get("parameters", {})
-        parameter = next((name for name in ("app_id", "bundle_id", "text") if name in params), None)
+        parameter = next(
+            (name for name in ("app_id", "bundle_id", "text") if name in params), None
+        )
         if parameter is None:
             return []
         if ctx.action_candidate_apps is None:
@@ -375,21 +416,42 @@ class StateProvider:
             for app in apps:
                 if not isinstance(app, dict) or app.get("launchable") is False:
                     continue
-                identifier = next((app.get(key) for key in (
-                    "package", "package_name", "bundle_id", "app_id",
-                ) if isinstance(app.get(key), str) and app[key].strip()), None)
+                identifier = next(
+                    (
+                        app.get(key)
+                        for key in (
+                            "package",
+                            "package_name",
+                            "bundle_id",
+                            "app_id",
+                        )
+                        if isinstance(app.get(key), str) and app[key].strip()
+                    ),
+                    None,
+                )
                 if identifier:
                     label = app.get("label") or app.get("name") or identifier
-                    installed[identifier] = ActionCandidateApp(identifier=identifier, label=str(label))
-            ctx.action_candidate_apps = tuple(sorted(
-                installed.values(), key=lambda app: (app.label.casefold(), app.identifier),
-            ))
+                    installed[identifier] = ActionCandidateApp(
+                        identifier=identifier, label=str(label)
+                    )
+            ctx.action_candidate_apps = tuple(
+                sorted(
+                    installed.values(),
+                    key=lambda app: (app.label.casefold(), app.identifier),
+                )
+            )
 
-        current_app = ctx.ui.phone_state.get("packageName") if ctx.ui is not None else None
-        return [ActionCandidate(
-            ToolCall("open_app", {parameter: app.identifier}),
-            f"Open app {app.label} ({app.identifier})",
-        ) for app in ctx.action_candidate_apps if app.identifier != current_app]
+        current_app = (
+            ctx.ui.phone_state.get("packageName") if ctx.ui is not None else None
+        )
+        return [
+            ActionCandidate(
+                ToolCall("open_app", {parameter: app.identifier}),
+                f"Open app {app.label} ({app.identifier})",
+            )
+            for app in ctx.action_candidate_apps
+            if app.identifier != current_app
+        ]
 
 
 def should_resize_model_screenshot(state_provider: Any) -> bool:

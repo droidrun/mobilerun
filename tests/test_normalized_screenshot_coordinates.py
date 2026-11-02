@@ -228,9 +228,13 @@ def _start_agent(monkeypatch, *, model: str, reasoning: bool = False, config=Non
 
     llm = MockLLM()
     object.__setattr__(llm, "model", model)
-    monkeypatch.setattr(agent_module, "load_agent_llms", lambda **kw: {
-        name: llm for name in ("manager", "executor", "fast_agent", "app_opener")
-    })
+    monkeypatch.setattr(
+        agent_module,
+        "load_agent_llms",
+        lambda **kw: {
+            name: llm for name in ("manager", "executor", "fast_agent", "app_opener")
+        },
+    )
     agent_config = config or AgentConfig(vision_only=True, reasoning=reasoning)
     agent = agent_module.MobileAgent(
         "Tap send",

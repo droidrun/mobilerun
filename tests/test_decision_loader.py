@@ -20,7 +20,10 @@ def test_loader_preserves_native_model_and_constructor_options():
     decision_loader.register_decision_provider("Example", factory)
 
     loaded = decision_loader.load_decision_model(
-        " EXAMPLE ", model="choice-model", api_key="secret", endpoint="https://example.test"
+        " EXAMPLE ",
+        model="choice-model",
+        api_key="secret",
+        endpoint="https://example.test",
     )
 
     assert loaded is model
@@ -79,20 +82,26 @@ def test_profile_overrides_preserve_provider_options_and_do_not_mutate_config():
     factory = Mock(return_value=model)
     decision_loader.register_decision_provider("example", factory)
     profile = DecisionProfile(
-        provider="Example", model="configured-model", base_url="https://original.test",
+        provider="Example",
+        model="configured-model",
+        base_url="https://original.test",
         kwargs={"timeout": 30, "headers": {"X-Custom": "keep"}},
     )
     profiles = {"active": profile, "unused": DecisionProfile(provider="unregistered")}
     overrides = {"timeout": 5, "model": "overridden-model"}
 
     loaded = decision_loader.load_decision_models_from_profiles(
-        profiles, ["active"], active=overrides,
+        profiles,
+        ["active"],
+        active=overrides,
     )
 
     assert loaded == {"active": model}
     factory.assert_called_once_with(
-        model="overridden-model", base_url="https://original.test",
-        timeout=5, headers={"X-Custom": "keep"},
+        model="overridden-model",
+        base_url="https://original.test",
+        timeout=5,
+        headers={"X-Custom": "keep"},
     )
     assert profile.model == "configured-model"
     assert profile.kwargs == {"timeout": 30, "headers": {"X-Custom": "keep"}}
@@ -105,7 +114,8 @@ def test_missing_profiles_are_validated_before_constructing_any_models():
 
     with pytest.raises(KeyError, match="missing"):
         decision_loader.load_decision_models_from_profiles(
-            {"valid": DecisionProfile(provider="Example")}, ["valid", "missing"],
+            {"valid": DecisionProfile(provider="Example")},
+            ["valid", "missing"],
         )
 
     factory.assert_not_called()

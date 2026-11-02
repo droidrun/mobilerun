@@ -37,7 +37,9 @@ def cli_agents(monkeypatch):
 
 
 @pytest.mark.parametrize("reasoning", [False, True])
-def test_legacy_shared_llm_is_wrapped_and_preserves_roles(monkeypatch, caplog, reasoning):
+def test_legacy_shared_llm_is_wrapped_and_preserves_roles(
+    monkeypatch, caplog, reasoning
+):
     config = MobileConfig()
     config.agent.reasoning = reasoning
     llm = MockLLM()
@@ -47,7 +49,13 @@ def test_legacy_shared_llm_is_wrapped_and_preserves_roles(monkeypatch, caplog, r
 
     agent = MobileAgent("Select", config=config, llms=llm, output_model=_Output)
 
-    for role in ("manager", "executor", "fast_agent", "app_opener", "structured_output"):
+    for role in (
+        "manager",
+        "executor",
+        "fast_agent",
+        "app_opener",
+        "structured_output",
+    ):
         assert getattr(agent, f"{role}_llm") is llm
     assert isinstance(agent.action_selector, LlamaIndexLLMSelector)
     assert agent.action_selector.llm is llm
@@ -108,12 +116,15 @@ def test_legacy_llm_takes_precedence_over_configured_decision_model(monkeypatch)
 
 @pytest.mark.parametrize("llm_selector", [False, True])
 @pytest.mark.parametrize("dictionary", [False, True])
-def test_explicit_selector_ignores_legacy_llms(monkeypatch, caplog, llm_selector, dictionary):
+def test_explicit_selector_ignores_legacy_llms(
+    monkeypatch, caplog, llm_selector, dictionary
+):
     legacy_llm = MockLLM()
     selected_llm = MockLLM() if llm_selector else None
     selector = (
         LlamaIndexLLMSelector(selected_llm)
-        if llm_selector else StubSelector(select=AsyncMock())
+        if llm_selector
+        else StubSelector(select=AsyncMock())
     )
     legacy_llms = {"fast_agent": legacy_llm} if dictionary else legacy_llm
     load = Mock(side_effect=AssertionError("Explicit selector needs no config here"))
@@ -123,9 +134,17 @@ def test_explicit_selector_ignores_legacy_llms(monkeypatch, caplog, llm_selector
     agent = MobileAgent("Select", llms=legacy_llms, action_selectors=selector)
 
     assert agent.action_selector is selector
-    for role in ("manager", "executor", "fast_agent", "app_opener", "structured_output"):
+    for role in (
+        "manager",
+        "executor",
+        "fast_agent",
+        "app_opener",
+        "structured_output",
+    ):
         assert getattr(agent, f"{role}_llm") is selected_llm
-    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    warnings = [
+        record for record in caplog.records if record.levelno == logging.WARNING
+    ]
     assert len(warnings) == 2
     assert "MobileAgent(llms=...) is deprecated" in warnings[0].message
     assert "The supplied llms argument was ignored" in warnings[1].message
@@ -133,18 +152,25 @@ def test_explicit_selector_ignores_legacy_llms(monkeypatch, caplog, llm_selector
 
 
 @pytest.mark.parametrize("reasoning", [False, True])
-def test_selector_with_legacy_llms_still_loads_helpers_from_config(monkeypatch, reasoning):
+def test_selector_with_legacy_llms_still_loads_helpers_from_config(
+    monkeypatch, reasoning
+):
     config = MobileConfig()
     config.agent.reasoning = reasoning
     legacy_llm = MockLLM()
     configured_llm = MockLLM()
     selector = StubSelector(select=AsyncMock())
-    load = Mock(return_value=dict.fromkeys(
-        ("manager", "executor", "fast_agent", "app_opener"), configured_llm,
-    ))
+    load = Mock(
+        return_value=dict.fromkeys(
+            ("manager", "executor", "fast_agent", "app_opener"),
+            configured_llm,
+        )
+    )
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
 
-    agent = MobileAgent("Select", config=config, llms=legacy_llm, action_selectors=selector)
+    agent = MobileAgent(
+        "Select", config=config, llms=legacy_llm, action_selectors=selector
+    )
 
     assert agent.action_selector is selector
     assert agent.app_opener_llm is configured_llm
@@ -189,7 +215,13 @@ def test_decision_selector_needs_no_config_or_llms(monkeypatch):
     agent = MobileAgent("Select", action_selectors=DecisionSelector(model))
 
     assert agent.action_selector.model is model
-    for role in ("manager", "executor", "fast_agent", "app_opener", "structured_output"):
+    for role in (
+        "manager",
+        "executor",
+        "fast_agent",
+        "app_opener",
+        "structured_output",
+    ):
         assert getattr(agent, f"{role}_llm") is None
     model.decide.assert_not_called()
     load.assert_not_called()
@@ -197,7 +229,9 @@ def test_decision_selector_needs_no_config_or_llms(monkeypatch):
 
 @pytest.mark.parametrize("reasoning", [False, True])
 @pytest.mark.parametrize("structured", [False, True])
-def test_decision_selector_loads_only_required_helper_profiles(monkeypatch, reasoning, structured):
+def test_decision_selector_loads_only_required_helper_profiles(
+    monkeypatch, reasoning, structured
+):
     config = MobileConfig()
     config.agent.reasoning = reasoning
     roles = ["manager", "app_opener"] if reasoning else ["app_opener"]
@@ -210,11 +244,15 @@ def test_decision_selector_loads_only_required_helper_profiles(monkeypatch, reas
     helper = MockLLM()
     load = Mock(return_value=helper)
     monkeypatch.setattr("mobilerun.agent.utils.llm_picker.load_llm", load)
-    decision_load = Mock(side_effect=AssertionError("Explicit model must bypass profile loading"))
+    decision_load = Mock(
+        side_effect=AssertionError("Explicit model must bypass profile loading")
+    )
     monkeypatch.setattr(droid_agent, "load_agent_decision_models", decision_load)
 
     agent = MobileAgent(
-        "Select", config=config, action_selectors=DecisionSelector(model),
+        "Select",
+        config=config,
+        action_selectors=DecisionSelector(model),
         output_model=_Output if structured else None,
     )
 
@@ -231,7 +269,10 @@ def test_decision_selector_loads_only_required_helper_profiles(monkeypatch, reas
     # Internal loading flags must never leak into provider constructor kwargs.
     for call, role in zip(load.call_args_list, roles, strict=True):
         profile = config.llm_profiles[role]
-        assert call.kwargs == {"provider_name": profile.provider, **profile.to_load_llm_kwargs()}
+        assert call.kwargs == {
+            "provider_name": profile.provider,
+            **profile.to_load_llm_kwargs(),
+        }
     assert config.decision_profiles == {}
     decision_load.assert_not_called()
 
@@ -249,7 +290,9 @@ def test_decision_selector_merges_only_missing_helper_llms(monkeypatch, reasonin
     monkeypatch.setattr(llm_loader, "load_llms_from_profiles", load)
     monkeypatch.setattr(droid_agent, "load_agent_llms", Mock(return_value=provided))
 
-    agent = MobileAgent("Select", config=config, action_selectors=DecisionSelector(model))
+    agent = MobileAgent(
+        "Select", config=config, action_selectors=DecisionSelector(model)
+    )
 
     assert agent.action_selector.model is model
     assert agent.app_opener_llm is helper
@@ -264,7 +307,8 @@ def test_decision_selector_merges_only_missing_helper_llms(monkeypatch, reasonin
 def test_decision_model_kwarg_requires_an_action_selector_wrapper():
     with pytest.raises(TypeError, match="Pass a DecisionSelector via action_selectors"):
         MobileAgent(
-            "Select", decision_model=SimpleNamespace(decide=AsyncMock()),
+            "Select",
+            decision_model=SimpleNamespace(decide=AsyncMock()),
             action_selectors=StubSelector(select=AsyncMock()),
         )
 
@@ -277,15 +321,27 @@ def test_decision_selector_requires_decide_method(model):
 
 @pytest.mark.parametrize("reasoning", [False, True])
 @pytest.mark.parametrize("output_model", [None, _Output])
-def test_supplied_llm_selector_preserves_shared_llm_roles(monkeypatch, reasoning, output_model):
+def test_supplied_llm_selector_preserves_shared_llm_roles(
+    monkeypatch, reasoning, output_model
+):
     config = MobileConfig()
     config.agent.reasoning = reasoning
     llm = MockLLM()
     selector = LlamaIndexLLMSelector(llm)
-    load = Mock(side_effect=AssertionError("A supplied shared LLM must not load profiles"))
+    load = Mock(
+        side_effect=AssertionError("A supplied shared LLM must not load profiles")
+    )
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
-    agent = MobileAgent("Select", config=config, action_selectors=selector, output_model=output_model)
-    for role in ("manager", "executor", "fast_agent", "app_opener", "structured_output"):
+    agent = MobileAgent(
+        "Select", config=config, action_selectors=selector, output_model=output_model
+    )
+    for role in (
+        "manager",
+        "executor",
+        "fast_agent",
+        "app_opener",
+        "structured_output",
+    ):
         assert getattr(agent, f"{role}_llm") is llm
     assert agent.action_selector is selector
     assert agent._require_action_selector() is selector
@@ -297,9 +353,13 @@ def test_supplied_llm_selector_preserves_shared_llm_roles(monkeypatch, reasoning
 
 def test_shared_llm_selector_needs_no_config_even_with_structured_output(monkeypatch):
     llm = MockLLM()
-    load = Mock(side_effect=AssertionError("No config is needed for a supplied native LLM"))
+    load = Mock(
+        side_effect=AssertionError("No config is needed for a supplied native LLM")
+    )
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
-    agent = MobileAgent("Select", action_selectors=LlamaIndexLLMSelector(llm), output_model=_Output)
+    agent = MobileAgent(
+        "Select", action_selectors=LlamaIndexLLMSelector(llm), output_model=_Output
+    )
     assert agent.app_opener_llm is llm
     assert agent.structured_output_llm is llm
     load.assert_not_called()
@@ -310,8 +370,16 @@ def test_external_agent_still_ignores_supplied_llm(monkeypatch):
     config.agent.name = "external-agent"
     load = Mock(side_effect=AssertionError("External agents must not load native LLMs"))
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
-    agent = MobileAgent("Select", config=config, action_selectors=LlamaIndexLLMSelector(MockLLM()))
-    for role in ("manager", "executor", "fast_agent", "app_opener", "structured_output"):
+    agent = MobileAgent(
+        "Select", config=config, action_selectors=LlamaIndexLLMSelector(MockLLM())
+    )
+    for role in (
+        "manager",
+        "executor",
+        "fast_agent",
+        "app_opener",
+        "structured_output",
+    ):
         assert getattr(agent, f"{role}_llm") is None
     load.assert_not_called()
 
@@ -319,9 +387,16 @@ def test_external_agent_still_ignores_supplied_llm(monkeypatch):
 def test_config_role_resolution_keeps_structured_output_fallback(monkeypatch):
     llm = MockLLM()
     helper = MockLLM()
-    monkeypatch.setattr(droid_agent, "load_agent_llms", Mock(return_value={
-        "fast_agent": llm, "app_opener": helper,
-    }))
+    monkeypatch.setattr(
+        droid_agent,
+        "load_agent_llms",
+        Mock(
+            return_value={
+                "fast_agent": llm,
+                "app_opener": helper,
+            }
+        ),
+    )
     agent = MobileAgent("Select", config=MobileConfig())
     assert agent.action_selector.llm is llm
     assert agent.fast_agent_llm is llm
@@ -342,7 +417,9 @@ def test_config_dictionary_is_merged_before_role_assignment(monkeypatch):
 
     agent = MobileAgent("Select", config=config)
 
-    missing.assert_called_once_with(config.llm_profiles, profile_names=["executor", "app_opener"])
+    missing.assert_called_once_with(
+        config.llm_profiles, profile_names=["executor", "app_opener"]
+    )
     assert agent.manager_llm is manager
     assert agent.executor_llm is executor
     assert agent.app_opener_llm is helper
@@ -356,7 +433,9 @@ def test_complete_config_dictionary_does_not_reload_models(monkeypatch):
     llm = MockLLM()
     provided = {"fast_agent": llm, "app_opener": llm}
     monkeypatch.setattr(droid_agent, "load_agent_llms", Mock(return_value=provided))
-    load = Mock(side_effect=AssertionError("Complete dictionaries must not reload models"))
+    load = Mock(
+        side_effect=AssertionError("Complete dictionaries must not reload models")
+    )
     monkeypatch.setattr(llm_loader, "load_llms_from_profiles", load)
     agent = MobileAgent("Select", config=MobileConfig())
     assert agent.fast_agent_llm is llm
@@ -380,11 +459,21 @@ def test_no_config_or_selector_retains_original_error():
     )
 
 
-def test_explicit_none_structured_role_does_not_use_fallback_or_new_validation(monkeypatch):
+def test_explicit_none_structured_role_does_not_use_fallback_or_new_validation(
+    monkeypatch,
+):
     llm = MockLLM()
-    monkeypatch.setattr(droid_agent, "load_agent_llms", Mock(return_value={
-        "fast_agent": llm, "app_opener": llm, "structured_output": None,
-    }))
+    monkeypatch.setattr(
+        droid_agent,
+        "load_agent_llms",
+        Mock(
+            return_value={
+                "fast_agent": llm,
+                "app_opener": llm,
+                "structured_output": None,
+            }
+        ),
+    )
     agent = MobileAgent("Select", config=MobileConfig(), output_model=_Output)
     assert agent.fast_agent_llm is llm
     assert agent.structured_output_llm is None
@@ -395,14 +484,23 @@ def test_explicit_none_structured_role_does_not_use_fallback_or_new_validation(m
 def test_default_required_profiles_are_unchanged(reasoning, structured):
     config = MobileConfig()
     config.agent.reasoning = reasoning
-    expected = ["manager", "executor", "app_opener"] if reasoning else ["fast_agent", "app_opener"]
+    expected = (
+        ["manager", "executor", "app_opener"]
+        if reasoning
+        else ["fast_agent", "app_opener"]
+    )
     if structured:
         expected.append("structured_output")
-    assert llm_loader.validate_llm_profiles(config, object if structured else None) == expected
+    assert (
+        llm_loader.validate_llm_profiles(config, object if structured else None)
+        == expected
+    )
 
 
 @pytest.mark.parametrize("custom_selector", [False, True])
-def test_selector_does_not_change_existing_profile_loading(monkeypatch, custom_selector):
+def test_selector_does_not_change_existing_profile_loading(
+    monkeypatch, custom_selector
+):
     config = MobileConfig()
     config.tools.disabled_tools = ["open_app"]
     llm = MockLLM()
@@ -414,23 +512,37 @@ def test_selector_does_not_change_existing_profile_loading(monkeypatch, custom_s
 
 
 @pytest.mark.parametrize("platform", ["Android", "iOS"])
-def test_helper_availability_does_not_change_original_tool_registry(monkeypatch, platform):
+def test_helper_availability_does_not_change_original_tool_registry(
+    monkeypatch, platform
+):
     async def run():
         config = MobileConfig()
         config.device.platform = platform
         config.telemetry.enabled = False
         driver = SimpleNamespace(
-            platform=platform, supported={"start_app", "get_apps"},
-            supported_buttons=set(), get_date=AsyncMock(return_value="2026-10-23"),
+            platform=platform,
+            supported={"start_app", "get_apps"},
+            supported_buttons=set(),
+            get_date=AsyncMock(return_value="2026-10-23"),
         )
         provider = SimpleNamespace(supported=set())
         selector = StubSelector(select=AsyncMock())
-        monkeypatch.setattr(droid_agent, "load_agent_llms", Mock(return_value={
-            "fast_agent": None, "app_opener": None,
-        }))
+        monkeypatch.setattr(
+            droid_agent,
+            "load_agent_llms",
+            Mock(
+                return_value={
+                    "fast_agent": None,
+                    "app_opener": None,
+                }
+            ),
+        )
         agent = MobileAgent(
-            "Open app", config=config, action_selectors=selector,
-            driver=driver, state_provider=provider,
+            "Open app",
+            config=config,
+            action_selectors=selector,
+            driver=driver,
+            state_provider=provider,
         )
         with patch.object(Context, "write_event_to_stream"):
             await agent.start_handler(Context(agent), StartEvent())
@@ -440,16 +552,28 @@ def test_helper_availability_does_not_change_original_tool_registry(monkeypatch,
 
 
 @pytest.mark.parametrize("temperature", [None, 0.0, 0.2])
-def test_cli_custom_provider_retains_original_constructor_defaults(monkeypatch, cli_agents, temperature):
+def test_cli_custom_provider_retains_original_constructor_defaults(
+    monkeypatch, cli_agents, temperature
+):
     config = MobileConfig()
     load = Mock(return_value=MockLLM())
     monkeypatch.setattr(cli_main, "load_llm", load)
     monkeypatch.setattr(cli_main.ConfigLoader, "load", lambda _: config)
-    assert asyncio.run(cli_main.run_command(
-        "Select", provider="Example", model="test", temperature=temperature,
-        base_url="https://example.test", api_base="https://api.example.test",
-        max_tokens=123, debug=False,
-    )) is True
+    assert (
+        asyncio.run(
+            cli_main.run_command(
+                "Select",
+                provider="Example",
+                model="test",
+                temperature=temperature,
+                base_url="https://example.test",
+                api_base="https://api.example.test",
+                max_tokens=123,
+                debug=False,
+            )
+        )
+        is True
+    )
     assert len(cli_agents) == 1
     expected: dict[str, object] = {
         "model": "test",
@@ -464,17 +588,32 @@ def test_cli_custom_provider_retains_original_constructor_defaults(monkeypatch, 
 
 @pytest.mark.parametrize("reasoning", [False, True])
 @pytest.mark.parametrize("temperature", [None, 0.0, 0.2])
-def test_cli_profile_overrides_reach_every_required_llm(monkeypatch, cli_agents, reasoning, temperature):
+def test_cli_profile_overrides_reach_every_required_llm(
+    monkeypatch, cli_agents, reasoning, temperature
+):
     config = MobileConfig()
     config.agent.reasoning = reasoning
-    roles = ["manager", "executor", "app_opener"] if reasoning else ["fast_agent", "app_opener"]
+    roles = (
+        ["manager", "executor", "app_opener"]
+        if reasoning
+        else ["fast_agent", "app_opener"]
+    )
     load = Mock(return_value=dict.fromkeys(roles, MockLLM()))
     monkeypatch.setattr(llm_loader, "load_llms_from_profiles", load)
     monkeypatch.setattr(cli_main.ConfigLoader, "load", lambda _: config)
-    assert asyncio.run(cli_main.run_command(
-        "Select", temperature=temperature, base_url="https://example.test",
-        api_base="https://api.example.test", max_tokens=123, debug=False,
-    )) is True
+    assert (
+        asyncio.run(
+            cli_main.run_command(
+                "Select",
+                temperature=temperature,
+                base_url="https://example.test",
+                api_base="https://api.example.test",
+                max_tokens=123,
+                debug=False,
+            )
+        )
+        is True
+    )
     assert len(cli_agents) == 1
     overrides: dict[str, object] = {
         "base_url": "https://example.test",
@@ -484,7 +623,8 @@ def test_cli_profile_overrides_reach_every_required_llm(monkeypatch, cli_agents,
     if temperature is not None:
         overrides["temperature"] = temperature
     load.assert_called_once_with(
-        config.llm_profiles, profile_names=roles,
+        config.llm_profiles,
+        profile_names=roles,
         **{role: overrides for role in roles},
     )
 
@@ -495,14 +635,21 @@ def test_custom_constructor_options_are_copied_before_overrides(monkeypatch):
     options = {"temperature": 0.8, "base_url": "https://original.test"}
 
     llm_loader.load_agent_llms(
-        MobileConfig(), custom_provider="Example", custom_model="test",
-        custom_llm_kwargs=options, temperature=0.0,
-        base_url="https://override.test", api_base="https://api.example.test",
+        MobileConfig(),
+        custom_provider="Example",
+        custom_model="test",
+        custom_llm_kwargs=options,
+        temperature=0.0,
+        base_url="https://override.test",
+        api_base="https://api.example.test",
     )
 
     load.assert_called_once_with(
-        provider_name="Example", model="test", temperature=0.0,
-        base_url="https://override.test", api_base="https://api.example.test",
+        provider_name="Example",
+        model="test",
+        temperature=0.0,
+        base_url="https://override.test",
+        api_base="https://api.example.test",
     )
     assert options == {"temperature": 0.8, "base_url": "https://original.test"}
 
@@ -510,7 +657,9 @@ def test_custom_constructor_options_are_copied_before_overrides(monkeypatch):
 def test_existing_custom_loader_temperature_default_is_unchanged(monkeypatch):
     load = Mock(return_value=MockLLM())
     monkeypatch.setattr(llm_loader, "load_llm", load)
-    llm_loader.load_agent_llms(MobileConfig(), custom_provider="Example", custom_model="test")
+    llm_loader.load_agent_llms(
+        MobileConfig(), custom_provider="Example", custom_model="test"
+    )
     load.assert_called_once_with(provider_name="Example", model="test", temperature=0.3)
 
 
@@ -538,9 +687,18 @@ def test_config_resolves_required_native_selector(monkeypatch, reasoning):
     config = MobileConfig()
     config.agent.reasoning = reasoning
     llm = MockLLM()
-    monkeypatch.setattr(droid_agent, "load_agent_llms", Mock(return_value={
-        "manager": llm, "executor": llm, "fast_agent": llm, "app_opener": llm,
-    }))
+    monkeypatch.setattr(
+        droid_agent,
+        "load_agent_llms",
+        Mock(
+            return_value={
+                "manager": llm,
+                "executor": llm,
+                "fast_agent": llm,
+                "app_opener": llm,
+            }
+        ),
+    )
 
     agent = MobileAgent("Select", config=config)
 
@@ -562,7 +720,9 @@ def test_external_agent_can_initialize_without_native_selector(monkeypatch):
     assert agent.action_selector is None
     assert agent.executor_agent is None
     load.assert_not_called()
-    with pytest.raises(ValueError, match="Native agent execution requires an action_selector"):
+    with pytest.raises(
+        ValueError, match="Native agent execution requires an action_selector"
+    ):
         agent._require_action_selector()
 
 
@@ -577,7 +737,9 @@ def test_action_selector_dictionary_preserves_supplied_roles(monkeypatch, reason
     helper = MockLLM()
     load = Mock(return_value={"manager": helper, "app_opener": helper})
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
-    decisions = Mock(side_effect=AssertionError("Supplied selectors must not be reloaded"))
+    decisions = Mock(
+        side_effect=AssertionError("Supplied selectors must not be reloaded")
+    )
     monkeypatch.setattr(droid_agent, "load_agent_decision_models", decisions)
 
     agent = MobileAgent("Select", config=config, action_selectors=provided)
@@ -590,7 +752,9 @@ def test_action_selector_dictionary_preserves_supplied_roles(monkeypatch, reason
     if reasoning:
         assert agent.manager_llm is helper
         assert agent.executor_agent.action_selector is executor
-    load.assert_called_once_with(config=agent.config, output_model=None, load_action_llm=False)
+    load.assert_called_once_with(
+        config=agent.config, output_model=None, load_action_llm=False
+    )
     decisions.assert_not_called()
     assert provided == {"fast_agent": fast, "executor": executor}
 
@@ -599,7 +763,10 @@ def test_action_selector_dictionary_preserves_supplied_roles(monkeypatch, reason
 @pytest.mark.parametrize("configured_decision", [False, True])
 @pytest.mark.parametrize("empty", [False, True])
 def test_action_selector_dictionary_loads_missing_active_role(
-    monkeypatch, reasoning, configured_decision, empty,
+    monkeypatch,
+    reasoning,
+    configured_decision,
+    empty,
 ):
     config = MobileConfig()
     config.agent.reasoning = reasoning
@@ -637,7 +804,9 @@ def test_action_selector_dictionary_loads_missing_active_role(
 
 @pytest.mark.parametrize("reasoning", [False, True])
 @pytest.mark.parametrize("decision", [False, True])
-def test_action_selector_dictionary_loads_only_helper_profiles(monkeypatch, reasoning, decision):
+def test_action_selector_dictionary_loads_only_helper_profiles(
+    monkeypatch, reasoning, decision
+):
     config = MobileConfig()
     config.agent.reasoning = reasoning
     role = "executor" if reasoning else "fast_agent"
@@ -654,7 +823,10 @@ def test_action_selector_dictionary_loads_only_helper_profiles(monkeypatch, reas
     monkeypatch.setattr("mobilerun.agent.utils.llm_picker.load_llm", load)
 
     agent = MobileAgent(
-        "Select", config=config, action_selectors={role: selector}, output_model=_Output,
+        "Select",
+        config=config,
+        action_selectors={role: selector},
+        output_model=_Output,
     )
 
     assert agent.action_selector is selector
@@ -664,7 +836,10 @@ def test_action_selector_dictionary_loads_only_helper_profiles(monkeypatch, reas
     assert load.call_count == len(helper_roles)
     for call, name in zip(load.call_args_list, helper_roles, strict=True):
         profile = config.llm_profiles[name]
-        assert call.kwargs == {"provider_name": profile.provider, **profile.to_load_llm_kwargs()}
+        assert call.kwargs == {
+            "provider_name": profile.provider,
+            **profile.to_load_llm_kwargs(),
+        }
 
 
 @pytest.mark.parametrize("decision", [False, True])
@@ -693,7 +868,9 @@ def test_mobile_agent_rejects_removed_singular_selector_argument():
 
 @pytest.mark.parametrize("value", [[], object(), "invalid"])
 def test_action_selectors_requires_a_selector_or_dictionary(value):
-    with pytest.raises(TypeError, match="action_selectors must be a selector or a dictionary"):
+    with pytest.raises(
+        TypeError, match="action_selectors must be a selector or a dictionary"
+    ):
         MobileAgent("Select", action_selectors=value)
 
 

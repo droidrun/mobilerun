@@ -24,7 +24,10 @@ async def _log_request_progress(started: float) -> None:
     """Keep slow uploads visibly distinct from a stalled agent loop."""
     while True:
         await asyncio.sleep(5)
-        logger.info("Jev request still in flight (%.0fs); waiting for TypeSafe.", time.monotonic() - started)
+        logger.info(
+            "Jev request still in flight (%.0fs); waiting for TypeSafe.",
+            time.monotonic() - started,
+        )
 
 
 def _prepare_screenshot(screenshot: bytes) -> bytes:
@@ -108,15 +111,22 @@ class TypeSafeDecisionModel:
         }
         criteria["abstain"] = "None of the available actions safely advances the goal."
         if "complete" in request.tools:
-            criteria["complete_success"] = "The goal is already achieved, as verified by the current state."
-            criteria["complete_failure"] = "The goal cannot be achieved with the available capabilities."
+            criteria["complete_success"] = (
+                "The goal is already achieved, as verified by the current state."
+            )
+            criteria["complete_failure"] = (
+                "The goal cannot be achieved with the available capabilities."
+            )
 
         state: dict[str, Any] = {
             "goal": request.goal,
             "memory": request.memory,
             "history": [
-                {"role": str(item.role), "content": item.content or ""}
-                if isinstance(item, ChatMessage) else item
+                (
+                    {"role": str(item.role), "content": item.content or ""}
+                    if isinstance(item, ChatMessage)
+                    else item
+                )
                 for item in request.history
             ],
             "variables": request.variables,
@@ -147,7 +157,11 @@ class TypeSafeDecisionModel:
         logger.info(
             "Jev selecting from %d actions%s...",
             len(request.options),
-            f" (image {len(prepared_screenshot) / 1024:.0f} KiB)" if request.screenshot is not None else "",
+            (
+                f" (image {len(prepared_screenshot) / 1024:.0f} KiB)"
+                if request.screenshot is not None
+                else ""
+            ),
         )
         progress = asyncio.create_task(_log_request_progress(started))
         # A scoped client avoids leaking HTTP resources, including on cancellation.
@@ -155,7 +169,9 @@ class TypeSafeDecisionModel:
             async with self._client_type(**self._client_kwargs) as client:
                 result = await client.system_one(
                     state=state,
-                    questions={"action": Choice(instructions=instructions, criteria=criteria)},
+                    questions={
+                        "action": Choice(instructions=instructions, criteria=criteria)
+                    },
                     **request_kwargs,
                 )
         finally:
@@ -165,7 +181,8 @@ class TypeSafeDecisionModel:
         answer = result.choices.get("action")
         logger.info(
             "Jev returned %s (confidence=%s) in %.2fs.",
-            getattr(answer, "choice", "<missing>"), getattr(answer, "confidence", None),
+            getattr(answer, "choice", "<missing>"),
+            getattr(answer, "confidence", None),
             time.monotonic() - started,
         )
         if answer is None or answer.choice not in criteria:
@@ -179,6 +196,10 @@ class TypeSafeDecisionModel:
             success = answer.choice == "complete_success"
             return Decision(
                 success=success,
-                message="Goal achieved." if success else "Goal cannot be achieved with the available actions.",
+                message=(
+                    "Goal achieved."
+                    if success
+                    else "Goal cannot be achieved with the available actions."
+                ),
             )
         return Decision(option_index=indices[answer.choice])

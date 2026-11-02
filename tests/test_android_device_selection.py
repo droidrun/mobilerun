@@ -252,9 +252,11 @@ def test_agent_with_multiple_devices_raises_before_driver(
         agent_module.MobileAgent, "_configure_default_logging", lambda *a, **kw: None
     )
     monkeypatch.setattr(agent_module, "capture", lambda *a, **kw: None)
-    monkeypatch.setattr(agent_module, "load_agent_llms", lambda **kw: {
-        name: MockLLM() for name in ("fast_agent", "app_opener")
-    })
+    monkeypatch.setattr(
+        agent_module,
+        "load_agent_llms",
+        lambda **kw: {name: MockLLM() for name in ("fast_agent", "app_opener")},
+    )
 
     async def fail_device(*args, **kwargs):
         raise AssertionError("device must not be opened")

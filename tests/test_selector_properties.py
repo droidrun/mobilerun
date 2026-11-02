@@ -39,7 +39,8 @@ def test_fallback_chain_does_not_load_an_unused_action_llm(monkeypatch, reasonin
     monkeypatch.setattr(llm_loader, "load_llms_from_profiles", load)
     fallback_llm = MockLLM()
     selector = FallbackSelector(
-        DecisionSelector(SimpleNamespace(decide=AsyncMock())), [LlamaIndexLLMSelector(fallback_llm)],
+        DecisionSelector(SimpleNamespace(decide=AsyncMock())),
+        [LlamaIndexLLMSelector(fallback_llm)],
     )
 
     agent = MobileAgent("Select", config=config, action_selectors=selector)
@@ -52,7 +53,9 @@ def test_fallback_chain_does_not_load_an_unused_action_llm(monkeypatch, reasonin
 
 
 @pytest.mark.parametrize("requires_action_llm", [False, True])
-def test_model_loading_queries_declared_selector_properties(monkeypatch, requires_action_llm):
+def test_model_loading_queries_declared_selector_properties(
+    monkeypatch, requires_action_llm
+):
     config = MobileConfig()
     llm = MockLLM()
     roles = ["fast_agent", "app_opener"] if requires_action_llm else ["app_opener"]
@@ -75,7 +78,13 @@ def test_custom_selector_can_supply_a_shared_llm(monkeypatch):
     agent = MobileAgent("Select", action_selectors=selector)
 
     assert agent.action_selector is selector
-    for role in ("manager", "executor", "fast_agent", "app_opener", "structured_output"):
+    for role in (
+        "manager",
+        "executor",
+        "fast_agent",
+        "app_opener",
+        "structured_output",
+    ):
         assert getattr(agent, f"{role}_llm") is llm
     load.assert_not_called()
 
@@ -84,9 +93,13 @@ def test_per_role_selector_property_does_not_override_helper_llms(monkeypatch):
     action_llm = MockLLM()
     helper = MockLLM()
     selector = StubSelector(select=AsyncMock(), shared_llm=action_llm)
-    monkeypatch.setattr(droid_agent, "load_agent_llms", Mock(return_value={"app_opener": helper}))
+    monkeypatch.setattr(
+        droid_agent, "load_agent_llms", Mock(return_value={"app_opener": helper})
+    )
 
-    agent = MobileAgent("Select", config=MobileConfig(), action_selectors={"fast_agent": selector})
+    agent = MobileAgent(
+        "Select", config=MobileConfig(), action_selectors={"fast_agent": selector}
+    )
 
     assert agent.action_selector is selector
     assert agent.fast_agent_llm is action_llm
@@ -117,7 +130,9 @@ def test_mobile_agent_rejects_select_only_objects_without_the_contract():
 
 @pytest.mark.parametrize("agent_class", [FastAgent, ExecutorAgent])
 def test_action_workflows_reject_selectors_without_the_contract(agent_class):
-    with pytest.raises(TypeError, match="action_selector must implement ActionSelector"):
+    with pytest.raises(
+        TypeError, match="action_selector must implement ActionSelector"
+    ):
         agent_class(action_selector=SimpleNamespace(select=AsyncMock()))
 
 
@@ -134,22 +149,34 @@ def test_fast_agent_queries_abstention_reason_and_preserves_defaults(kind):
                 expected = "No suitable action from my selector."
                 selector.abstention_reason = expected
         state = UIState(
-            elements=[], formatted_text="", focused_text="", phone_state={},
-            screen_width=100, screen_height=100,
+            elements=[],
+            formatted_text="",
+            focused_text="",
+            phone_state={},
+            screen_width=100,
+            screen_height=100,
         )
         provider = SimpleNamespace(
-            get_state=AsyncMock(return_value=state), get_action_candidates=lambda state: (),
+            get_state=AsyncMock(return_value=state),
+            get_action_candidates=lambda state: (),
         )
         shared = MobileAgentState(instruction="Select")
         shared.message_history = [ChatMessage(role="user", content="Select")]
         agent = FastAgent(
-            selector, AgentConfig(), ToolRegistry(), SimpleNamespace(ui=None), provider,
+            selector,
+            AgentConfig(),
+            ToolRegistry(),
+            SimpleNamespace(ui=None),
+            provider,
             shared_state=shared,
         )
         agent.system_prompt = ChatMessage(role="system", content="Choose an action")
         with (
             patch.object(Context, "write_event_to_stream"),
-            patch("mobilerun.agent.selectors.llama_index_llm.acall_with_retries", new_callable=AsyncMock) as infer,
+            patch(
+                "mobilerun.agent.selectors.llama_index_llm.acall_with_retries",
+                new_callable=AsyncMock,
+            ) as infer,
         ):
             infer.return_value = None
             event = await agent.handle_llm_input(Context(agent), FastAgentInputEvent())

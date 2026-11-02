@@ -46,7 +46,9 @@ class DecisionSelector(BaseActionSelector):
         from mobilerun.agent.fast_agent.xml_parser import ToolCall
 
         if not request.options:
-            raise ValueError("Decision selection requires non-empty options in the request")
+            raise ValueError(
+                "Decision selection requires non-empty options in the request"
+            )
         options = tuple(o for o in request.options if o.action.name in request.tools)
         if not options:
             raise ValueError("No decision options match the available tools")
@@ -70,10 +72,13 @@ class DecisionSelector(BaseActionSelector):
                 raise ValueError("Completion is not available for this selection")
             return ActionSelection(
                 actions=[
-                    ToolCall("complete", {
-                        "success": decision.success,
-                        "message": decision.message,
-                    })
+                    ToolCall(
+                        "complete",
+                        {
+                            "success": decision.success,
+                            "message": decision.message,
+                        },
+                    )
                 ],
                 thought=decision.thought,
                 description=decision.message,
