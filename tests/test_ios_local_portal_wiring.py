@@ -215,3 +215,23 @@ def test_device_commands_discover_when_no_device(tmp_path, monkeypatch):
 
     assert is_ios is True
     assert created["url"] == "http://127.0.0.1:8081"
+
+
+def test_android_state_provider_normalized_keeps_point_tap_bounds():
+    from mobilerun.tools.filters import DetailedFilter
+    from mobilerun.tools.formatters import IndexedFormatter
+    from mobilerun.tools.ui.provider import AndroidStateProvider
+
+    provider = AndroidStateProvider(
+        FakeLocalPortalDriver(),
+        tree_filter=DetailedFilter(),
+        tree_formatter=IndexedFormatter(),
+        use_normalized=True,
+    )
+    state = run(provider.get_state())
+
+    button = next(e for e in state.elements if e["text"] == "Privacy & Security")
+    assert button["bounds"] == "16,180,377,224"
+    assert button["displayBounds"] == "40,211,959,262"
+    assert "(40,211,959,262)" in state.formatted_text
+    assert state.get_element_coords(button["index"]) == (196, 202)

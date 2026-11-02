@@ -59,19 +59,29 @@ from mobilerun.agent.manager import ManagerAgent, StatelessManagerAgent
 from mobilerun.agent.manager.prompts import ManagerResponseValidationError
 from mobilerun.agent.oneflows.structured_output_agent import StructuredOutputAgent
 from mobilerun.agent.trajectory import TrajectoryWriter
+from mobilerun.agent.utils.android_device import (
+    create_android_portal_http_driver,
+    is_portal_http_url,
+    resolve_android_serial,
+)
+from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.llm_loader import (
     load_agent_llms,
     merge_llms_with_config,
 )
+from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.agent.utils.signatures import build_tool_registry
 from mobilerun.agent.utils.tracing_setup import (
-    apply_session_context,
     record_langfuse_screenshot,
+    session_context,
     setup_tracing,
 )
 from mobilerun.agent.utils.trajectory import Trajectory
-from mobilerun.agent.utils.vision_sizing import VisionResizePolicy
+from mobilerun.agent.utils.vision_sizing import (
+    VisionResizePolicy,
+    model_uses_normalized_coordinates,
+)
 from mobilerun.config_manager.config_manager import (
     DEFAULT_DISABLED_TOOLS,
     AgentConfig,
@@ -243,9 +253,9 @@ def _effective_disabled_tools(
         return [name for name in disabled_tools if name not in _COORDINATE_TOOL_NAMES]
     # Auto-unmask click_at only when (a) the caller didn't supply an explicit
     # list, and (b) the provider maps model-visible coordinates to the
-    # driver's tap input space (directly, or via the vision coordinate
-    # contract's convert_point scaling — both Android and iOS set the flag
-    # accordingly). Normalized mode keeps click_at masked.
+    # driver's tap input space (directly, via the vision coordinate
+    # contract's convert_point scaling, or via normalized 0-1000 conversion —
+    # both Android and iOS set the flag accordingly).
     coords_align = getattr(state_provider, "screenshot_matches_input_coords", False)
     if vision_enabled and not explicit and coords_align:
         return [name for name in disabled_tools if name != "click_at"]
@@ -260,6 +270,9 @@ class MobileAgent(Workflow):
     - reasoning=False: Uses FastAgent directly for immediate execution
     - reasoning=True: Uses ManagerAgent (planning) + ExecutorAgent (actions)
     """
+
+    _tracing_session_id: str | None = None
+    _tracing_user_id: str | None = None
 
     @staticmethod
     def _configure_default_logging(debug: bool = False):
@@ -277,6 +290,9 @@ class MobileAgent(Workflow):
                 else logging.Formatter("%(message)s")
             )
             configure_logging(debug=debug, handler=handler)
+        elif debug:
+            # Keep the existing handler (e.g. the import-time one); never lower.
+            logger.setLevel(logging.DEBUG)
 
     def __init__(
         self,
@@ -294,6 +310,7 @@ class MobileAgent(Workflow):
         *args,
         **kwargs,
     ):
+        self._configure_default_logging(debug=bool(config and config.logging.debug))
         self.user_id = kwargs.pop("user_id", None)
         self.runtype = kwargs.pop("runtype", "developer")
         self.shared_state = MobileAgentState(
@@ -355,14 +372,16 @@ class MobileAgent(Workflow):
         self._injected_driver = driver
         self._injected_state_provider = state_provider
         self.driver = None
+        # Android serial resolved for this run.
+        self.android_serial = None
         self.registry = None
         self.action_ctx = None
         self.state_provider = None
 
         super().__init__(*args, timeout=timeout, **kwargs)
 
-        self._configure_default_logging(debug=self.config.logging.debug)
-
+        self._tracing_session_id = self.config.tracing.langfuse_session_id
+        self._tracing_user_id = self.config.tracing.langfuse_user_id
         setup_tracing(self.config.tracing, agent=self)
 
         # Check if using external agent - skip LLM loading
@@ -476,9 +495,11 @@ class MobileAgent(Workflow):
         logger.debug("✅ MobileAgent initialized successfully.")
 
     def run(self, *args, **kwargs) -> Awaitable[ResultEvent] | WorkflowHandler:
-        apply_session_context()
-        handler = super().run(*args, **kwargs)  # type: ignore[assignment]
-        return handler
+        # Workflow tasks inherit this context when run() schedules them.
+        with session_context(
+            self._tracing_session_id, self._tracing_user_id, agent=self
+        ):
+            return super().run(*args, **kwargs)
 
     async def _initialize_workflow_deadline(self, ctx: Context) -> None:
         """Store a deadline owned by the runtime execution of this run."""
@@ -547,13 +568,17 @@ class MobileAgent(Workflow):
 
             # Resolve device serial and get raw AdbDevice
             device_serial = self.resolved_device_config.serial
+            if is_portal_http_url(device_serial):
+                raise ValueError(
+                    "External agents need an ADB device; a Portal HTTP URL is "
+                    "not supported."
+                )
             if device_serial is None:
-                devices = await adb.list()
-                if not devices:
-                    raise ValueError("No connected Android devices found.")
-                device_serial = devices[0].serial
+                device_serial = await resolve_android_serial()
+                logger.info(f"📱 Using device: {device_serial}")
 
             adb_device = await adb.device(serial=device_serial)
+            self.android_serial = device_serial
 
             logger.info(f"🤖 Using external agent: {agent_name}")
 
@@ -610,6 +635,33 @@ class MobileAgent(Workflow):
         vision_resize_policy = VisionResizePolicy.from_llms(
             vision_llms, max_side_cap=self.config.agent.model_screenshot_max_side
         )
+        # In reasoning mode the Executor only sees a screenshot when the Manager
+        # also captured one (manager.vision=True), so require both before
+        # exposing coordinate clicks.
+        if self.config.agent.reasoning:
+            active_action_vision = (
+                self.config.agent.manager.vision and self.config.agent.executor.vision
+            )
+        else:
+            active_action_vision = self.config.agent.fast_agent.vision
+        action_agent_has_vision = self.config.agent.vision_only or active_action_vision
+        # The agent that emits coordinate actions decides the coordinate space.
+        # Its own vision flag counts: the Manager also captures screenshots for
+        # trajectories and streaming.
+        coordinate_llm = (
+            self.executor_llm if self.config.agent.reasoning else self.fast_agent_llm
+        )
+        coordinate_agent_vision = self.config.agent.vision_only or (
+            self.config.agent.executor.vision
+            if self.config.agent.reasoning
+            else self.config.agent.fast_agent.vision
+        )
+        use_normalized = self.config.agent.use_normalized_coordinates or (
+            coordinate_agent_vision
+            and model_uses_normalized_coordinates(
+                str(getattr(coordinate_llm, "model", "") or "")
+            )
+        )
 
         is_ios = self.resolved_device_config.platform.lower() == "ios"
         control_backend = _normalize_control_backend(
@@ -644,13 +696,21 @@ class MobileAgent(Workflow):
                 token=self.resolved_device_config.resolve_auth_token(),
             )
             await driver.connect()
+        elif is_portal_http_url(self.resolved_device_config.serial):
+            # Portal HTTP talks to the app directly: no ADB serial, auto-setup,
+            # or keyboard cleanup.
+            driver = create_android_portal_http_driver(
+                self.resolved_device_config.serial,
+                self.resolved_device_config.resolve_auth_token(),
+            )
+            await driver.connect()
         else:
             device_serial = self.resolved_device_config.serial
             if device_serial is None:
-                devices = await adb.list()
-                if not devices:
-                    raise ValueError("No connected Android devices found.")
-                device_serial = devices[0].serial
+                device_serial = await resolve_android_serial()
+                logger.info(f"📱 Using device: {device_serial}")
+
+            self.android_serial = device_serial
 
             # Auto-setup portal if enabled
             if (
@@ -658,7 +718,11 @@ class MobileAgent(Workflow):
                 and self.resolved_device_config.portal_mode != "disabled"
             ):
                 device_obj = await adb.device(serial=device_serial)
-                await ensure_portal_ready(device_obj, debug=self.config.logging.debug)
+                await ensure_portal_ready(
+                    device_obj,
+                    debug=self.config.logging.debug,
+                    **portal_version_kwargs(ensure_portal_ready),
+                )
 
             driver = AndroidDriver(
                 serial=device_serial,
@@ -689,7 +753,9 @@ class MobileAgent(Workflow):
             self.state_provider = self._injected_state_provider
         elif self.config.agent.vision_only or is_visual_remote:
             self.state_provider = ScreenshotOnlyStateProvider(
-                driver, vision_resize_policy=vision_resize_policy
+                driver,
+                vision_resize_policy=vision_resize_policy,
+                use_normalized=use_normalized,
             )
         elif is_ios_portal_http:
             # The --local portal serves the Android-shaped state (a11y_tree
@@ -700,7 +766,7 @@ class MobileAgent(Workflow):
                 driver,
                 tree_filter=tree_filter,
                 tree_formatter=IndexedFormatter(),
-                use_normalized=self.config.agent.use_normalized_coordinates,
+                use_normalized=use_normalized,
                 stealth=False,
                 vision_enabled=vision_enabled,
                 vision_resize_policy=vision_resize_policy,
@@ -708,7 +774,7 @@ class MobileAgent(Workflow):
         elif is_ios:
             self.state_provider = IOSStateProvider(
                 driver,
-                use_normalized=self.config.agent.use_normalized_coordinates,
+                use_normalized=use_normalized,
                 vision_enabled=vision_enabled,
                 vision_resize_policy=vision_resize_policy,
             )
@@ -719,11 +785,14 @@ class MobileAgent(Workflow):
                 driver,
                 tree_filter=tree_filter,
                 tree_formatter=tree_formatter,
-                use_normalized=self.config.agent.use_normalized_coordinates,
+                use_normalized=use_normalized,
                 stealth=stealth_enabled,
                 vision_enabled=vision_enabled,
                 vision_resize_policy=vision_resize_policy,
             )
+
+        if getattr(self.state_provider, "use_normalized", False):
+            logger.info("📐 Coordinates: normalized 0-1000")
 
         # ── 3. Build tool registry ────────────────────────────────────
         registry, standard_tool_names = await build_tool_registry(
@@ -735,6 +804,9 @@ class MobileAgent(Workflow):
                 self.state_provider,
                 "requires_coordinate_tools",
                 False,
+            ),
+            normalized_coordinates=getattr(
+                self.state_provider, "use_normalized", False
             ),
         )
 
@@ -761,16 +833,6 @@ class MobileAgent(Workflow):
         disabled_tools = list(
             user_disabled if explicit_disabled else DEFAULT_DISABLED_TOOLS
         )
-        # In reasoning mode the Executor only sees a screenshot when the Manager
-        # also captured one (manager.vision=True), so require both before
-        # exposing coordinate clicks.
-        if self.config.agent.reasoning:
-            active_action_vision = (
-                self.config.agent.manager.vision and self.config.agent.executor.vision
-            )
-        else:
-            active_action_vision = self.config.agent.fast_agent.vision
-        action_agent_has_vision = self.config.agent.vision_only or active_action_vision
         disabled_tools = _effective_disabled_tools(
             disabled_tools,
             self.state_provider,
@@ -806,7 +868,11 @@ class MobileAgent(Workflow):
             self.executor_agent.action_ctx = self.action_ctx
 
         # ── 6. Fetch device date once ─────────────────────────────────
-        self.shared_state.device_date = await driver.get_date()
+        try:
+            self.shared_state.device_date = await driver.get_date()
+        except NotImplementedError:
+            # Optional prompt context; older Portal HTTP drivers have no date.
+            self.shared_state.device_date = ""
 
         # ── 7. Telemetry init event ───────────────────────────────────
         capture(
@@ -937,11 +1003,12 @@ class MobileAgent(Workflow):
             )
 
         except Exception as e:
-            logger.error(f"Error during task execution: {e}")
+            error = describe_error(e)
+            logger.error(f"Error during task execution: {error}")
             if self.config.logging.debug:
                 logger.error(traceback.format_exc())
             return FastAgentResultEvent(
-                success=False, reason=f"Error: {str(e)}", instruction=ev.instruction
+                success=False, reason=f"Error: {error}", instruction=ev.instruction
             )
 
     @step
@@ -952,12 +1019,13 @@ class MobileAgent(Workflow):
             return FinalizeEvent(success=ev.success, reason=ev.reason)
 
         except Exception as e:
-            logger.error(f"❌ Error during MobileAgent execution: {e}")
+            error = describe_error(e)
+            logger.error(f"❌ Error during MobileAgent execution: {error}")
             if self.config.logging.debug:
                 logger.error(traceback.format_exc())
             return FinalizeEvent(
                 success=False,
-                reason=str(e),
+                reason=error,
             )
 
     # ========================================================================

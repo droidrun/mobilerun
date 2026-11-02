@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from llama_index.core.base.llms.types import ChatMessage, ChatResponse
 
 from mobilerun.agent.action_result import ActionResult
@@ -208,6 +209,23 @@ def test_dsml_inside_parameter_never_executes_and_stops_after_three_responses():
     assert "3 consecutive times" in result["reason"]
     assert len(responder.requests) == 3
     assert registry.executed == []
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [MALFORMED_RESPONSE, DSML_ONLY_RESPONSE],
+    ids=["xml_wrapped", "dsml_only"],
+)
+def test_valid_block_after_malformed_block_never_executes(malformed):
+    result, responder, registry, _agent, shared_state = _run_sequence(
+        [f"{malformed}\nThe Profile tab is open.\n{COMPLETE_RESPONSE}"] * 3
+    )
+
+    assert result["success"] is False
+    assert "3 consecutive times" in result["reason"]
+    assert len(responder.requests) == 3
+    assert registry.executed == []
+    assert len(_correction_messages(shared_state)) == 2
 
 
 def test_terminal_guard_explicitly_drains_pending_external_messages():

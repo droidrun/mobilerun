@@ -112,7 +112,7 @@ def test_tiered_complete_routes_exact_model_over_sse(model: str) -> None:
     session = _SSESession([_text_chunk("O"), _text_chunk("K", final=True)])
     llm._session = session
 
-    response = llm.complete("Reply OK", generation_config={"temperature": 0.2})
+    response = llm.complete("Reply OK", generation_config={"maxOutputTokens": 32})
 
     assert response.text == "OK"
     assert response.additional_kwargs == {
@@ -127,7 +127,7 @@ def test_tiered_complete_routes_exact_model_over_sse(model: str) -> None:
     assert call["stream"] is True
     assert call["json"]["model"] == model
     request = call["json"]["request"]
-    assert request["generationConfig"] == {"temperature": 0.2}
+    assert request["generationConfig"] == {"maxOutputTokens": 32}
     assert request["contents"] == [{"role": "user", "parts": [{"text": "Reply OK"}]}]
 
 
@@ -152,7 +152,7 @@ def test_tiered_stream_chat_routes_exact_model_and_image_payload(model: str) -> 
                     blocks=[TextBlock(text="Inspect"), ImageBlock(image=png)],
                 )
             ],
-            generation_config={"temperature": 0.2},
+            generation_config={"maxOutputTokens": 32},
         )
     )
 
@@ -164,7 +164,7 @@ def test_tiered_stream_chat_routes_exact_model_and_image_payload(model: str) -> 
     assert call["stream"] is True
     assert call["json"]["model"] == model
     request = call["json"]["request"]
-    assert request["generationConfig"] == {"temperature": 0.2}
+    assert request["generationConfig"] == {"maxOutputTokens": 32}
     parts = request["contents"][0]["parts"]
     assert parts[0] == {"text": "Inspect"}
     assert parts[1]["inlineData"]["mimeType"] == "image/png"
@@ -594,3 +594,192 @@ def test_wizard_oauth_detection_handles_provider_field_names(tmp_path):
     p2.write_text(json.dumps({"openaiOauth": {"access": "a"}}))
     # gemini slot absent -> not detected as present
     assert not _oauth_credentials_present(str(p2), "gemini_oauth_code_assist")
+
+
+@pytest.mark.parametrize(
+    ("model", "expected_config"),
+    (
+        ("gemini-3.8-flash-high", {}),
+        ("gemini-pro-agent", {}),
+        ("gemini-2.5-flash", {"temperature": 0.2}),
+    ),
+)
+def test_profile_temperature_is_left_to_google_for_gemini_3(
+    model: str, expected_config: dict
+) -> None:
+    from mobilerun.agent.utils.oauth.gemini_oauth_code_assist_llm import (
+        GeminiOAuthCodeAssistLLM,
+    )
+
+    llm = GeminiOAuthCodeAssistLLM(
+        model=model, access_token="test-token", credential_path=None, temperature=0.2
+    )
+    session = _SSESession([_text_chunk("OK", final=True)])
+    llm._session = session
+
+    llm.complete("Reply OK")
+
+    [(_url, call)] = session.calls
+    assert call["json"]["request"]["generationConfig"] == expected_config
+
+
+def test_headers_use_a_versioned_antigravity_user_agent() -> None:
+    import re
+
+    headers = _gemini_llm()._build_headers("test-token")
+
+    assert re.fullmatch(
+        r"antigravity/2\.14\.0 [a-z0-9]+/[a-z0-9_]+", headers["User-Agent"]
+    )
+
+
+def test_fetch_available_models_skips_image_generation_models():
+    models = _models_from_catalog(
+        {
+            "models": {
+                "gemini-3.8-flash-tiered": {
+                    "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
+                    "supportsImages": True,
+                },
+                "gemini-3.1-flash-image": {
+                    "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
+                    "displayName": "Gemini 3.1 Flash Image",
+                },
+            },
+            "imageGenerationModelIds": ["gemini-3.1-flash-image"],
+        }
+    )
+
+    assert [model["id"] for model in models] == ["gemini-3.8-flash-tiered"]
+
+
+@pytest.mark.parametrize(
+    ("model", "expected_config"),
+    (
+        ("gemini-3.8-flash-tiered", {"maxOutputTokens": 32}),
+        ("gemini-2.5-flash", {"maxOutputTokens": 32, "temperature": 0.9, "topP": 0.5}),
+    ),
+)
+def test_call_time_sampling_is_left_to_google_for_gemini_3(
+    model: str, expected_config: dict
+) -> None:
+    llm = _gemini_llm(model)
+    session = _SSESession([_text_chunk("OK", final=True)])
+    llm._session = session
+
+    llm.complete(
+        "Reply OK",
+        generation_config={"maxOutputTokens": 32, "temperature": 0.9, "topP": 0.5},
+    )
+
+    [(_url, call)] = session.calls
+    assert call["json"]["request"]["generationConfig"] == expected_config
+
+
+def _generation_config_for(model: str, *, additional_kwargs=None, **call_kwargs):
+    from mobilerun.agent.utils.oauth.gemini_oauth_code_assist_llm import (
+        GeminiOAuthCodeAssistLLM,
+    )
+
+    llm = GeminiOAuthCodeAssistLLM(
+        model=model,
+        access_token="test-token",
+        credential_path=None,
+        temperature=0.2,
+        max_tokens=512,
+        additional_kwargs=additional_kwargs or {},
+    )
+    session = _SSESession([_text_chunk("OK", final=True)])
+    llm._session = session
+
+    llm.complete("Reply OK", **call_kwargs)
+
+    [(_url, call)] = session.calls
+    return call["json"]["request"]
+
+
+@pytest.mark.parametrize(
+    ("model", "expected_config"),
+    (
+        ("gemini-3.8-flash-tiered", {"maxOutputTokens": 512, "candidateCount": 1}),
+        (
+            "gemini-2.5-flash",
+            {
+                "temperature": 0.7,
+                "topP": 0.5,
+                "maxOutputTokens": 512,
+                "candidateCount": 1,
+            },
+        ),
+    ),
+)
+def test_profile_generation_config_is_merged_and_sanitized(
+    model: str, expected_config: dict
+) -> None:
+    request = _generation_config_for(
+        model,
+        additional_kwargs={
+            "generationConfig": {"temperature": 0.7, "topP": 0.5, "candidateCount": 1},
+            "safetySettings": [{"category": "X"}],
+        },
+    )
+
+    assert request["generationConfig"] == expected_config
+    assert request["safetySettings"] == [{"category": "X"}]
+
+
+def test_call_request_extra_generation_config_is_merged_and_sanitized() -> None:
+    request = _generation_config_for(
+        "gemini-3.8-flash-high",
+        additional_kwargs={"generationConfig": {"maxOutputTokens": 256}},
+        request_extra={"generationConfig": {"topK": 5, "stopSequences": ["END"]}},
+    )
+
+    assert request["generationConfig"] == {
+        "maxOutputTokens": 256,
+        "stopSequences": ["END"],
+    }
+
+
+def test_snake_case_generation_config_override_does_not_collide() -> None:
+    request = _generation_config_for(
+        "gemini-3.8-flash-tiered",
+        additional_kwargs={
+            "generationConfig": {"max_output_tokens": 40, "top_p": 0.5},
+        },
+    )
+
+    assert request["generationConfig"] == {"maxOutputTokens": 40}
+
+
+def test_request_level_generation_config_alias_is_merged_and_sanitized() -> None:
+    request = _generation_config_for(
+        "gemini-3.8-flash-tiered",
+        additional_kwargs={"generation_config": {"temperature": 0.9, "top_k": 3}},
+    )
+
+    assert request["generationConfig"] == {"maxOutputTokens": 512}
+    assert "generation_config" not in request
+
+
+@pytest.mark.parametrize(
+    ("profile_config", "call_config", "expected"),
+    (
+        (
+            None,
+            {"stopSequences": ["END"]},
+            {"maxOutputTokens": 512, "stopSequences": ["END"]},
+        ),
+        ({"stopSequences": ["END"]}, None, None),
+    ),
+)
+def test_highest_generation_config_layer_wins(
+    profile_config, call_config, expected
+) -> None:
+    request = _generation_config_for(
+        "gemini-3.8-flash-tiered",
+        additional_kwargs={"generationConfig": profile_config},
+        request_extra={"generationConfig": call_config},
+    )
+
+    assert request["generationConfig"] == expected

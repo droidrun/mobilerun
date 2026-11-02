@@ -114,7 +114,7 @@ class PortalAssetSelectionTest(unittest.TestCase):
         original_get = portal.requests.get
         calls = []
 
-        def get(url):
+        def get(url, **kwargs):
             calls.append(url)
             if "api.github.com" in url:
                 raise portal.requests.ConnectionError("dns failure")
@@ -144,7 +144,7 @@ class PortalAssetSelectionTest(unittest.TestCase):
         original_get = portal.requests.get
         calls = []
 
-        def get(url):
+        def get(url, **kwargs):
             calls.append(url)
             if "api.github.com" in url:
                 raise portal.requests.ConnectionError("tls failure")
@@ -169,7 +169,7 @@ class PortalAssetSelectionTest(unittest.TestCase):
     def test_release_lookup_raises_clear_error_when_all_hosts_fail(self):
         original_get = portal.requests.get
 
-        def get(url):
+        def get(url, **kwargs):
             raise portal.requests.ConnectionError("offline")
 
         portal.requests.get = get

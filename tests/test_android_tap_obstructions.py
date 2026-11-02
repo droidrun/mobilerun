@@ -2,11 +2,11 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from mobilerun.agent.utils.actions import click, long_press, type_text
+from mobilerun.agent.utils.actions import click, long_press, type_secret, type_text
 from mobilerun.tools.filters import ConciseFilter
 from mobilerun.tools.formatters import IndexedFormatter
 from mobilerun.tools.ui.provider import AndroidStateProvider
@@ -28,11 +28,12 @@ def node(text, bounds=(0, 0, 1000, 400), children=(), **properties):
     }
 
 
-def context(children, **provider_kwargs):
+def context(children, screen=(1000, 2000), **provider_kwargs):
+    width, height = screen
     raw = {
         "a11y_tree": node("root", children=children, isClickable=False),
         "phone_state": {},
-        "device_context": {"screen_bounds": {"width": 1000, "height": 2000}},
+        "device_context": {"screen_bounds": {"width": width, "height": height}},
     }
     driver = SimpleNamespace(
         get_ui_tree=AsyncMock(return_value=raw),
@@ -210,17 +211,85 @@ def test_multiple_siblings_can_collectively_cover_target():
     ctx.driver.tap.assert_not_awaited()
 
 
-def test_blocker_bounds_follow_existing_normalized_coordinate_space():
+def test_normalized_mode_shows_normalized_bounds_but_taps_device_pixels():
     ctx = context(
         [node("target"), node("overlay", (300, 0, 700, 400), drawingOrder=2)],
         use_normalized=True,
     )
     target = element(ctx, "target")
-    assert target["bounds"] == "0,0,1000,200"
-    assert target["tapBlockers"] == ["300,0,700,200"]
+    assert target["bounds"] == "0,0,1000,400"
+    assert target["displayBounds"] == "0,0,1000,200"
+    assert "(0,0,1000,200)" in ctx.ui.formatted_text
+    assert target["tapBlockers"] == ["300,0,700,400"]
     x, y = ctx.ui.get_element_coords(target["index"])
-    assert y == 100
+    assert y == 200
     assert not 300 <= x < 700
+
+
+@pytest.mark.parametrize("stealth", [False, True])
+@pytest.mark.parametrize("action", ["click", "long_press", "type", "type_secret"])
+def test_normalized_indexed_actions_tap_device_pixels(action, stealth):
+    ctx = context(
+        [node("send", (930, 2150, 1050, 2270))],
+        screen=(1080, 2400),
+        use_normalized=True,
+        stealth=stealth,
+    )
+    assert "(861,895,972,945)" in ctx.ui.formatted_text
+    index = element(ctx, "send")["index"]
+    if action == "click":
+        result = asyncio.run(click(index, ctx=ctx))
+    elif action == "long_press":
+        result = asyncio.run(long_press(index, ctx=ctx))
+    elif action == "type":
+        result = asyncio.run(type_text("test", index=index, ctx=ctx))
+    else:
+        ctx.credential_manager = SimpleNamespace(
+            resolve_key=AsyncMock(return_value="secret"),
+            get_keys=AsyncMock(return_value=[]),
+        )
+        result = asyncio.run(type_secret("pw", index, ctx=ctx))
+    assert result.success
+    operation = ctx.driver.swipe if action == "long_press" else ctx.driver.tap
+    x, y = operation.await_args.args[:2]
+    assert 930 <= x < 1050 and 2150 <= y < 2270
+    if not stealth:
+        assert (x, y) == (990, 2210)
+        if action == "click":
+            assert result.summary.endswith("Coordinates: (916, 920)")
+        if action == "long_press":
+            assert result.summary.endswith("at (916, 920)")
+
+
+@pytest.mark.parametrize("stealth", [False, True])
+def test_normalized_blocker_avoidance_uses_device_pixels(stealth):
+    ctx = context(
+        [
+            node("row", (0, 1800, 1080, 2000)),
+            node("undo", (300, 1800, 800, 2000), drawingOrder=2),
+            node("wide", (0, 300, 1080, 500)),
+            node("wide overlay", (0, 300, 1000, 500), drawingOrder=2),
+        ],
+        screen=(1080, 2400),
+        use_normalized=True,
+        stealth=stealth,
+    )
+    x, y = ctx.ui.get_element_coords(element(ctx, "row")["index"])
+    assert 1800 <= y < 2000 and not 300 <= x < 800
+    x, y = ctx.ui.get_element_coords(element(ctx, "wide")["index"])
+    assert 1000 <= x < 1080 and 300 <= y < 500
+
+
+def test_normalized_macro_records_device_pixels():
+    ctx = context(
+        [node("send", (930, 2150, 1050, 2270))],
+        screen=(1080, 2400),
+        use_normalized=True,
+    )
+    ctx.macro_recorder = SimpleNamespace(record_action=Mock())
+    asyncio.run(click(element(ctx, "send")["index"], ctx=ctx))
+    action = ctx.macro_recorder.record_action.call_args.args[0]
+    assert action == {"action_type": "tap", "x": 990, "y": 2210}
 
 
 @pytest.mark.parametrize(

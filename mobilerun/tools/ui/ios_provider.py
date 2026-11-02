@@ -4,7 +4,7 @@ Parses the raw text-based accessibility tree returned by the iOS portal
 into structured elements compatible with UIState.
 
 Known limitations:
-- Normalized coordinates untested on iOS
+- Normalized coordinates untested on real iOS devices
 - No filter/formatter pipeline (iOS UIState still formats from raw a11y text)
 """
 
@@ -16,6 +16,10 @@ from typing import Any, Dict, List, Optional
 
 from mobilerun_core_local.driver.base import DeviceDisconnectedError, DeviceDriver
 
+from mobilerun.tools.helpers.coordinate import (
+    NORMALIZED_STATE_NOTE,
+    bounds_to_normalized,
+)
 from mobilerun.tools.helpers.images import (
     fit_dimensions_to_max_side,
     image_dimensions,
@@ -82,14 +86,16 @@ class IOSStateProvider(StateProvider):
         self.resize_model_screenshot = self._vision_contract_intent
         # Without the contract, iOS screenshots (physical pixels) do not map
         # to tap input (points), so coordinate tools stay masked. With the
-        # contract active, convert_point maps the model's display-space
-        # coordinates to points, making click_at safe to auto-enable.
-        self.screenshot_matches_input_coords = self._vision_contract_intent
+        # contract active, or in normalized mode, convert_point maps the
+        # model's coordinates to points, making click_at safe to auto-enable.
+        self.screenshot_matches_input_coords = (
+            self._vision_contract_intent or use_normalized
+        )
         # Coordinate actions are only safe while the contract is active (iOS
         # taps use points, not screenshot pixels). Action-time guards refuse
         # them on a state without it. See
         # actions._require_active_coordinate_contract.
-        self.requires_active_contract_for_coords = self._vision_contract_intent
+        self.requires_active_contract_for_coords = vision_enabled
 
     async def get_state(self) -> UIState:
         try:
@@ -128,6 +134,13 @@ class IOSStateProvider(StateProvider):
         screen_bounds = device_context.get("screen_bounds", {})
         screen_width = int(screen_bounds.get("width", 390))
         screen_height = int(screen_bounds.get("height", 844))
+
+        # Normalized coordinates need the real screen size, not the defaults.
+        normalized_ready = bool(
+            self.use_normalized
+            and screen_bounds.get("width")
+            and screen_bounds.get("height")
+        )
 
         # Vision coordinate contract: the screenshot agents attach is resized
         # (with a labeled grid) into a display space derived from the actual
@@ -192,8 +205,18 @@ class IOSStateProvider(StateProvider):
                         strict=True,
                     )
                 )
+        elif normalized_ready:
+            # Model-facing bounds in 0-1000; "bounds" (points) keep driving taps.
+            for element in elements:
+                element["displayBounds"] = bounds_to_normalized(
+                    element["bounds"], screen_width, screen_height
+                )
 
-        formatted_text = _format_elements(elements, screen_width, screen_height)
+        formatted_text = _format_elements(
+            elements, screen_width, screen_height, normalized=normalized_ready
+        )
+        if normalized_ready and self.vision_enabled:
+            formatted_text += f"\n\n{NORMALIZED_STATE_NOTE}"
 
         if display_width and display_height:
             formatted_text += (
@@ -222,7 +245,8 @@ class IOSStateProvider(StateProvider):
             use_normalized=self.use_normalized,
             coordinate_scale_x=coordinate_scale_x,
             coordinate_scale_y=coordinate_scale_y,
-            coordinate_contract_active=bool(display_width and display_height),
+            coordinate_contract_active=bool(display_width and display_height)
+            or normalized_ready,
             model_screenshot_width=display_width,
             model_screenshot_height=display_height,
         )
@@ -374,19 +398,21 @@ def _format_elements(
     elements: List[Dict[str, Any]],
     screen_width: int,
     screen_height: int,
+    normalized: bool = False,
 ) -> str:
     """Build the text representation shown to the agent."""
+    coord_note = " (normalized [0-1000])" if normalized else ""
     schema = "'index. className: text - bounds(x1,y1,x2,y2)'"
     if not elements:
-        return f"Current UI elements:\n{schema}:\nNo UI elements found"
+        return f"Current UI elements{coord_note}:\n{schema}:\nNo UI elements found"
 
-    lines = [f"Current UI elements:\n{schema}:"]
+    lines = [f"Current UI elements{coord_note}:\n{schema}:"]
     for el in elements:
         idx = el.get("index", 0)
         cls = el.get("className", "Unknown")
         text = el.get("text", "")
-        # Model-facing text shows display-space bounds when the screenshot is
-        # resized for the model; "bounds" (points) drive real taps.
+        # Model-facing text shows display-space or normalized bounds;
+        # "bounds" (points) drive real taps.
         bounds = el.get("displayBounds") or el.get("bounds", "")
 
         parts = [f"{idx}. {cls}:"]

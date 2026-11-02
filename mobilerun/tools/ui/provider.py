@@ -9,10 +9,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from copy import copy, deepcopy
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
+import httpx
 from mobilerun_core_local.driver.base import DeviceDisconnectedError
 
+from mobilerun.tools.helpers.coordinate import NORMALIZED_STATE_NOTE
 from mobilerun.tools.helpers.images import (
     fit_dimensions_to_max_side,
     resize_image_to_dimensions_with_grid,
@@ -38,6 +42,46 @@ _MAX_RETRIES = 7
 # With the schedule above, this fires after ~11s (1+2+3+5).
 _RECOVERY_AFTER_ATTEMPT = 5
 
+# A timed-out read means the device side is still working on the request we
+# just abandoned. Portal and WDA serve state one request at a time, so every
+# extra retry queues behind the stuck one. Give timeouts a single retry
+# (preceded by recovery), not the full schedule above.
+_MAX_TIMEOUT_ATTEMPTS = 2
+
+# Say we are waiting when one fetch takes longer than this. A slow app can
+# keep a state request busy for 15-30s, and that should not look like a hang.
+_SLOW_FETCH_NOTICE_S = 3.0
+
+# Portal's error when its accessibility service is not bound, e.g. after the
+# system force-stopped Portal. Waiting does not help, so recover right away.
+_A11Y_SERVICE_NOT_AVAILABLE = "Accessibility service not available"
+
+
+def _is_timeout(error: BaseException) -> bool:
+    """True when the device accepted the request but did not answer in time.
+
+    Connect and pool timeouts are excluded: those requests never reached the
+    device, so retrying them does not queue work behind a busy one.
+    """
+    return isinstance(error, (TimeoutError, httpx.ReadTimeout))
+
+
+async def _fetch_with_notice(
+    fetch: Callable[[], Awaitable[Dict[str, Any]]], notice: bool
+) -> Dict[str, Any]:
+    """Await *fetch*, logging once at INFO if it runs past the notice delay."""
+    if not notice:
+        return await fetch()
+    task = asyncio.ensure_future(fetch())
+    try:
+        done, _ = await asyncio.wait({task}, timeout=_SLOW_FETCH_NOTICE_S)
+    except BaseException:
+        task.cancel()
+        raise
+    if not done:
+        logger.info("Waiting for the UI state from the device...")
+    return await task
+
 
 async def fetch_state_with_retry(
     fetch: Callable[[], Awaitable[Dict[str, Any]]],
@@ -51,8 +95,11 @@ async def fetch_state_with_retry(
     Args:
         fetch: Async callable that returns the raw state dict from Portal.
         recovery: Optional async callable invoked once after *recovery_after*
-            consecutive failures (e.g. restart accessibility service).
-        max_retries: Total number of attempts before giving up.
+            consecutive failures (e.g. restart accessibility service), or
+            after the first failure if Portal's service is not available,
+            or before the single retry of a timed-out fetch.
+        max_retries: Total number of attempts before giving up. Timeouts
+            stop after ``_MAX_TIMEOUT_ATTEMPTS`` timed-out attempts.
         retry_delays: Per-attempt delays. If shorter than max_retries - 1,
             the last value is reused for remaining delays.
         recovery_after: Trigger *recovery* after this many failures.
@@ -68,15 +115,23 @@ async def fetch_state_with_retry(
     delays = retry_delays or _RETRY_DELAYS
     last_error: Optional[Exception] = None
     recovery_attempted = False
+    slow_notice_logged = False
+    timeouts = 0
+    attempts = 0
 
     is_debug = logger.isEnabledFor(logging.DEBUG)
 
     for attempt in range(max_retries):
         try:
-            logger.debug(f"Getting state (attempt {attempt + 1}/{max_retries})")
+            attempts = attempt + 1
+            logger.debug(f"Getting state (attempt {attempts}/{max_retries})")
 
-            t0 = time.monotonic() if is_debug else 0
-            combined_data = await fetch()
+            t0 = time.monotonic()
+            try:
+                combined_data = await _fetch_with_notice(fetch, not slow_notice_logged)
+            finally:
+                if time.monotonic() - t0 >= _SLOW_FETCH_NOTICE_S:
+                    slow_notice_logged = True
 
             if is_debug:
                 elapsed = (time.monotonic() - t0) * 1000
@@ -96,7 +151,10 @@ async def fetch_state_with_retry(
             raise
         except Exception as e:
             last_error = e
-            is_last = attempt >= max_retries - 1
+            timed_out = _is_timeout(e)
+            if timed_out:
+                timeouts += 1
+            is_last = attempt >= max_retries - 1 or timeouts >= _MAX_TIMEOUT_ATTEMPTS
             delay = delays[attempt] if attempt < len(delays) else delays[-1]
 
             err_desc = str(e) or type(e).__name__
@@ -106,25 +164,32 @@ async def fetch_state_with_retry(
             )
 
             # Mid-retry recovery: restart the a11y service once
+            service_gone = _A11Y_SERVICE_NOT_AVAILABLE in err_desc
             if (
                 not recovery_attempted
                 and recovery is not None
-                and attempt + 1 >= recovery_after
+                and (attempt + 1 >= recovery_after or service_gone or timed_out)
                 and not is_last
             ):
                 recovery_attempted = True
-                logger.info("State retrieval failing, attempting recovery...")
+                if service_gone:
+                    logger.info(
+                        "Portal accessibility service is off, re-enabling it..."
+                    )
+                else:
+                    logger.info("State retrieval failing, attempting recovery...")
                 try:
                     await recovery()
                     logger.info("Recovery action completed")
                 except Exception as rec_err:
                     logger.warning(f"Recovery action failed: {rec_err}")
 
-            if not is_last:
-                await asyncio.sleep(delay)
+            if is_last:
+                break
+            await asyncio.sleep(delay)
 
     last_desc = str(last_error) or type(last_error).__name__
-    error_msg = f"Failed to get state after {max_retries} attempts: {last_desc}"
+    error_msg = f"Failed to get state after {attempts} attempts: {last_desc}"
     logger.error(error_msg)
     raise Exception(error_msg) from last_error
 
@@ -184,9 +249,32 @@ def resize_model_screenshot_with_grid(state_provider: Any, screenshot: bytes) ->
     dims are available (e.g. injected screenshot-only providers)."""
     width = getattr(state_provider, "model_screenshot_width", None)
     height = getattr(state_provider, "model_screenshot_height", None)
+    # A pixel grid contradicts a normalized coordinate contract.
+    divisions = 10 if getattr(state_provider, "model_screenshot_grid", True) else 0
     if width and height:
-        return resize_image_to_dimensions_with_grid(screenshot, width, height)
-    return resize_image_to_max_side_with_grid(screenshot)
+        return resize_image_to_dimensions_with_grid(
+            screenshot, width, height, divisions=divisions
+        )
+    return resize_image_to_max_side_with_grid(screenshot, divisions=divisions)
+
+
+async def resize_model_screenshot_async(
+    state_provider: Any, screenshot: bytes
+) -> bytes:
+    """Resize when required, snapshotting model geometry before offloading."""
+    if not should_resize_model_screenshot(state_provider):
+        return screenshot
+
+    geometry = SimpleNamespace(
+        model_screenshot_width=getattr(state_provider, "model_screenshot_width", None),
+        model_screenshot_height=getattr(
+            state_provider, "model_screenshot_height", None
+        ),
+        model_screenshot_grid=getattr(state_provider, "model_screenshot_grid", True),
+    )
+    return await asyncio.to_thread(
+        resize_model_screenshot_with_grid, geometry, screenshot
+    )
 
 
 class AndroidStateProvider(StateProvider):
@@ -223,12 +311,9 @@ class AndroidStateProvider(StateProvider):
         # get_state); read by resize_model_screenshot_with_grid.
         self.model_screenshot_width: Optional[int] = None
         self.model_screenshot_height: Optional[int] = None
-        # Android screenshots and input taps share device-pixel coordinates,
-        # but only when not in normalized mode. ``use_normalized=True`` makes
-        # ``UIState.convert_point`` treat inputs as [0-1000] normalized
-        # coordinates, which is incompatible with picking coordinates off the
-        # screenshot — keep click_at masked in that case.
-        self.screenshot_matches_input_coords = not use_normalized
+        # Model coordinates reach device pixels either 1:1, through the vision
+        # contract's scaling, or through normalized [0-1000] conversion.
+        self.screenshot_matches_input_coords = True
         # Normalized [0-1000] coordinates are scale-invariant, so the
         # deterministic-space contract is only needed for pixel coordinates.
         # Re-evaluated per get_state: the flag must describe the CURRENT
@@ -240,18 +325,20 @@ class AndroidStateProvider(StateProvider):
         # Hybrid vision exposes click_at when a coordinate contract is
         # expected, but individual states can still arrive with missing or
         # zero screen bounds. Refuse coordinate actions for those snapshots
-        # instead of treating model coordinates as native device pixels.
-        self.requires_active_contract_for_coords = self._vision_contract_intent
+        # instead of mapping model coordinates against a wrong screen size.
+        self.requires_active_contract_for_coords = vision_enabled
 
-    async def _recover_portal(self) -> None:
-        """Restart Portal's accessibility service and TCP socket server."""
+    def _portal_recovery(self) -> Optional[Callable[[], Awaitable[None]]]:
+        """Return Portal recovery, or None when there is no ADB device."""
         from mobilerun_core_local.driver.android import AndroidDriver
 
-        if not isinstance(self.driver, AndroidDriver):
-            return
+        if isinstance(self.driver, AndroidDriver) and self.driver.device is not None:
+            return self._recover_portal
+        return None
+
+    async def _recover_portal(self) -> None:
+        """Restart Portal's accessibility service, TCP server and keyboard."""
         device = self.driver.device
-        if device is None:
-            return
 
         from mobilerun_core_local.driver.android.portal import (
             PORTAL_PACKAGE_NAME,
@@ -289,18 +376,51 @@ class AndroidStateProvider(StateProvider):
             except Exception as e:
                 logger.debug(f"TCP server restart failed: {e}")
 
+        # 3. A force-stopped Portal also loses the keyboard; switch back to it
+        if getattr(self.driver, "_portal_keyboard_available", False):
+            from mobilerun_core_local.driver.android.portal import setup_keyboard
+
+            try:
+                await setup_keyboard(device)
+            except Exception as e:
+                logger.debug(f"Portal keyboard restore failed: {e}")
+
         await asyncio.sleep(1.5)
 
     async def get_state(self) -> UIState:
         combined_data = await fetch_state_with_retry(
             fetch=self.driver.get_ui_tree,
-            recovery=self._recover_portal,
+            recovery=self._portal_recovery(),
         )
-        return self._state_from_data(combined_data)
+        return await self._state_from_data_async(combined_data)
 
     async def get_final_state(self) -> UIState:
         """Finalization must not restart accessibility after a failed read."""
-        return self._state_from_data(await self.driver.get_ui_tree())
+        combined_data = await self.driver.get_ui_tree()
+        return await self._state_from_data_async(combined_data)
+
+    async def _state_from_data_async(self, combined_data: dict) -> UIState:
+        # Workers may outlive cancellation. Only their per-call copies may change.
+        processor = copy(self)
+        processor.tree_filter = deepcopy(self.tree_filter)
+        processor.tree_formatter = deepcopy(self.tree_formatter)
+        processor.vision_resize_policy = deepcopy(self.vision_resize_policy)
+
+        def process() -> tuple[UIState, bool]:
+            state = processor._state_from_data(combined_data)
+            return state, processor.resize_model_screenshot
+
+        state, resize = await asyncio.to_thread(process)
+        # Publish together on the loop only when processing completed successfully.
+        self.resize_model_screenshot = resize
+        self.model_screenshot_width = state.model_screenshot_width
+        self.model_screenshot_height = state.model_screenshot_height
+        self.tree_formatter.screen_width = state.screen_width
+        self.tree_formatter.screen_height = state.screen_height
+        self.tree_formatter.use_normalized = state.use_normalized
+        self.tree_formatter.display_scale_x = state.coordinate_scale_x
+        self.tree_formatter.display_scale_y = state.coordinate_scale_y
+        return state
 
     def _state_from_data(self, combined_data: dict) -> UIState:
 
@@ -348,6 +468,13 @@ class AndroidStateProvider(StateProvider):
             self.tree_formatter.format(filtered, combined_data["phone_state"])
         )
 
+        if (
+            self.use_normalized
+            and self.vision_enabled
+            and screen_width
+            and screen_height
+        ):
+            formatted_text += f"\n\n{NORMALIZED_STATE_NOTE}"
         if display_width and display_height:
             scaled_note = (
                 f" — the {screen_width}x{screen_height} device screen scaled down"
@@ -373,7 +500,8 @@ class AndroidStateProvider(StateProvider):
             use_normalized=self.use_normalized,
             coordinate_scale_x=coordinate_scale_x,
             coordinate_scale_y=coordinate_scale_y,
-            coordinate_contract_active=bool(display_width and display_height),
+            coordinate_contract_active=bool(display_width and display_height)
+            or bool(self.use_normalized and screen_width and screen_height),
             model_screenshot_width=display_width,
             model_screenshot_height=display_height,
         )

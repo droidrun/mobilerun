@@ -3,6 +3,7 @@ import os
 import sys
 import time
 
+import mobilerun.mcp.client as mcp_client
 from mobilerun.mcp.adapter import mcp_to_mobilerun_tools
 from mobilerun.mcp.client import MCPClientManager
 from mobilerun.mcp.config import MCPConfig, MCPServerConfig
@@ -97,6 +98,57 @@ if __name__ == "__main__":
     result, server_pid = asyncio.run(exercise_manager())
 
     assert result.startswith("value=hello\ntransport=stdio\npid=")
+    deadline = time.monotonic() + 2
+    while _process_exists(server_pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not _process_exists(server_pid)
+
+
+def test_persistent_connection_closes_from_a_different_task(tmp_path, monkeypatch):
+    server_script = tmp_path / "pid_server.py"
+    server_script.write_text("""
+import os
+
+from mcp.server.fastmcp import FastMCP
+
+server = FastMCP("mobilerun-task-test")
+
+
+@server.tool()
+def pid() -> str:
+    return str(os.getpid())
+
+
+if __name__ == "__main__":
+    server.run(transport="stdio")
+""".lstrip())
+
+    manager = MCPClientManager(
+        MCPConfig(
+            enabled=True,
+            servers={
+                "fixture": MCPServerConfig(
+                    command=sys.executable, args=[str(server_script)]
+                )
+            },
+        )
+    )
+
+    async def exercise_manager() -> int:
+        await manager.discover_tools()
+        # Agent steps call tools and finalization disconnects in separate tasks.
+        result = await asyncio.create_task(manager.call_tool("fixture_pid", {}))
+        await asyncio.create_task(manager.disconnect_all())
+        assert manager.connected_servers == []
+        return int(result.content[0].text)
+
+    warnings = []
+    monkeypatch.setattr(
+        mcp_client.logger, "warning", lambda msg, *args: warnings.append(msg % args)
+    )
+    server_pid = asyncio.run(exercise_manager())
+
+    assert warnings == []
     deadline = time.monotonic() + 2
     while _process_exists(server_pid) and time.monotonic() < deadline:
         time.sleep(0.01)

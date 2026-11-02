@@ -1,7 +1,10 @@
 FROM python:3.12-slim
 
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /uvx /usr/local/bin/
+
 RUN groupadd -g 1000 mobilerun \
-    && useradd -m -u 1000 -g 1000 -s /bin/bash mobilerun
+    && useradd -m -u 1000 -g 1000 -s /bin/bash mobilerun \
+    && install -d -o mobilerun -g mobilerun /mobilerun
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -13,14 +16,9 @@ USER mobilerun
 
 WORKDIR /mobilerun
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+COPY --chown=mobilerun:mobilerun . .
 
-ENV PATH="/home/mobilerun/.local/bin:${PATH}"
-
-COPY . .
-
-RUN uv venv && \
-    uv pip --no-cache-dir install .[google,anthropic,openai,deepseek,ollama,openrouter]
+RUN uv sync --locked --no-dev --no-editable --extra anthropic --no-cache
 
 ENTRYPOINT [".venv/bin/mobilerun"]
 

@@ -25,6 +25,10 @@ def _ensure_image_bytes(image_source: Union[str, Path, Image.Image, bytes]) -> b
     else:
         raise ValueError(f"Unsupported image type: {type(image_source)}")
 
+    # Pillow 13 requires explicit conversion to PNG's 16-bit grayscale range.
+    if image.mode == "I":
+        image = image.convert("I;16")
+
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -82,9 +86,17 @@ def limit_history(
 
     if preserve_first and messages:
         first = messages[0]
-        tail = messages[-max_messages + 1 :]
+        tail = _drop_orphaned_tool_results(messages[-max_messages + 1 :])
         if first not in tail:
             return [first] + tail
         return tail
 
-    return messages[-max_messages:]
+    return _drop_orphaned_tool_results(messages[-max_messages:])
+
+
+def _drop_orphaned_tool_results(messages: list[ChatMessage]) -> list[ChatMessage]:
+    """Drop leading tool results whose tool call was trimmed away."""
+    start = 0
+    while start < len(messages) and messages[start].role == "tool":
+        start += 1
+    return messages[start:]

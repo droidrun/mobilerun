@@ -26,6 +26,8 @@ SUPPORTED_PROVIDERS = [
 
 PROVIDER_ALIASES = {
     "MobilerunAnthropic": "Anthropic",
+    "MobilerunDeepSeek": "OpenAILike",
+    "MobilerunGoogleGenAI": "GoogleGenAI",
     "MobilerunOpenAIResponses": "OpenAIResponses",
     "openai_responses_llm": "OpenAIResponses",
     "GrokOAuth": "OpenAIResponses",
@@ -67,6 +69,39 @@ def _response_field(response: Any, name: str) -> Any:
     return getattr(response, name, None)
 
 
+def _detail_field(usage: Any, container: str, *names: str) -> int:
+    details = _response_field(usage, container)
+    return 0 if details is None else _usage_field(details, *names)
+
+
+def _excluded_reasoning_tokens(
+    request_tokens: int, response_tokens: int, reasoning_tokens: int, total: int
+) -> int:
+    """Reasoning tokens counted in the total but left out of the output count."""
+
+    if (
+        reasoning_tokens
+        and total == request_tokens + response_tokens + reasoning_tokens
+    ):
+        return reasoning_tokens
+    return 0
+
+
+def _gemini_usage(usage: Any) -> UsageResult:
+    request_tokens = _usage_field(usage, "promptTokenCount", "prompt_token_count")
+    # Candidates exclude thinking tokens, which are billed as output.
+    response_tokens = _usage_field(
+        usage, "candidatesTokenCount", "candidates_token_count"
+    ) + _usage_field(usage, "thoughtsTokenCount", "thoughts_token_count")
+    total_tokens = _usage_field(usage, "totalTokenCount", "total_token_count")
+    return UsageResult(
+        request_tokens=request_tokens,
+        response_tokens=response_tokens,
+        total_tokens=total_tokens or request_tokens + response_tokens,
+        requests=1,
+    )
+
+
 def _normalize_provider_name(provider: str) -> str:
     return PROVIDER_ALIASES.get(provider, provider)
 
@@ -89,23 +124,23 @@ def get_usage_from_response(provider: str, chat_rsp: ChatResponse) -> UsageResul
             if provider in ("GeminiOAuthCodeAssistLLM", "gemini_oauth_code_assist")
             else rsp["usage_metadata"]
         )
-        return UsageResult(
-            request_tokens=_usage_field(
-                usage, "promptTokenCount", "prompt_token_count"
-            ),
-            response_tokens=_usage_field(
-                usage, "candidatesTokenCount", "candidates_token_count"
-            ),
-            total_tokens=_usage_field(usage, "totalTokenCount", "total_token_count"),
-            requests=1,
-        )
+        return _gemini_usage(usage)
     elif provider == "OpenAILike":
         from openai.types import CompletionUsage as OpenAIUsage
 
         usage: OpenAIUsage = rsp.usage
+        reasoning_tokens = _detail_field(
+            usage, "completion_tokens_details", "reasoning_tokens"
+        )
         return UsageResult(
             request_tokens=usage.prompt_tokens,
-            response_tokens=usage.completion_tokens,
+            response_tokens=usage.completion_tokens
+            + _excluded_reasoning_tokens(
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                reasoning_tokens,
+                usage.total_tokens,
+            ),
             total_tokens=usage.total_tokens,
             requests=1,
         )
@@ -125,10 +160,19 @@ def get_usage_from_response(provider: str, chat_rsp: ChatResponse) -> UsageResul
             return UsageResult(
                 request_tokens=0, response_tokens=0, total_tokens=0, requests=1
             )
+        input_tokens = _usage_field(usage, "input_tokens")
+        output_tokens = _usage_field(usage, "output_tokens")
+        total_tokens = _usage_field(usage, "total_tokens")
+        reasoning_tokens = _detail_field(
+            usage, "output_tokens_details", "reasoning_tokens"
+        )
         return UsageResult(
-            request_tokens=_usage_field(usage, "input_tokens"),
-            response_tokens=_usage_field(usage, "output_tokens"),
-            total_tokens=_usage_field(usage, "total_tokens"),
+            request_tokens=input_tokens,
+            response_tokens=output_tokens
+            + _excluded_reasoning_tokens(
+                input_tokens, output_tokens, reasoning_tokens, total_tokens
+            ),
+            total_tokens=total_tokens,
             requests=1,
         )
     elif provider in {"Anthropic", "Anthropic_LLM", "AnthropicOAuthLLM"}:

@@ -17,7 +17,7 @@ ElementFilter = Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]
 def flatten_tree(root: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Recursively flatten tree to list of all nodes."""
     results = [root]
-    for child in root.get("children", []):
+    for child in root.get("children") or []:
         results.extend(flatten_tree(child))
     return results
 
@@ -443,7 +443,7 @@ class Filters:
             results = []
 
             for node in all_nodes:
-                children = node.get("children", [])
+                children = node.get("children") or []
 
                 if not children:
                     continue
@@ -499,7 +499,7 @@ class Filters:
 
             results = []
             for parent in parents:
-                results.extend(parent.get("children", []))
+                results.extend(parent.get("children") or [])
 
             return results
 
@@ -612,7 +612,7 @@ class Filters:
 
         def find_deepest_in_node(node: Dict) -> List[Dict]:
             child_matches = []
-            for child in node.get("children", []):
+            for child in node.get("children") or []:
                 child_matches.extend(find_deepest_in_node(child))
 
             if child_matches:

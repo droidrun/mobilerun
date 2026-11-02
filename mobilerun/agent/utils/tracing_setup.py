@@ -9,6 +9,9 @@ import base64
 import logging
 import os
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import Token
 from typing import Optional
 from uuid import uuid4
 
@@ -19,10 +22,10 @@ from mobilerun.config_manager.config_manager import TracingConfig
 logger = logging.getLogger("mobilerun")
 
 _default_session_id: str = str(uuid4())
-_session_id: str = _default_session_id
+# Compatibility state for the deprecated standalone attachment helper only.
+_legacy_session_context: tuple[str, str] = (_default_session_id, "anonymous")
 _tracing_initialized: bool = False
 _tracing_provider: Optional[str] = None
-_user_id: str = "anonymous"
 _langfuse_client: Optional[object] = None
 _langfuse_preprocessor: Optional[object] = None
 _langfuse_tracer_provider: Optional[object] = None
@@ -35,7 +38,7 @@ DEFAULT_LANGFUSE_BASE_URL = "https://us.cloud.langfuse.com"
 def setup_tracing(
     tracing_config: TracingConfig, agent: Optional[object] = None
 ) -> None:
-    global _tracing_initialized, _tracing_provider, _session_id, _user_id
+    global _tracing_initialized, _tracing_provider, _legacy_session_context
 
     if not tracing_config.enabled:
         return
@@ -43,9 +46,10 @@ def setup_tracing(
     provider = tracing_config.provider.lower()
 
     with _tracing_setup_lock:
-        _session_id = tracing_config.langfuse_session_id or _default_session_id
-        _user_id = tracing_config.langfuse_user_id or "anonymous"
-
+        _legacy_session_context = (
+            tracing_config.langfuse_session_id or _default_session_id,
+            tracing_config.langfuse_user_id or "anonymous",
+        )
         if _tracing_initialized:
             logger.debug(
                 f"🔍 Tracing already initialized with {_tracing_provider}, skipping setup"
@@ -64,7 +68,7 @@ def setup_tracing(
             if _setup_langfuse_tracing(tracing_config, agent):
                 _tracing_initialized = True
                 _tracing_provider = "langfuse"
-                logger.debug(f"🔍 Langfuse tracing enabled | Session: {_session_id}")
+                logger.debug("🔍 Langfuse tracing enabled")
         else:
             logger.warning(
                 f"⚠️  Unknown tracing provider: {provider}. "
@@ -87,26 +91,29 @@ def _check_phoenix_reachable(endpoint: str, timeout: float = 3.0) -> bool:
 
 def _setup_phoenix_tracing() -> bool:
     """Set up Arize Phoenix tracing. Returns True if successful."""
+    endpoint = os.getenv("PHOENIX_URL", "http://0.0.0.0:6006")
+    # The handler imports its OpenTelemetry dependencies lazily, so a broken
+    # install can surface while creating it as well as on import.
     try:
         from mobilerun.telemetry.phoenix import arize_phoenix_callback_handler
+
+        if not _check_phoenix_reachable(endpoint):
+            logger.warning(
+                f"⚠️  Phoenix server is not reachable at {endpoint}. "
+                "Tracing will be disabled for this session."
+            )
+            return False
+
+        handler = arize_phoenix_callback_handler()
     except ImportError:
         logger.warning(
-            "⚠️  Arize Phoenix is not installed.\n"
-            "    To enable Phoenix integration, install with:\n"
-            "    • If installed via tool: `uv tool install mobilerun[phoenix]`"
-            "    • If installed via pip: `uv pip install mobilerun[phoenix]`\n"
+            "⚠️  Phoenix tracing dependencies are missing.\n"
+            "    Reinstall Mobilerun to restore them:\n"
+            "    • If installed via tool: `uv tool install --reinstall mobilerun`\n"
+            "    • If installed via pip: `uv pip install --reinstall mobilerun`\n"
         )
         return False
 
-    endpoint = os.getenv("PHOENIX_URL", "http://0.0.0.0:6006")
-    if not _check_phoenix_reachable(endpoint):
-        logger.warning(
-            f"⚠️  Phoenix server is not reachable at {endpoint}. "
-            "Tracing will be disabled for this session."
-        )
-        return False
-
-    handler = arize_phoenix_callback_handler()
     llama_index.core.global_handler = handler
     logger.debug("🔍 Arize Phoenix tracing enabled globally")
     return True
@@ -326,18 +333,52 @@ def _provider_span_processors(tracer_provider: object) -> tuple[object, ...]:
     return tuple(processors)
 
 
-def apply_session_context() -> None:
-    """Apply session context for tracing. Only active when Langfuse tracing is enabled."""
-    if not _tracing_initialized or _tracing_provider != "langfuse":
-        return
-
+def _attach_session_context(session_id: Optional[str], user_id: Optional[str]) -> Token:
+    """Attach explicit identifiers and return the token used to restore them."""
     from openinference.semconv.trace import SpanAttributes
     from opentelemetry.context import attach, get_current, set_value
 
     ctx = get_current()
-    ctx = set_value(SpanAttributes.SESSION_ID, _session_id, ctx)
-    ctx = set_value(SpanAttributes.USER_ID, _user_id, ctx)
-    attach(ctx)
+    ctx = set_value(SpanAttributes.SESSION_ID, session_id or _default_session_id, ctx)
+    ctx = set_value(SpanAttributes.USER_ID, user_id or "anonymous", ctx)
+    return attach(ctx)
+
+
+def apply_session_context() -> None:
+    """Deprecated: use session_context for scoped tracing instead.
+
+    Retains the legacy no-argument behavior: attach the last configured session
+    and user identifiers without detaching them. MobileAgent does not use this
+    compatibility state.
+    """
+    if not _tracing_initialized or _tracing_provider != "langfuse":
+        return
+    _attach_session_context(*_legacy_session_context)
+
+
+@contextmanager
+def session_context(
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    agent: Optional[object] = None,
+) -> Iterator[None]:
+    """Scope Langfuse identifiers and agent metadata to workflow scheduling."""
+    if not _tracing_initialized or _tracing_provider != "langfuse":
+        yield
+        return
+
+    from opentelemetry.context import detach
+
+    from mobilerun.telemetry.langfuse_processor import _current_agent
+
+    token = _attach_session_context(session_id, user_id)
+    agent_token = _current_agent.set(agent) if agent is not None else None
+    try:
+        yield
+    finally:
+        if agent_token is not None:
+            _current_agent.reset(agent_token)
+        detach(token)
 
 
 def record_langfuse_screenshot(

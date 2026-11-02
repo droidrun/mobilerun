@@ -29,6 +29,7 @@ async def build_tool_registry(
     platform: str = "android",
     exact_app_launch: bool = False,
     screenshot_only: bool = False,
+    normalized_coordinates: bool = False,
 ) -> tuple[ToolRegistry, set[str]]:
     """Build a ToolRegistry with all standard mobilerun tools.
 
@@ -42,6 +43,8 @@ async def build_tool_registry(
             launcher that only depends on ``start_app``.
         screenshot_only: When true, coordinate tool descriptions refer to the
             screenshot shown to the model. Normal mode keeps generic wording.
+        normalized_coordinates: With ``screenshot_only``, describe coordinates
+            as 0-1000 on both screenshot axes instead of screenshot pixels.
 
     Returns:
         ``(registry, standard_tool_names)`` where *standard_tool_names* is the
@@ -52,7 +55,33 @@ async def build_tool_registry(
     """
     registry = ToolRegistry()
 
-    if screenshot_only:
+    if screenshot_only and normalized_coordinates:
+        space = (
+            "Use normalized coordinates: 0-1000 on both axes of the screenshot, "
+            "(0,0) top-left and (1000,1000) bottom-right."
+        )
+        click_at_description = (
+            f"Click at screenshot position (x, y). {space} Prefer click_at for "
+            "dense lists, adjacent rows, compact menus, visible text, and small "
+            "controls. "
+            'Usage: {"action": "click_at", "x": 500, "y": 300}'
+        )
+        click_area_description = (
+            f"Click the center of a screenshot area (x1, y1, x2, y2). {space} "
+            "Use click_area only for large, unambiguous targets; prefer "
+            "click_at for dense rows or text labels. "
+            'Usage: {"action": "click_area", "x1": 100, "y1": 200, "x2": 300, "y2": 400}'
+        )
+        long_press_at_description = (
+            f"Long press at screenshot position (x, y). {space} "
+            'Usage: {"action": "long_press_at", "x": 500, "y": 300}'
+        )
+        swipe_description = (
+            f"Swipe from screenshot coordinate to coordinate2. {space} Duration "
+            "is in seconds (default: 1.0). "
+            'Usage Example: {"action": "swipe", "coordinate": [x1, y1], "coordinate2": [x2, y2], "duration": 1.5}'
+        )
+    elif screenshot_only:
         click_at_description = (
             "Click at screenshot position (x, y). Use screenshot pixel "
             "coordinates shown to the model. The coordinate grid is only a "

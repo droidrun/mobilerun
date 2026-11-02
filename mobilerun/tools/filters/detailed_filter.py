@@ -100,7 +100,7 @@ class DetailedFilter(TreeFilter):
         if "children" in node:
             node["children"] = [
                 cls._clip_tree_bounds(child, screen_width, screen_height)
-                for child in node["children"]
+                for child in node.get("children") or []
             ]
 
         return node
@@ -117,7 +117,7 @@ class DetailedFilter(TreeFilter):
     ) -> Optional[Dict[str, Any]]:
         """Recursively remove keyboard elements from tree."""
         filtered_children = []
-        for child in node.get("children", []):
+        for child in node.get("children") or []:
             filtered_child = cls._filter_keyboard_elements(child)
             if filtered_child is not None:
                 filtered_children.append(filtered_child)
@@ -135,7 +135,7 @@ class DetailedFilter(TreeFilter):
             return node
 
         filtered_children = []
-        for child in node.get("children", []):
+        for child in node.get("children") or []:
             filtered_child = self._filter_out_of_bounds(
                 child, screen_width, screen_height
             )

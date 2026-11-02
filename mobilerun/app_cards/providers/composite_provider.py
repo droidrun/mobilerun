@@ -36,7 +36,7 @@ class CompositeAppCardProvider(AppCardProvider):
 
         Args:
             server_url: Base URL of the app card server
-            app_cards_dir: Directory containing local app_cards.json
+            app_cards_dir: Directory containing the android/ and ios/ card folders
             server_timeout: Server request timeout in seconds
             server_max_retries: Number of server retry attempts
         """
@@ -47,13 +47,16 @@ class CompositeAppCardProvider(AppCardProvider):
         )
         self.local_provider = LocalAppCardProvider(app_cards_dir=app_cards_dir)
 
-    async def load_app_card(self, package_name: str, instruction: str = "") -> str:
+    async def load_app_card(
+        self, package_name: str, instruction: str = "", platform: str | None = None
+    ) -> str:
         """
         Load app card with server-first, local-fallback strategy.
 
         Args:
-            package_name: Android package name (e.g., "com.google.android.gm")
+            package_name: Android package name or iOS bundle id
             instruction: User instruction/goal
+            platform: "android" or "ios", when known
 
         Returns:
             App card content from server or local, or empty string if both fail
@@ -63,7 +66,7 @@ class CompositeAppCardProvider(AppCardProvider):
 
         # Try server first
         server_result = await self.server_provider.load_app_card(
-            package_name, instruction
+            package_name, instruction, platform
         )
 
         if server_result:
@@ -72,7 +75,7 @@ class CompositeAppCardProvider(AppCardProvider):
         # Server failed or returned empty, try local
         logger.debug(f"Composite provider: falling back to local for {package_name}")
         local_result = await self.local_provider.load_app_card(
-            package_name, instruction
+            package_name, instruction, platform
         )
 
         if local_result:

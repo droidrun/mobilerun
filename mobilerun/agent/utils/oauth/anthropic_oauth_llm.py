@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -7,11 +8,12 @@ import secrets
 import sys
 import threading
 import time
+import weakref
 import webbrowser
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer as HTTPServer
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, Sequence
+from typing import Any, Dict, Iterator, Literal, Optional, Sequence
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
@@ -64,13 +66,76 @@ DEFAULT_OAUTH_BETA = "oauth-2025-04-20"
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 # Model access is Claude Code version-gated, so keep the HTTP user agent and
 # billing marker derived from the same verified-compatible client version.
-DEFAULT_CLAUDE_CODE_VERSION = "2.1.259"
+DEFAULT_CLAUDE_CODE_VERSION = "2.1.281"
 DEFAULT_USER_AGENT = f"claude-cli/{DEFAULT_CLAUDE_CODE_VERSION}"
 DEFAULT_CC_VERSION = f"{DEFAULT_CLAUDE_CODE_VERSION}.000"
 DEFAULT_CC_ENTRYPOINT = "cli"
+# Socket read timeout. chat() reads nothing until the reply is complete, and
+# always-on thinking makes that slower.
+DEFAULT_TIMEOUT_SECONDS = 60.0
 _IGNORED_REQUEST_KWARGS = {
     "formatted",
 }
+# HTTP status equivalent of each error type, so stream errors retry like HTTP ones.
+_ERROR_TYPE_STATUS = {
+    "invalid_request_error": 400,
+    "authentication_error": 401,
+    "billing_error": 402,
+    "permission_error": 403,
+    "not_found_error": 404,
+    "request_too_large": 413,
+    "rate_limit_error": 429,
+    "api_error": 500,
+    "timeout_error": 504,
+    "overloaded_error": 529,
+}
+
+
+class AnthropicOAuthStreamError(requests.HTTPError):
+    """Error event in, or early end of, a streamed Messages response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: Optional[str] = None,
+        request: Any = None,
+    ) -> None:
+        super().__init__(message, request=request)
+        self.error_type = error_type
+        self.status_code = _ERROR_TYPE_STATUS.get(error_type or "")
+
+
+def _iter_sse_events(response: Any) -> Iterator[Dict[str, Any]]:
+    """Yield the JSON data of each server-sent event."""
+    event_name: Optional[str] = None
+    data_lines: list[str] = []
+
+    def dispatch() -> Optional[Dict[str, Any]]:
+        if not data_lines:
+            return None
+        event = json.loads("\n".join(data_lines))
+        if isinstance(event, dict) and event_name and "type" not in event:
+            event["type"] = event_name
+        return event
+
+    for raw_line in response.iter_lines():
+        line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+        if not line:
+            event = dispatch()
+            if event is not None:
+                yield event
+            event_name, data_lines = None, []
+            continue
+        field, _, value = line.partition(":")
+        value = value[1:] if value.startswith(" ") else value
+        if field == "event":
+            event_name = value
+        elif field == "data":
+            data_lines.append(value)
+    event = dispatch()
+    if event is not None:
+        yield event
 
 
 def _b64_no_pad(raw: bytes) -> str:
@@ -135,7 +200,7 @@ class AnthropicOAuthLLM(CustomLLM):
     model: str = Field(default=DEFAULT_MODEL, description="Anthropic model id.")
     max_tokens: Optional[int] = Field(default=DEFAULT_MAX_TOKENS, gt=0)
     temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0)
-    timeout: float = Field(default=30.0, gt=0)
+    timeout: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0)
 
     access_token: Optional[str] = Field(default=None, description="OAuth access token.")
     refresh_token: Optional[str] = Field(
@@ -176,7 +241,7 @@ class AnthropicOAuthLLM(CustomLLM):
         *,
         max_tokens: Optional[int] = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
         access_token: Optional[str] = None,
         refresh_token: Optional[str] = None,
         client_id: str = DEFAULT_CLIENT_ID,
@@ -822,8 +887,10 @@ class AnthropicOAuthLLM(CustomLLM):
             if key not in _IGNORED_REQUEST_KWARGS and value is not None
         }
 
-    @llm_chat_callback()
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
+    def _messages_request(
+        self, messages: Sequence[ChatMessage], kwargs: Dict[str, Any]
+    ) -> tuple[str, Dict[str, str], Dict[str, Any]]:
+        """Build the Messages API URL, headers and payload."""
         provider_messages, system_lines = self._to_provider_messages(messages)
         token = self._resolve_access_token()
         request_kwargs = self._sanitize_request_kwargs(kwargs)
@@ -853,30 +920,39 @@ class AnthropicOAuthLLM(CustomLLM):
         if self.user_agent:
             headers["User-Agent"] = self.user_agent
 
-        res = self._session.post(
-            f"{self.api_base.rstrip('/')}/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=self.timeout,
-        )
-        res.raise_for_status()
-        data = res.json()
-        text = self._extract_text(data)
+        return f"{self.api_base.rstrip('/')}/v1/messages", headers, payload
 
+    @classmethod
+    def _chat_response(
+        cls, data: Dict[str, Any], delta: Optional[str] = None
+    ) -> ChatResponse:
         assistant = ChatMessage(
             role=MessageRole.ASSISTANT,
-            content=text,
+            content=cls._extract_text(data),
             additional_kwargs={"content_blocks": data.get("content", [])},
         )
         return ChatResponse(
             message=assistant,
             raw=data,
+            delta=delta,
             additional_kwargs={
                 "id": data.get("id"),
                 "usage": data.get("usage"),
                 "stop_reason": data.get("stop_reason"),
             },
         )
+
+    @llm_chat_callback()
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
+        url, headers, payload = self._messages_request(messages, kwargs)
+        res = self._session.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=self.timeout,
+        )
+        res.raise_for_status()
+        return self._chat_response(res.json())
 
     @llm_completion_callback()
     def complete(
@@ -897,12 +973,118 @@ class AnthropicOAuthLLM(CustomLLM):
     def stream_chat(
         self, messages: Sequence[ChatMessage], **kwargs: Any
     ) -> ChatResponseGen:
-        raise NotImplementedError(
-            "Streaming is not implemented for AnthropicOAuthLLM yet."
+        url, headers, payload = self._messages_request(messages, kwargs)
+        payload["stream"] = True
+        res = self._session.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=self.timeout,
+            stream=True,
         )
+        try:
+            res.raise_for_status()
+        except requests.HTTPError:
+            # Buffer the error body so it stays readable after closing.
+            with contextlib.suppress(requests.RequestException):
+                _ = res.content
+            res.close()
+            raise
+        stream = self._stream_responses(res)
+        # Close the response even if the stream is dropped unread.
+        weakref.finalize(stream, res.close)
+        return stream
+
+    def _stream_responses(self, res: Any) -> ChatResponseGen:
+        message: Dict[str, Any] = {}
+        blocks: Dict[int, Dict[str, Any]] = {}
+        tool_input_json: Dict[int, str] = {}
+        text = ""
+        try:
+            for event in _iter_sse_events(res):
+                kind = event.get("type")
+                if kind == "message_start":
+                    message = dict(event.get("message") or {})
+                    message["usage"] = dict(message.get("usage") or {})
+                elif kind == "content_block_start":
+                    blocks[event["index"]] = dict(event.get("content_block") or {})
+                elif kind == "content_block_delta":
+                    index = event["index"]
+                    block = blocks[index]
+                    delta = event.get("delta") or {}
+                    delta_type = delta.get("type")
+                    if delta_type == "text_delta" and delta.get("text"):
+                        # Text blocks are joined with newlines, as in chat().
+                        piece = delta["text"]
+                        if text and not block.get("text"):
+                            piece = "\n" + piece
+                        block["text"] = block.get("text", "") + delta["text"]
+                        text += piece
+                        yield ChatResponse(
+                            message=ChatMessage(
+                                role=MessageRole.ASSISTANT, content=text
+                            ),
+                            delta=piece,
+                            raw=event,
+                        )
+                    elif delta_type == "thinking_delta":
+                        block["thinking"] = block.get("thinking", "") + delta.get(
+                            "thinking", ""
+                        )
+                    elif delta_type == "signature_delta":
+                        block["signature"] = delta.get("signature", "")
+                    elif delta_type == "input_json_delta":
+                        tool_input_json[index] = tool_input_json.get(
+                            index, ""
+                        ) + delta.get("partial_json", "")
+                    elif delta_type == "citations_delta":
+                        block.setdefault("citations", []).append(delta.get("citation"))
+                elif kind == "content_block_stop":
+                    partial_json = tool_input_json.pop(event["index"], "")
+                    if partial_json:
+                        blocks[event["index"]]["input"] = json.loads(partial_json)
+                elif kind == "message_delta":
+                    message.update(event.get("delta") or {})
+                    usage = message.setdefault("usage", {})
+                    for key, value in (event.get("usage") or {}).items():
+                        if value is not None:
+                            usage[key] = value
+                elif kind == "message_stop":
+                    message["content"] = [blocks[index] for index in sorted(blocks)]
+                    yield self._chat_response(message, delta="")
+                    return
+                elif kind == "error":
+                    error = event.get("error") or {}
+                    error_type = error.get("type")
+                    raise AnthropicOAuthStreamError(
+                        f"Anthropic stream error {error_type}: {error.get('message')}",
+                        error_type=error_type,
+                        request=getattr(res, "request", None),
+                    )
+            raise AnthropicOAuthStreamError(
+                "Anthropic stream ended before message_stop.",
+                request=getattr(res, "request", None),
+            )
+        finally:
+            res.close()
 
     @llm_completion_callback()
-    def stream_complete(self, prompt: str, **kwargs: Any) -> CompletionResponseGen:
-        raise NotImplementedError(
-            "Streaming is not implemented for AnthropicOAuthLLM yet."
+    def stream_complete(
+        self, prompt: str, formatted: bool = False, **kwargs: Any
+    ) -> CompletionResponseGen:
+        del formatted
+        chat_stream = self.stream_chat(
+            [ChatMessage(role=MessageRole.USER, content=prompt)],
+            **self._sanitize_request_kwargs(kwargs),
         )
+
+        def gen() -> CompletionResponseGen:
+            for chunk in chat_stream:
+                yield CompletionResponse(
+                    text=chunk.message.content or "",
+                    delta=chunk.delta,
+                    raw=chunk.raw,
+                    additional_kwargs=chunk.additional_kwargs,
+                )
+
+        return gen()

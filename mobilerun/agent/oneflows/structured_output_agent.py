@@ -13,6 +13,7 @@ from llama_index.core.prompts import PromptTemplate
 from llama_index.core.workflow import Context, StartEvent, StopEvent, Workflow, step
 from pydantic import BaseModel
 
+from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.inference import astructured_predict_with_retries
 
 logger = logging.getLogger("mobilerun")
@@ -69,12 +70,13 @@ class StructuredOutputAgent(Workflow):
             )
 
         except Exception as e:
-            logger.error(f"❌ Failed to extract structured output: {e}")
+            error = describe_error(e)
+            logger.error(f"❌ Failed to extract structured output: {error}")
 
             return StopEvent(
                 result={
                     "structured_output": None,
                     "success": False,
-                    "error_message": str(e),
+                    "error_message": error,
                 }
             )

@@ -26,13 +26,13 @@ from mobilerun.agent.executor.events import (
 )
 from mobilerun.agent.executor.prompts import parse_executor_response
 from mobilerun.agent.usage import get_usage_from_response
+from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.inference import acall_with_retries
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.config_manager.config_manager import AgentConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
 from mobilerun.tools.ui.provider import (
-    resize_model_screenshot_with_grid,
-    should_resize_model_screenshot,
+    resize_model_screenshot_async,
 )
 
 if TYPE_CHECKING:
@@ -140,10 +140,9 @@ class ExecutorAgent(Workflow):
         if self.vision:
             screenshot = self.shared_state.screenshot
             if screenshot is not None:
-                if should_resize_model_screenshot(self.action_ctx.state_provider):
-                    screenshot = resize_model_screenshot_with_grid(
-                        self.action_ctx.state_provider, screenshot
-                    )
+                screenshot = await resize_model_screenshot_async(
+                    self.action_ctx.state_provider, screenshot
+                )
                 messages[0].blocks.append(ImageBlock(image=screenshot))
                 logger.debug("📸 Using screenshot for Executor")
             else:
@@ -180,7 +179,9 @@ class ExecutorAgent(Workflow):
             ctx.write_event_to_stream(event)
             return event
         except Exception as e:
-            raise RuntimeError(f"Error calling LLM in executor: {e}") from e
+            raise RuntimeError(
+                f"Error calling LLM in executor: {describe_error(e)}"
+            ) from e
 
         # Extract usage
         usage = None

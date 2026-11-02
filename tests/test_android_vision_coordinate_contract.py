@@ -189,8 +189,7 @@ def test_resize_flags_pair_providers_with_agent_gating():
 
     for module in (fast_agent, executor_agent, manager_agent, stateless_manager_agent):
         source = inspect.getsource(module)
-        assert "should_resize_model_screenshot" in source, module.__name__
-        assert "resize_model_screenshot_with_grid" in source, module.__name__
+        assert "resize_model_screenshot_async" in source, module.__name__
 
 
 def test_missing_screen_bounds_disables_resize_for_that_state():

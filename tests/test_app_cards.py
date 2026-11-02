@@ -73,7 +73,7 @@ class AppCardsTest(unittest.TestCase):
     def test_local_provider_loads_existing_app_card(self):
         async def run():
             provider = LocalAppCardProvider("config/app_cards")
-            return await provider.load_app_card("com.google.android.gm")
+            return await provider.load_app_card("com.google.android.gm", "", "android")
 
         app_card = asyncio.run(run())
 
@@ -89,6 +89,7 @@ class AppCardsTest(unittest.TestCase):
         self.assertNotIn("AppCardLoader", readme)
         self.assertIn("LocalAppCardProvider", readme)
         self.assertIn("await provider.load_app_card", readme)
+        self.assertIn('platform="android"', readme)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,13 @@ from llama_index.core.base.llms.types import (
     ChatMessage,
     ChatResponse,
     CompletionResponse,
+    ToolCallBlock,
 )
 from llama_index.core.prompts import PromptTemplate
 from pydantic import BaseModel
+
+from mobilerun.agent.utils.errors import describe_error
+from mobilerun.agent.utils.errors import http_status_code as _http_status_code
 
 logger = logging.getLogger("mobilerun")
 
@@ -151,42 +155,6 @@ def _log_empty_response(
         logger.warning("LLM response unusable: diagnostics unavailable")
 
 
-def _http_status_code(error: Exception) -> int | None:
-    def read_attribute(value: object, name: str) -> object | None:
-        try:
-            return getattr(value, name, None)
-        except Exception:
-            return None
-
-    def parse_status(value: object) -> int | None:
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            parsed = value
-        elif isinstance(value, str):
-            stripped = value.strip()
-            if not stripped.isascii() or not stripped.isdecimal():
-                return None
-            parsed = int(stripped)
-        else:
-            return None
-        return parsed if 100 <= parsed <= 599 else None
-
-    response = read_attribute(error, "response")
-    candidates = (
-        read_attribute(error, "status_code"),
-        read_attribute(response, "status_code"),
-        read_attribute(error, "code"),
-        read_attribute(error, "status"),
-        read_attribute(response, "status"),
-    )
-    for status_code in candidates:
-        parsed = parse_status(status_code)
-        if parsed is not None:
-            return parsed
-    return None
-
-
 def _is_permanent_http_client_error(error: Exception) -> bool:
     """Return whether an HTTP client error should fail without another attempt."""
     status_code = _http_status_code(error)
@@ -204,6 +172,7 @@ async def acall_with_retries(
     timeout: float = 500,
     delay: float = 1.0,
     stream: bool = False,
+    **chat_kwargs,
 ) -> ChatResponse:
     """
     Call LLM with retries and timeout handling.
@@ -215,6 +184,7 @@ async def acall_with_retries(
         timeout: Timeout in seconds for each attempt
         delay: Base delay between retries (multiplied by attempt number)
         stream: If True, stream response chunks to console in real-time
+        chat_kwargs: Extra request arguments, such as native tool definitions
 
     Returns:
         The LLM ChatResponse object
@@ -224,21 +194,27 @@ async def acall_with_retries(
     for attempt in range(1, retries + 1):
         try:
             if stream:
-                response = await _stream_response(llm, messages, timeout)
+                response = await _stream_response(llm, messages, timeout, **chat_kwargs)
             else:
                 response = await asyncio.wait_for(
-                    llm.achat(messages=messages),
+                    llm.achat(messages=messages, **chat_kwargs),
                     timeout=timeout,
                 )
 
-            # Validate response
-            if (
-                response is not None
-                and getattr(response, "message", None) is not None
-                and getattr(response.message, "content", None)
+            # A native tool call may have no text only when tools were sent.
+            message = getattr(response, "message", None)
+            if message is not None and (
+                getattr(message, "content", None)
+                or (
+                    chat_kwargs.get("tools")
+                    and any(
+                        isinstance(b, ToolCallBlock)
+                        for b in getattr(message, "blocks", [])
+                    )
+                )
             ):
-                if not stream:
-                    logger.info(f"{response.message.content}")
+                if not stream and message.content:
+                    logger.info(f"{message.content}")
                 return response
             else:
                 logger.warning(f"Attempt {attempt} returned empty content")
@@ -250,7 +226,10 @@ async def acall_with_retries(
             last_exception = TimeoutError("Timed out")
 
         except Exception as e:
-            logger.warning(f"Attempt {attempt} failed with error: {e!r}")
+            logger.warning(
+                f"Attempt {attempt} failed with error: "
+                f"{type(e).__name__}: {describe_error(e)}"
+            )
             if _is_permanent_http_client_error(e):
                 raise
             last_exception = e
@@ -263,7 +242,9 @@ async def acall_with_retries(
     raise ValueError("All attempts returned empty response content")
 
 
-async def _stream_response(llm, messages: list, timeout: float) -> ChatResponse:
+async def _stream_response(
+    llm, messages: list, timeout: float, **chat_kwargs
+) -> ChatResponse:
     """
     Stream LLM response chunks to console and return accumulated response.
 
@@ -280,7 +261,7 @@ async def _stream_response(llm, messages: list, timeout: float) -> ChatResponse:
 
     async def stream_chunks():
         nonlocal content, last_chunk
-        async for chunk in await llm.astream_chat(messages=messages):
+        async for chunk in await llm.astream_chat(messages=messages, **chat_kwargs):
             delta = chunk.delta or ""
             if delta:
                 logger.info(delta, extra={"stream": True})
@@ -355,7 +336,10 @@ async def acomplete_with_retries(
             last_exception = TimeoutError("Timed out")
 
         except Exception as e:
-            logger.warning(f"Attempt {attempt} failed with error: {e!r}")
+            logger.warning(
+                f"Attempt {attempt} failed with error: "
+                f"{type(e).__name__}: {describe_error(e)}"
+            )
             if _is_permanent_http_client_error(e):
                 raise
             last_exception = e
@@ -454,7 +438,10 @@ async def astructured_predict_with_retries(
             last_exception = TimeoutError("Timed out")
 
         except Exception as e:
-            logger.warning(f"Attempt {attempt} failed with error: {e!r}")
+            logger.warning(
+                f"Attempt {attempt} failed with error: "
+                f"{type(e).__name__}: {describe_error(e)}"
+            )
             if _is_permanent_http_client_error(e):
                 raise
             last_exception = e

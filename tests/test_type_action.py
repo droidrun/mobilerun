@@ -2,6 +2,8 @@ import asyncio
 import unittest
 from types import SimpleNamespace
 
+import httpx
+
 from mobilerun.agent.utils.actions import type_text
 from mobilerun.agent.utils.signatures import build_tool_registry
 
@@ -28,7 +30,20 @@ class FakeUI:
         return (123, 456)
 
 
+class TimingOutDriver(FakeDriver):
+    async def input_text(self, text, clear=False):
+        raise httpx.ReadTimeout("")
+
+
 class TypeActionTest(unittest.TestCase):
+    def test_failure_without_message_names_the_error(self):
+        ctx = SimpleNamespace(driver=TimingOutDriver(), ui=FakeUI())
+
+        result = asyncio.run(type_text("hello", ctx=ctx))
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.summary, "Failed to type text: ReadTimeout")
+
     def test_omitted_index_types_into_focused_input_without_tap(self):
         driver = FakeDriver()
         ui = FakeUI()

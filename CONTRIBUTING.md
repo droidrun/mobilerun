@@ -55,7 +55,7 @@ Thank you for your interest in contributing to Mobilerun! This document provides
 
 - Update the README.md if you change functionality
 - Add docstrings to new functions and classes
-- Update the documentation in the `docs/` directory
+- Update the documentation in [droidrun/mobilerun-docs](https://github.com/droidrun/mobilerun-docs)
 
 ## Community
 

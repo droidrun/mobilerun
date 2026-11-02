@@ -4,8 +4,8 @@ Usage:
     from openai_oauth_llm import OpenAIOAuth
 
     llm = OpenAIOAuth(
-        auth_model="openai-codex/gpt-5.5",
-        custom_model="gpt-5.5",  # optional override
+        auth_model="openai-codex/gpt-6-astra",
+        custom_model="gpt-6.1-sol",  # optional override
         oauth_refresh_token="rt_...",
         oauth_access_token="eyJ...",  # optional if cached file already exists
         oauth_credential_path=str(OPENAI_OAUTH_CREDENTIAL_PATH),
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import os
 import secrets
@@ -27,15 +28,19 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer as HTTPServer
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Any, ClassVar, Dict, Literal, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from llama_index.core.base.llms.types import (
     ChatMessage,
     ChatResponse,
+    ChatResponseAsyncGen,
+    ChatResponseGen,
     LLMMetadata,
     MessageRole,
+    TextBlock,
+    ToolCallBlock,
 )
 from llama_index.core.types import PydanticProgramMode
 from llama_index.llms.openai import OpenAI
@@ -44,8 +49,10 @@ from llama_index.llms.openai.utils import to_openai_message_dicts
 
 from mobilerun.agent.providers.registry import (
     OPENAI_ASTRA_DEFAULT_REASONING_EFFORT,
+    OPENAI_GPT6_MODELS,
     OPENAI_OAUTH_DEFAULT_MODEL,
     OPENAI_OAUTH_UNSUPPORTED_MODELS,
+    OPENAI_REASONING_EFFORTS,
     normalize_model_id_for_variant,
 )
 from mobilerun.agent.utils.oauth.login_timeout import (
@@ -70,11 +77,21 @@ DEFAULT_OPENAI_OAUTH_SCOPE = (
 )
 _OPENAI_LOGIN_TIMEOUT_MESSAGE = "OpenAI OAuth login timed out."
 _GPT_6_ASTRA_MODEL = "gpt-6-astra"
-_GPT_6_ASTRA_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
-_GPT_6_ASTRA_UNSUPPORTED_PARAMS = frozenset(
+_GPT_6_UNSUPPORTED_PARAMS = frozenset(
     {"temperature", "top_p", "logprobs", "top_logprobs"}
 )
-_GPT_6_ASTRA_UNSUPPORTED_INCLUDE = "message.output_text.logprobs"
+_GPT_6_UNSUPPORTED_INCLUDE = "message.output_text.logprobs"
+# Codex reports this context window for ChatGPT-account models.
+_CODEX_CONTEXT_WINDOW = 272_000
+
+
+async def _aclose_events(events: Any) -> None:
+    # openai.AsyncStream exposes an async close(), not aclose().
+    close = getattr(events, "aclose", None) or getattr(events, "close", None)
+    if callable(close):
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
 
 def _b64_no_pad(raw: bytes) -> str:
@@ -591,6 +608,8 @@ class OpenAIOAuthSessionManager:
 class OpenAIOAuth(OpenAI):
     """OpenAI LLM backed by ChatGPT OAuth refresh/access tokens."""
 
+    supports_native_tool_calls: ClassVar[bool] = True
+
     reasoning_effort: Optional[
         Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
     ] = None
@@ -603,7 +622,7 @@ class OpenAIOAuth(OpenAI):
     def metadata(self) -> LLMMetadata:
         # Codex model IDs are not always in llama-index's static OpenAI map.
         return LLMMetadata(
-            context_window=400000,
+            context_window=_CODEX_CONTEXT_WINDOW,
             num_output=self.max_tokens or -1,
             is_chat_model=True,
             is_function_calling_model=True,
@@ -1081,51 +1100,56 @@ class OpenAIOAuth(OpenAI):
 
         return normalized
 
-    def _sanitize_gpt_6_astra_kwargs(
+    def _sanitize_reasoning_kwargs(
         self, runtime_kwargs: dict[str, Any]
     ) -> dict[str, Any]:
-        if self.model != _GPT_6_ASTRA_MODEL:
-            return runtime_kwargs
-
         merged: dict[str, Any] = {}
         if self.reasoning_effort is not None:
             merged["reasoning"] = {"effort": self.reasoning_effort}
         merged.update(self.additional_kwargs or {})
         merged.update(runtime_kwargs)
-        merged.setdefault(
-            "reasoning", {"effort": OPENAI_ASTRA_DEFAULT_REASONING_EFFORT}
-        )
 
-        for key in _GPT_6_ASTRA_UNSUPPORTED_PARAMS:
-            merged.pop(key, None)
+        if self.model in OPENAI_GPT6_MODELS:
+            if self.model == _GPT_6_ASTRA_MODEL:
+                merged.setdefault(
+                    "reasoning", {"effort": OPENAI_ASTRA_DEFAULT_REASONING_EFFORT}
+                )
+            for key in _GPT_6_UNSUPPORTED_PARAMS:
+                merged.pop(key, None)
+            include = merged.get("include")
+            if isinstance(include, (list, tuple)):
+                filtered_include = [
+                    value for value in include if value != _GPT_6_UNSUPPORTED_INCLUDE
+                ]
+                merged["include"] = filtered_include or None
 
-        include = merged.get("include")
-        if isinstance(include, (list, tuple)):
-            filtered_include = [
-                value for value in include if value != _GPT_6_ASTRA_UNSUPPORTED_INCLUDE
-            ]
-            merged["include"] = filtered_include or None
-
+        supported_efforts = OPENAI_REASONING_EFFORTS.get(self.model)
+        if supported_efforts is None:
+            return merged
         reasoning = merged.get("reasoning")
         if reasoning is not None and not isinstance(reasoning, dict):
             raise ValueError(
-                f"{_GPT_6_ASTRA_MODEL} reasoning must be a mapping with an "
+                f"{self.model} reasoning must be a mapping with an "
                 "optional 'effort' value."
             )
         effort = reasoning.get("effort") if isinstance(reasoning, dict) else None
-        if effort is not None and effort not in _GPT_6_ASTRA_REASONING_EFFORTS:
-            supported = "low, medium, high, xhigh, or max"
+        if effort is not None and effort not in supported_efforts:
+            supported = ", ".join(sorted(supported_efforts))
             raise ValueError(
-                f"{_GPT_6_ASTRA_MODEL} does not support reasoning effort "
-                f"{effort!r}; use {supported}."
+                f"{self.model} does not support reasoning effort "
+                f"{effort!r}; use one of: {supported}."
             )
         return merged
 
-    def _collect_stream_text_sync(self, events: Any) -> tuple[str, Any]:
+    def _collect_stream_text_sync(
+        self, events: Any
+    ) -> tuple[str, Any, list[ToolCallBlock]]:
         text_parts: list[str] = []
         final_response: Any = None
+        tool_calls: list[ToolCallBlock] = []
         try:
             for event in events:
+                tool_calls.extend(self._done_function_calls(event))
                 event_type = getattr(event, "type", "")
                 if event_type == "response.output_text.delta":
                     delta = getattr(event, "delta", None)
@@ -1140,20 +1164,24 @@ class OpenAIOAuth(OpenAI):
 
         collected = "".join(text_parts)
         if collected:
-            return collected, final_response
+            return collected, final_response, tool_calls
 
         if final_response is not None:
             final_text = getattr(final_response, "output_text", None)
             if isinstance(final_text, str) and final_text:
-                return final_text, final_response
+                return final_text, final_response, tool_calls
 
-        return collected, final_response
+        return collected, final_response, tool_calls
 
-    async def _collect_stream_text_async(self, events: Any) -> tuple[str, Any]:
+    async def _collect_stream_text_async(
+        self, events: Any
+    ) -> tuple[str, Any, list[ToolCallBlock]]:
         text_parts: list[str] = []
         final_response: Any = None
+        tool_calls: list[ToolCallBlock] = []
         try:
             async for event in events:
+                tool_calls.extend(self._done_function_calls(event))
                 event_type = getattr(event, "type", "")
                 if event_type == "response.output_text.delta":
                     delta = getattr(event, "delta", None)
@@ -1162,20 +1190,18 @@ class OpenAIOAuth(OpenAI):
                 elif event_type == "response.completed":
                     final_response = getattr(event, "response", None)
         finally:
-            aclose = getattr(events, "aclose", None)
-            if callable(aclose):
-                await aclose()
+            await _aclose_events(events)
 
         collected = "".join(text_parts)
         if collected:
-            return collected, final_response
+            return collected, final_response, tool_calls
 
         if final_response is not None:
             final_text = getattr(final_response, "output_text", None)
             if isinstance(final_text, str) and final_text:
-                return final_text, final_response
+                return final_text, final_response, tool_calls
 
-        return collected, final_response
+        return collected, final_response, tool_calls
 
     @staticmethod
     def _is_not_found_error(exc: Exception) -> bool:
@@ -1187,12 +1213,10 @@ class OpenAIOAuth(OpenAI):
             return True
         return "404" in str(exc) and "not found" in str(exc).lower()
 
-    @llm_retry_decorator
-    def _chat(self, messages: list[ChatMessage], **kwargs: Any) -> ChatResponse:
-        kwargs = self._sanitize_gpt_6_astra_kwargs(kwargs)
-        self._ensure_access_token()
-        client = self._get_client()
-        payload = self._build_responses_payload(messages)
+    def _codex_request_kwargs(
+        self, messages: list[ChatMessage], kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        kwargs = self._sanitize_reasoning_kwargs(kwargs)
         request_kwargs: dict[str, Any] = {
             "model": self.model,
             "instructions": self._resolve_codex_instructions(messages),
@@ -1202,73 +1226,213 @@ class OpenAIOAuth(OpenAI):
             "store": False,
             "stream": True,
         }
-        for key in ("reasoning", "include", "service_tier", "text"):
+        for key in (
+            "reasoning",
+            "include",
+            "service_tier",
+            "text",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+        ):
             if key in kwargs and kwargs[key] is not None:
                 request_kwargs[key] = kwargs[key]
+        return request_kwargs
+
+    @staticmethod
+    def _function_call_blocks(items: Any) -> list[ToolCallBlock]:
+        return [
+            ToolCallBlock(
+                tool_name=item.name,
+                tool_call_id=item.call_id,
+                tool_kwargs=item.arguments,
+            )
+            for item in items or []
+            if getattr(item, "type", None) == "function_call"
+        ]
+
+    @classmethod
+    def _response_message(
+        cls, text: str, response: Any, tool_calls: list[ToolCallBlock]
+    ) -> ChatMessage:
+        # Codex may omit output from the completed event, so calls are
+        # collected from output_item.done events first.
+        tool_calls = tool_calls or cls._function_call_blocks(
+            getattr(response, "output", None)
+        )
+        if not tool_calls:
+            return ChatMessage(role=MessageRole.ASSISTANT, content=text)
+        blocks = [TextBlock(text=text)] if text else []
+        return ChatMessage(role=MessageRole.ASSISTANT, blocks=[*blocks, *tool_calls])
+
+    @classmethod
+    def _done_function_calls(cls, event: Any) -> list[ToolCallBlock]:
+        if getattr(event, "type", "") != "response.output_item.done":
+            return []
+        return cls._function_call_blocks([getattr(event, "item", None)])
+
+    def _should_fall_back_to_backend_api(self, exc: Exception) -> bool:
+        return self._responses_api_base == DEFAULT_CODEX_API_BASE and (
+            self._is_not_found_error(exc)
+        )
+
+    def _use_backend_api_base(self) -> None:
+        self._responses_api_base = DEFAULT_BACKEND_API_BASE
+        self.api_base = self._responses_api_base
+        self._client = None
+        self._aclient = None
+
+    @staticmethod
+    def _stream_chunk(text: str, delta: str, raw: Any = None) -> ChatResponse:
+        return ChatResponse(
+            message=ChatMessage(role=MessageRole.ASSISTANT, content=text),
+            delta=delta,
+            raw=raw,
+            additional_kwargs={},
+        )
+
+    @classmethod
+    def _stream_event_chunk(cls, event: Any, text: str) -> ChatResponse | None:
+        event_type = getattr(event, "type", "")
+        if event_type == "response.output_text.delta":
+            delta = getattr(event, "delta", None)
+            if isinstance(delta, str) and delta:
+                return cls._stream_chunk(text + delta, delta)
+        elif event_type == "response.completed":
+            response = getattr(event, "response", None)
+            final_text = getattr(response, "output_text", None)
+            if not text and isinstance(final_text, str) and final_text:
+                return cls._stream_chunk(final_text, final_text, raw=response)
+            return cls._stream_chunk(text, "", raw=response)
+        return None
+
+    @llm_retry_decorator
+    def _chat(self, messages: list[ChatMessage], **kwargs: Any) -> ChatResponse:
+        request_kwargs = self._codex_request_kwargs(messages, kwargs)
+        self._ensure_access_token()
+        client = self._get_client()
+        payload = self._build_responses_payload(messages)
 
         try:
             events = client.responses.create(input=payload, **request_kwargs)
-            text, response = self._collect_stream_text_sync(events)
+            text, response, tool_calls = self._collect_stream_text_sync(events)
         except Exception as exc:
-            if (
-                self._responses_api_base == DEFAULT_CODEX_API_BASE
-                and self._is_not_found_error(exc)
-            ):
-                self._responses_api_base = DEFAULT_BACKEND_API_BASE
-                self.api_base = self._responses_api_base
-                self._client = None
-                self._aclient = None
+            if self._should_fall_back_to_backend_api(exc):
+                self._use_backend_api_base()
                 client = self._get_client()
                 events = client.responses.create(input=payload, **request_kwargs)
-                text, response = self._collect_stream_text_sync(events)
+                text, response, tool_calls = self._collect_stream_text_sync(events)
             else:
                 raise
 
         return ChatResponse(
-            message=ChatMessage(role=MessageRole.ASSISTANT, content=text),
+            message=self._response_message(text, response, tool_calls),
             raw=response,
             additional_kwargs={},
         )
 
     @llm_retry_decorator
     async def _achat(self, messages: list[ChatMessage], **kwargs: Any) -> ChatResponse:
-        kwargs = self._sanitize_gpt_6_astra_kwargs(kwargs)
+        request_kwargs = self._codex_request_kwargs(messages, kwargs)
         self._ensure_access_token()
         aclient = self._get_aclient()
         payload = self._build_responses_payload(messages)
-        request_kwargs: dict[str, Any] = {
-            "model": self.model,
-            "instructions": self._resolve_codex_instructions(messages),
-            "tools": [],
-            "tool_choice": "auto",
-            "parallel_tool_calls": True,
-            "store": False,
-            "stream": True,
-        }
-        for key in ("reasoning", "include", "service_tier", "text"):
-            if key in kwargs and kwargs[key] is not None:
-                request_kwargs[key] = kwargs[key]
 
         try:
             events = await aclient.responses.create(input=payload, **request_kwargs)
-            text, response = await self._collect_stream_text_async(events)
+            text, response, tool_calls = await self._collect_stream_text_async(events)
         except Exception as exc:
-            if (
-                self._responses_api_base == DEFAULT_CODEX_API_BASE
-                and self._is_not_found_error(exc)
-            ):
-                self._responses_api_base = DEFAULT_BACKEND_API_BASE
-                self.api_base = self._responses_api_base
-                self._client = None
-                self._aclient = None
+            if self._should_fall_back_to_backend_api(exc):
+                self._use_backend_api_base()
                 aclient = self._get_aclient()
                 events = await aclient.responses.create(input=payload, **request_kwargs)
-                text, response = await self._collect_stream_text_async(events)
+                text, response, tool_calls = await self._collect_stream_text_async(
+                    events
+                )
             else:
                 raise
 
         return ChatResponse(
-            message=ChatMessage(role=MessageRole.ASSISTANT, content=text),
+            message=self._response_message(text, response, tool_calls),
             raw=response,
             additional_kwargs={},
         )
+
+    # The base class streams through Chat Completions, which Codex rejects.
+    @llm_retry_decorator
+    def _stream_chat(
+        self, messages: list[ChatMessage], **kwargs: Any
+    ) -> ChatResponseGen:
+        request_kwargs = self._codex_request_kwargs(messages, kwargs)
+        self._ensure_access_token()
+        payload = self._build_responses_payload(messages)
+        try:
+            events = self._get_client().responses.create(
+                input=payload, **request_kwargs
+            )
+        except Exception as exc:
+            if not self._should_fall_back_to_backend_api(exc):
+                raise
+            self._use_backend_api_base()
+            events = self._get_client().responses.create(
+                input=payload, **request_kwargs
+            )
+
+        def gen() -> ChatResponseGen:
+            text = ""
+            tool_calls: list[ToolCallBlock] = []
+            try:
+                for event in events:
+                    tool_calls.extend(self._done_function_calls(event))
+                    chunk = self._stream_event_chunk(event, text)
+                    if chunk is not None:
+                        text = chunk.message.content or ""
+                        if getattr(event, "type", "") == "response.completed":
+                            chunk.message = self._response_message(
+                                text, chunk.raw, tool_calls
+                            )
+                        yield chunk
+            finally:
+                close = getattr(events, "close", None)
+                if callable(close):
+                    close()
+
+        return gen()
+
+    @llm_retry_decorator
+    async def _astream_chat(
+        self, messages: list[ChatMessage], **kwargs: Any
+    ) -> ChatResponseAsyncGen:
+        request_kwargs = self._codex_request_kwargs(messages, kwargs)
+        self._ensure_access_token()
+        payload = self._build_responses_payload(messages)
+        try:
+            events = await self._get_aclient().responses.create(
+                input=payload, **request_kwargs
+            )
+        except Exception as exc:
+            if not self._should_fall_back_to_backend_api(exc):
+                raise
+            self._use_backend_api_base()
+            events = await self._get_aclient().responses.create(
+                input=payload, **request_kwargs
+            )
+
+        async def gen() -> ChatResponseAsyncGen:
+            text = ""
+            tool_calls: list[ToolCallBlock] = []
+            try:
+                async for event in events:
+                    tool_calls.extend(self._done_function_calls(event))
+                    chunk = self._stream_event_chunk(event, text)
+                    if chunk is not None:
+                        text = chunk.message.content or ""
+                        if getattr(event, "type", "") == "response.completed":
+                            chunk.message = self._response_message(
+                                text, chunk.raw, tool_calls
+                            )
+                        yield chunk
+            finally:
+                await _aclose_events(events)
+
+        return gen()

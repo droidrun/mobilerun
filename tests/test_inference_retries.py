@@ -481,3 +481,83 @@ def test_authentication_error_does_not_sleep_before_failing(monkeypatch) -> None
     monkeypatch.setattr(asyncio, "sleep", fail_if_called)
 
     assert _run_failing_helper("chat", 401) == 1
+
+
+class ReplyLLM:
+    def __init__(self, responses: list[ChatResponse]):
+        self.responses = iter(responses)
+        self.requests = []
+
+    async def achat(self, *, messages, **kwargs):
+        self.requests.append(kwargs)
+        return next(self.responses)
+
+    async def astream_chat(self, *, messages, **kwargs):
+        response = await self.achat(messages=messages, **kwargs)
+
+        async def chunks():
+            yield response
+
+        return chunks()
+
+
+def _tool_only_response() -> ChatResponse:
+    return ChatResponse(
+        message=ChatMessage(
+            role="assistant",
+            blocks=[
+                ToolCallBlock(tool_call_id="call_1", tool_name="tap", tool_kwargs={})
+            ],
+        )
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("chat_kwargs", [{}, {"tools": []}, {"tools": None}])
+def test_tool_only_reply_without_tools_is_retried(stream, chat_kwargs) -> None:
+    text_response = ChatResponse(message=ChatMessage(role="assistant", content="hello"))
+    llm = ReplyLLM([_tool_only_response(), text_response])
+
+    response = asyncio.run(
+        acall_with_retries(llm, [], retries=2, delay=0, stream=stream, **chat_kwargs)
+    )
+
+    assert response.message.content == "hello"
+    assert llm.requests == [chat_kwargs, chat_kwargs]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_tool_only_reply_with_tools_is_returned_immediately(stream) -> None:
+    tool_response = _tool_only_response()
+    llm = ReplyLLM([tool_response])
+    tools = [{"name": "tap", "parameters": {"type": "object", "properties": {}}}]
+
+    response = asyncio.run(
+        acall_with_retries(llm, [], delay=0, stream=stream, tools=tools)
+    )
+
+    assert response.message.content is None
+    assert response.message.blocks == tool_response.message.blocks
+    assert llm.requests == [{"tools": tools}]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_text_reply_is_returned_immediately(stream) -> None:
+    llm = ReplyLLM(
+        [ChatResponse(message=ChatMessage(role="assistant", content="hello"))]
+    )
+
+    response = asyncio.run(acall_with_retries(llm, [], delay=0, stream=stream))
+
+    assert response.message.content == "hello"
+    assert llm.requests == [{}]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_tool_only_replies_without_tools_exhaust_retries(stream) -> None:
+    llm = ReplyLLM([_tool_only_response(), _tool_only_response()])
+
+    with pytest.raises(ValueError, match="^Empty response content$"):
+        asyncio.run(acall_with_retries(llm, [], retries=2, delay=0, stream=stream))
+
+    assert llm.requests == [{}, {}]

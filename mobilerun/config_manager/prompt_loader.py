@@ -1,6 +1,9 @@
 """
 Prompt loading utility using Jinja2 templates.
 
+Templates are rendered in an immutable sandboxed environment, so template code
+cannot reach Python internals or mutate the objects passed into it.
+
 Features:
 - Loads from absolute file paths (resolved by AgentConfig + PathResolver)
 - Conditional rendering: {% if variable %}...{% endif %}
@@ -14,19 +17,19 @@ from pathlib import Path
 from typing import Any, Dict
 
 import aiofiles
-from jinja2 import Environment
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 
 class PromptLoader:
     """Jinja2 template renderer - loads from absolute file paths using aiofiles."""
 
-    _env = None  # Cached Jinja2 environment
+    _env = None  # Cached sandboxed Jinja2 environment
 
     @classmethod
-    def _get_environment(cls) -> Environment:
-        """Get or create cached Jinja2 environment."""
+    def _get_environment(cls) -> ImmutableSandboxedEnvironment:
+        """Get or create cached sandboxed Jinja2 environment."""
         if cls._env is None:
-            cls._env = Environment(
+            cls._env = ImmutableSandboxedEnvironment(
                 trim_blocks=True,  # Remove first newline after block
                 lstrip_blocks=True,  # Strip leading whitespace before blocks
                 keep_trailing_newline=False,
@@ -72,7 +75,8 @@ class PromptLoader:
         """
         Render Jinja2 template from string (NOT file path).
 
-        This is used for custom prompts passed at runtime.
+        This is used for custom prompts passed at runtime. Rendering happens in
+        a sandbox: unsafe attribute access raises jinja2.exceptions.SecurityError.
 
         Args:
             template_string: Jinja2 template as string

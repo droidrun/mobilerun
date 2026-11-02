@@ -87,7 +87,9 @@ class IndexedFormatter(TreeFormatter):
 
     def _format_ui_elements_text(self, a11y_tree: List[Dict[str, Any]]) -> str:
         """Format UI elements text."""
-        coord_note = " (normalized [0-1000])" if self.use_normalized else ""
+        # Label only bounds that were actually normalized.
+        normalized = self.use_normalized and self.screen_width and self.screen_height
+        coord_note = " (normalized [0-1000])" if normalized else ""
         schema = (
             "'index. className: resourceId; checkedState, text - bounds(x1,y1,x2,y2)'"
         )
@@ -119,11 +121,11 @@ class IndexedFormatter(TreeFormatter):
             class_name = element.get("className", "")
             resource_id = element.get("resourceId", "")
             text = element.get("text", "")
-            # Model-facing text shows display-space bounds when the screenshot
-            # is resized for the model; "bounds" (native pixels) drive real taps.
+            # Model-facing text shows display-space or normalized bounds;
+            # "bounds" (native pixels) drive real taps.
             bounds = element.get("displayBounds") or element.get("bounds", "")
             checkedState = element.get("checkedState", "")
-            children = element.get("children", [])
+            children = element.get("children") or []
 
             line_parts = []
             if index != "":
@@ -169,7 +171,7 @@ class IndexedFormatter(TreeFormatter):
         counter[0] += 1
 
         siblings = []
-        for child in node.get("children", []):
+        for child in node.get("children") or []:
             descendants = self._flatten_with_index(child, counter)
             siblings.append((child, descendants[0]))
             results.extend(descendants)
@@ -218,7 +220,7 @@ class IndexedFormatter(TreeFormatter):
 
         display_bounds_str = None
         if self.use_normalized and self.screen_width and self.screen_height:
-            bounds_str = bounds_to_normalized(
+            display_bounds_str = bounds_to_normalized(
                 bounds_str, self.screen_width, self.screen_height
             )
         elif self.display_scale_x != 1.0 or self.display_scale_y != 1.0:

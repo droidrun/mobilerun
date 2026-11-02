@@ -29,15 +29,18 @@ class ServerAppCardProvider(AppCardProvider):
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
-        self._content_cache: Dict[tuple[str, str], str] = {}
+        self._content_cache: Dict[tuple[str, str, str | None], str] = {}
 
-    async def load_app_card(self, package_name: str, instruction: str = "") -> str:
+    async def load_app_card(
+        self, package_name: str, instruction: str = "", platform: str | None = None
+    ) -> str:
         """
         Load app card from remote server.
 
         Args:
-            package_name: Android package name (e.g., "com.google.android.gm")
+            package_name: Android package name or iOS bundle id
             instruction: User instruction/goal (sent to server for context)
+            platform: "android" or "ios", sent to the server when known
 
         Returns:
             App card content or empty string if not found or on error
@@ -45,14 +48,16 @@ class ServerAppCardProvider(AppCardProvider):
         if not package_name:
             return ""
 
-        # Check content cache first (key: package_name, instruction)
-        cache_key = (package_name, instruction)
+        # Check content cache first (key: package_name, instruction, platform)
+        cache_key = (package_name, instruction, platform)
         if cache_key in self._content_cache:
             return self._content_cache[cache_key]
 
         # Make HTTP request with retries
         endpoint = f"{self.server_url}/app-cards"
         payload = {"package_name": package_name, "instruction": instruction}
+        if platform:
+            payload["platform"] = platform
 
         for attempt in range(1, self.max_retries + 1):
             try:

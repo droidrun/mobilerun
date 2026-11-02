@@ -4,37 +4,44 @@ App cards provide app-specific guidance to Mobilerun agents. They help agents un
 
 ## How It Works
 
-1. **Mapping File**: `app_cards.json` maps Android package names to markdown files
-2. **App Card Files**: Markdown files containing app-specific guidance
-3. **Automatic Loading**: Mobilerun automatically loads the appropriate app card based on the current package name
-4. **Prompt Injection**: App cards are injected into agent prompts when available
+1. **One folder per platform**: `android/` and `ios/`, each with its own `app_cards.json`
+2. **Mapping File**: each `app_cards.json` maps an Android package name or iOS bundle id to a markdown file in that folder
+3. **App Card Files**: Markdown files containing app-specific guidance
+4. **Automatic Loading**: Mobilerun loads the card for the current app from the folder of the device's platform
+5. **Prompt Injection**: App cards are injected into agent prompts when available
 
 ## File Structure
 
 ```
 config/app_cards/
-├── app_cards.json       # Package name → file mapping
-├── gmail.md             # Gmail app card
-├── chrome.md            # Chrome app card
-└── social/              # Organize in subdirectories if needed
-    └── whatsapp.md
+├── android/
+│   ├── app_cards.json   # Android package name → file mapping
+│   ├── gmail.md
+│   └── social/          # Organize in subdirectories if needed
+│       └── whatsapp.md
+└── ios/
+    ├── app_cards.json   # iOS bundle id → file mapping
+    └── gmail.md
 ```
+
+An app with the same id on both platforms (for example TikTok, `com.zhiliaoapp.musically`) gets one entry in each folder, each pointing to its own card.
 
 ## Creating App Cards
 
-### 1. Add entry to app_cards.json
+### 1. Add an entry to the platform's app_cards.json
+
+`android/app_cards.json`:
 
 ```json
 {
   "com.google.android.gm": "gmail.md",
-  "com.android.chrome": "chrome.md",
   "com.whatsapp": "social/whatsapp.md"
 }
 ```
 
 ### 2. Create the markdown file
 
-Create a `.md` file with guidance about the app:
+Create a `.md` file with guidance about the app in the same folder:
 
 ```markdown
 # App Name Guide
@@ -54,27 +61,9 @@ Create a `.md` file with guidance about the app:
 
 ## Path Resolution
 
-App cards support three path types:
-
-1. **Relative to app_cards directory** (most common):
-   ```json
-   {"com.google.android.gm": "gmail.md"}
-   ```
-   Resolves to: `config/app_cards/gmail.md` (in package)
-
-2. **Relative paths with PathResolver**:
-   ```json
-   {"com.google.gm": "config/custom_cards/gmail.md"}
-   ```
-   Checks working directory first, then package directory
-   - Working dir: `./config/custom_cards/gmail.md`
-   - Package dir: `<package>/config/custom_cards/gmail.md`
-
-3. **Absolute path**:
-   ```json
-   {"com.google.gm": "/usr/share/mobilerun/cards/gmail.md"}
-   ```
-   Uses the absolute path directly
+- Card paths are relative to the platform folder (`android/` or `ios/`), or absolute.
+- An `app_cards.json` directly in `app_cards_dir` is not read; Mobilerun logs a warning and ignores it.
+- A relative `app_cards_dir` is used from the working directory if it contains app cards there, otherwise from the package directory.
 
 ## Finding Package Names
 
@@ -139,6 +128,7 @@ async def main():
     app_card = await provider.load_app_card(
         package_name="com.google.android.gm",
         instruction="Summarize unread email",
+        platform="android",
     )
     print(app_card)
 

@@ -17,8 +17,9 @@ from mobilerun.config_manager.config_manager import LLMProfile, MobileConfig
 from mobilerun.config_manager.env_keys import load_env_keys, save_env_keys
 
 DEFAULT_KWARGS_BY_VARIANT: dict[str, dict[str, int]] = {
-    "anthropic_oauth": {"max_tokens": 1024},
-    "gemini_oauth_code_assist": {"max_tokens": 1024},
+    # Thinking tokens count toward these limits.
+    "anthropic_oauth": {"max_tokens": 4096},
+    "gemini_oauth_code_assist": {"max_tokens": 4096},
     # Without this, llama-index asks Ollama for the model's MAXIMUM context,
     # which allocates the full KV cache (256K-context models -> ~19 GB) and
     # spills to CPU on typical machines. -1 restores model-max for big GPUs.

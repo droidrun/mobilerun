@@ -36,8 +36,8 @@ from mobilerun.tools.ui.provider import (
 )
 
 PROVIDERS = [
-    ("openai", "openai_oauth", "gpt-5.4-mini"),
-    ("anthropic", "anthropic_oauth", "claude-opus-4-7"),
+    ("openai", "openai_oauth", "gpt-6-sol"),
+    ("anthropic", "anthropic_oauth", "claude-opus-5-5"),
     # claude-sonnet-4-6 uses Anthropic's standard 1568 visual-token budget, so it
     # downsizes a 2048-declared screenshot and would undershoot ~23% without the
     # per-model resize policy (issue #365). Keep it here so the eval covers an

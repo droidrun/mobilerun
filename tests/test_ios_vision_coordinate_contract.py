@@ -240,12 +240,12 @@ def test_click_at_auto_unmasks_with_vision_contract():
     )
     assert "click_at" in effective
 
-    # normalized mode -> stays masked even with vision
+    # normalized mode + vision -> 0-1000 maps to points, click_at auto-enabled
     provider = IOSStateProvider(driver, use_normalized=True, vision_enabled=True)
     effective = _effective_disabled_tools(
         list(DEFAULT_DISABLED_TOOLS), provider, vision_enabled=True, explicit=False
     )
-    assert "click_at" in effective
+    assert "click_at" not in effective
 
     # explicit user list is honored verbatim
     provider = IOSStateProvider(driver, vision_enabled=True)
@@ -403,3 +403,72 @@ def test_empty_state_from_ui_tree_failure_refuses_coordinate_actions():
         _convert_action_point(
             10, 20, ctx=SimpleNamespace(ui=state, state_provider=provider)
         )
+
+
+def test_normalized_mode_shows_normalized_bounds_and_taps_points():
+    driver = FakeIOSDriver(screenshot_bytes=_png(8, 8))
+    provider = IOSStateProvider(driver, use_normalized=True)
+    state = _state(provider)
+
+    element = _general_element(state)
+    assert element["bounds"] == "20,200,420,244"
+    assert element["displayBounds"] == "45,209,954,255"
+    assert "(normalized [0-1000])" in state.formatted_text
+    assert "(45,209,954,255)" in state.formatted_text
+    assert "(20,200,420,244)" not in state.formatted_text
+    # element taps keep points
+    assert state.get_element_coords(element["index"]) == (220, 222)
+    # the displayed center fed back through a coordinate action lands inside
+    ctx = SimpleNamespace(ui=state, state_provider=provider)
+    x, y = _convert_action_point(499, 232, ctx=ctx)
+    assert 20 <= x < 420 and 200 <= y < 244
+    assert driver.screenshot_calls == 0
+
+
+def test_normalized_mode_with_vision_declares_0_1000_without_the_contract():
+    driver = FakeIOSDriver(screenshot_bytes=_png(8, 8))
+    provider = IOSStateProvider(driver, use_normalized=True, vision_enabled=True)
+    state = _state(provider)
+
+    assert "(45,209,954,255)" in state.formatted_text
+    assert "normalized 0-1000 on both axes" in state.formatted_text
+    assert "coordinate space" not in state.formatted_text
+    assert provider.resize_model_screenshot is False
+    assert driver.screenshot_calls == 0
+
+
+def test_normalized_mode_refuses_coordinates_on_a_failed_tree_read():
+    driver = FakeIOSDriver(screenshot_bytes=_png(8, 8))
+    provider = IOSStateProvider(driver, use_normalized=True, vision_enabled=True)
+    ok = _state(provider)
+    driver.ui_tree_error = RuntimeError("portal timeout")
+    failed = _state(provider)
+
+    ctx = SimpleNamespace(ui=ok, state_provider=provider)
+    assert _convert_action_point(500, 500, ctx=ctx) == (220, 478)
+    import pytest
+
+    with pytest.raises(ValueError, match="unavailable for this step"):
+        _convert_action_point(
+            500, 500, ctx=SimpleNamespace(ui=failed, state_provider=provider)
+        )
+
+
+def test_normalized_mode_without_screen_bounds_skips_the_0_1000_text():
+    class NoBoundsDriver(FakeIOSDriver):
+        async def get_ui_tree(self):
+            raw = await super().get_ui_tree()
+            raw["device_context"] = {}
+            return raw
+
+    provider = IOSStateProvider(
+        NoBoundsDriver(screenshot_bytes=_png(8, 8)),
+        use_normalized=True,
+        vision_enabled=True,
+    )
+    state = _state(provider)
+
+    assert "displayBounds" not in _general_element(state)
+    assert "(normalized [0-1000])" not in state.formatted_text
+    assert "normalized 0-1000 on both axes" not in state.formatted_text
+    assert state.coordinate_contract_active is False

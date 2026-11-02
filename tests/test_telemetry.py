@@ -351,7 +351,7 @@ def test_cli_run_and_test_forward_loaded_telemetry_config(monkeypatch) -> None:
         forwarded.append(config_enabled)
         raise StopAfterTelemetryMessage
 
-    async def skip_keyboard_cleanup(config) -> None:
+    async def skip_keyboard_cleanup(config, serial=None) -> None:
         return None
 
     monkeypatch.setattr(cli_main.ConfigLoader, "load", lambda _: config)

@@ -48,38 +48,37 @@ Source code is at `mobilerun/` (Python package). Key locations:
 
 ## Documentation
 
-Read the relevant file(s) from `docs/v5/` based on the user's question. Do not guess — always
+Fetch the relevant page(s) from the docs site based on the user's question. Do not guess — always
 read the doc before answering.
 
-| Topic | File |
+| Topic | Page |
 |-------|------|
-| Overview | docs/v5/overview.mdx |
-| Quickstart | docs/v5/quickstart.mdx |
+| Overview | https://docs.mobilerun.ai/framework/overview.md |
+| Quickstart | https://docs.mobilerun.ai/framework/quickstart.md |
 | **Concepts** | |
-| Architecture & agents | docs/v5/concepts/architecture.mdx |
-| Events & workflows | docs/v5/concepts/events-and-workflows.mdx |
-| Prompts | docs/v5/concepts/prompts.mdx |
-| Scripter agent | docs/v5/concepts/scripter-agent.mdx |
-| Shared state | docs/v5/concepts/shared-state.mdx |
+| Architecture & agents | https://docs.mobilerun.ai/framework/concepts/architecture.md |
+| Events & workflows | https://docs.mobilerun.ai/framework/concepts/events-and-workflows.md |
+| Prompts | https://docs.mobilerun.ai/framework/concepts/prompts.md |
+| Shared state | https://docs.mobilerun.ai/framework/concepts/shared-state.md |
 | **Features** | |
-| App cards | docs/v5/features/app-cards.mdx |
-| Credentials | docs/v5/features/credentials.mdx |
-| Custom tools | docs/v5/features/custom-tools.mdx |
-| Custom variables | docs/v5/features/custom-variables.mdx |
-| Structured output | docs/v5/features/structured-output.mdx |
-| Telemetry | docs/v5/features/telemetry.mdx |
-| Tracing | docs/v5/features/tracing.mdx |
+| App cards | https://docs.mobilerun.ai/framework/features/app-cards.md |
+| Credentials | https://docs.mobilerun.ai/framework/features/credentials.md |
+| Custom tools | https://docs.mobilerun.ai/framework/features/custom-tools.md |
+| Custom variables | https://docs.mobilerun.ai/framework/features/custom-variables.md |
+| Structured output | https://docs.mobilerun.ai/framework/features/structured-output.md |
+| Telemetry | https://docs.mobilerun.ai/framework/features/telemetry.md |
+| Tracing | https://docs.mobilerun.ai/framework/features/tracing.md |
+| Vision | https://docs.mobilerun.ai/framework/features/vision.md |
 | **Guides** | |
-| CLI usage | docs/v5/guides/cli.mdx |
-| Device setup | docs/v5/guides/device-setup.mdx |
-| Docker | docs/v5/guides/docker.mdx |
-| Migration v3→v4 | docs/v5/guides/migration-v3-to-v4.mdx |
+| CLI usage | https://docs.mobilerun.ai/framework/guides/cli.md |
+| Device setup | https://docs.mobilerun.ai/framework/guides/device-setup.md |
+| Docker | https://docs.mobilerun.ai/framework/guides/docker.md |
 | **SDK** | |
-| MobileAgent | docs/v5/sdk/droid-agent.mdx |
-| ADB tools | docs/v5/sdk/adb-tools.mdx |
-| iOS tools | docs/v5/sdk/ios-tools.mdx |
-| Base tools | docs/v5/sdk/base-tools.mdx |
-| Configuration | docs/v5/sdk/configuration.mdx |
-| API reference | docs/v5/sdk/reference.mdx |
+| MobileAgent | https://docs.mobilerun.ai/framework/sdk/droid-agent.md |
+| ADB tools | https://docs.mobilerun.ai/framework/sdk/adb-tools.md |
+| iOS tools | https://docs.mobilerun.ai/framework/sdk/ios-tools.md |
+| Base tools | https://docs.mobilerun.ai/framework/sdk/base-tools.md |
+| Configuration | https://docs.mobilerun.ai/framework/sdk/configuration.md |
+| API reference | https://docs.mobilerun.ai/framework/sdk/reference.md |
 
 For deeper implementation details, check the source code directly in `mobilerun/`.

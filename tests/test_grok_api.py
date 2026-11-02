@@ -23,8 +23,9 @@ from openai.types.responses.response_usage import (
 )
 
 from mobilerun.agent.providers.grok import (
-    GROK_DEFAULT_MODEL,
-    GROK_MODELS,
+    GROK_API_DEFAULT_MODEL,
+    GROK_API_MODELS,
+    GROK_OAUTH_MODELS,
     XAI_API_BASE,
     normalize_grok_model_id,
 )
@@ -51,7 +52,7 @@ def _xai_completed_response(*, usage: ResponseUsage) -> Response:
         incomplete_details=None,
         instructions=None,
         metadata={},
-        model=GROK_DEFAULT_MODEL,
+        model=GROK_API_DEFAULT_MODEL,
         object="response",
         output=[
             ResponseFunctionToolCall(
@@ -92,24 +93,23 @@ def test_grok_api_key_variant_is_first_class_xai_responses_provider() -> None:
     assert variant.id == "XAI"
     assert variant.runtime_provider_name == "XAI"
     assert variant.default_model == "grok-4.6"
-    assert list_models_for_variant("xai", "api_key") == (
-        "grok-4.6",
-        "grok-4.5",
-    )
+    assert list_models_for_variant("xai", "api_key") == ("grok-4.6",)
+    assert variant.models == GROK_API_MODELS
     assert variant.requires_api_key is True
     assert variant.base_url == XAI_API_BASE
     assert VARIANT_ENV_KEY_SLOT[variant.id] == "xai"
     assert env_keys.API_KEY_ENV_VARS["xai"] == "XAI_API_KEY"
 
 
-def test_grok_oauth_variant_shares_the_canonical_model_catalog() -> None:
+def test_grok_oauth_variant_defaults_to_the_grok_build_proxy_model() -> None:
     variant = resolve_provider_variant("xai", "oauth")
 
     assert variant.id == "xai_oauth"
     assert variant.runtime_provider_name == "xai_oauth"
-    assert variant.default_model == "grok-4.6"
-    assert variant.models == ("grok-4.6", "grok-4.5")
-    assert variant.models == GROK_MODELS
+    assert variant.default_model == "grok-4.7"
+    assert variant.models == ("grok-4.7", "grok-4.6")
+    assert variant.models == GROK_OAUTH_MODELS
+    assert "grok-4.7" not in GROK_API_MODELS
     assert variant.credential_path
 
 
@@ -117,9 +117,10 @@ def test_grok_oauth_variant_shares_the_canonical_model_catalog() -> None:
 @pytest.mark.parametrize(
     ("model_alias", "expected_model"),
     (
+        ("grok-4.7", "grok-4.7"),
+        ("xai/grok-4.7", "grok-4.7"),
         ("grok-4.6", "grok-4.6"),
         ("xai/grok-4.6", "grok-4.6"),
-        ("grok-4.5", "grok-4.5"),
         ("grok-4.5-latest", "grok-4.5"),
         ("xai/grok-4.5", "grok-4.5"),
     ),
@@ -149,7 +150,7 @@ def test_grok_runtime_aliases_select_xai(alias: str) -> None:
 @pytest.mark.parametrize("removed_provider", ("grok", "x.ai", "grok_oauth"))
 def test_removed_xai_provider_aliases_are_rejected(removed_provider: str) -> None:
     with pytest.raises(ValueError, match="Unsupported provider"):
-        load_llm(removed_provider, model="grok-4.5")
+        load_llm(removed_provider, model="grok-4.6")
 
 
 def test_grok_profile_wires_api_base_context_and_environment_key(monkeypatch) -> None:
@@ -195,7 +196,7 @@ def test_grok_profile_resolves_saved_api_key(monkeypatch, tmp_path) -> None:
             family_id="xai",
             variant_id="XAI",
             auth_mode="api_key",
-            model="grok-4.5",
+            model="grok-4.6",
             api_key_source="file",
         ),
     )
@@ -206,7 +207,7 @@ def test_grok_profile_resolves_saved_api_key(monkeypatch, tmp_path) -> None:
 def test_xai_loader_uses_responses_metadata_and_forces_payload_contract() -> None:
     llm = load_llm(
         "XAI",
-        model="grok-4.5-latest",
+        model="xai/grok-4.6",
         api_key="stub",
         temperature=0.4,
         top_p=0.7,
@@ -220,7 +221,7 @@ def test_xai_loader_uses_responses_metadata_and_forces_payload_contract() -> Non
     )
 
     assert type(llm).__name__ == "MobilerunOpenAIResponses"
-    assert llm.model == "grok-4.5"
+    assert llm.model == "grok-4.6"
     assert llm.api_base == XAI_API_BASE
     assert llm.metadata.context_window == 500_000
     assert llm.metadata.is_function_calling_model is True
@@ -247,7 +248,7 @@ def test_xai_loader_uses_responses_metadata_and_forces_payload_contract() -> Non
             "metadata": {"safe": "value"},
         },
     )
-    assert payload["model"] == "grok-4.5"
+    assert payload["model"] == "grok-4.6"
     assert payload["store"] is False
     assert payload["temperature"] == 0.3
     assert payload["top_p"] == 0.6
@@ -267,7 +268,7 @@ def test_xai_loader_uses_responses_metadata_and_forces_payload_contract() -> Non
 def test_xai_loader_pins_catalog_context_metadata() -> None:
     llm = load_llm(
         "XAI",
-        model="grok-4.5",
+        model="grok-4.6",
         api_key="stub",
         context_window=1,
     )
@@ -333,7 +334,7 @@ def test_xai_sync_and_async_chat_send_sanitized_multimodal_tool_payloads() -> No
         async_payload.update(kwargs)
         return response
 
-    llm = load_llm("XAI", model=GROK_DEFAULT_MODEL, api_key="stub")
+    llm = load_llm("XAI", model=GROK_API_DEFAULT_MODEL, api_key="stub")
     llm._client = SimpleNamespace(responses=SimpleNamespace(create=create_sync))
     llm._aclient = SimpleNamespace(responses=SimpleNamespace(create=create_async))
     messages = [
@@ -380,7 +381,7 @@ def test_xai_sync_and_async_chat_send_sanitized_multimodal_tool_payloads() -> No
 
     for payload in (sync_payload, async_payload):
         assert payload["stream"] is False
-        assert payload["model"] == GROK_DEFAULT_MODEL
+        assert payload["model"] == GROK_API_DEFAULT_MODEL
         assert payload["temperature"] == 0.4
         assert payload["top_p"] == 0.6
         assert payload["store"] is False
@@ -421,7 +422,7 @@ def test_xai_sync_and_async_stream_preserve_completed_usage() -> None:
         async_payload.update(kwargs)
         return event_stream()
 
-    llm = load_llm("XAI", model=GROK_DEFAULT_MODEL, api_key="stub")
+    llm = load_llm("XAI", model=GROK_API_DEFAULT_MODEL, api_key="stub")
     llm._client = SimpleNamespace(responses=SimpleNamespace(create=create_sync))
     llm._aclient = SimpleNamespace(responses=SimpleNamespace(create=create_async))
     messages = [ChatMessage(role=MessageRole.USER, content="inspect")]
@@ -476,7 +477,7 @@ def test_xai_structured_predict_sanitizes_sync_and_async_call_kwargs() -> None:
         async_payload.update(kwargs)
         return SimpleNamespace(output_parsed=StructuredResult(value="OK"))
 
-    llm = load_llm("XAI", model=GROK_DEFAULT_MODEL, api_key="stub")
+    llm = load_llm("XAI", model=GROK_API_DEFAULT_MODEL, api_key="stub")
     llm._client = SimpleNamespace(responses=SimpleNamespace(parse=parse_sync))
     llm._aclient = SimpleNamespace(responses=SimpleNamespace(parse=parse_async))
     prompt = PromptTemplate("Return {value}")
@@ -539,7 +540,7 @@ def test_xai_structured_predict_sanitizes_sync_and_async_call_kwargs() -> None:
 def test_xai_loader_uses_environment_key_for_direct_runtime(monkeypatch) -> None:
     monkeypatch.setenv("XAI_API_KEY", "xai-runtime-key")
 
-    llm = load_llm("xai", model="grok-4.5")
+    llm = load_llm("xai", model="grok-4.6")
 
     assert llm.api_key == "xai-runtime-key"
 
@@ -558,13 +559,13 @@ def test_xai_runtime_aliases_default_to_canonical_model(
 def test_xai_oauth_runtime_uses_grok_oauth_adapter(tmp_path) -> None:
     llm = load_llm(
         "xai_oauth",
-        model="grok-4.5-latest",
+        model="xai/grok-4.6",
         oauth_access_token="stub",
         credential_path=str(tmp_path / "auth-profiles.json"),
     )
     try:
         assert type(llm).__name__ == "GrokOAuth"
-        assert llm.model == "grok-4.5"
+        assert llm.model == "grok-4.6"
     finally:
         llm._client.close()
         asyncio.run(llm._aclient.close())
@@ -575,7 +576,7 @@ def test_xai_loader_does_not_fall_back_to_openai_key(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "wrong-provider-key")
 
     with pytest.raises(ValueError, match="XAI_API_KEY"):
-        load_llm("XAI", model="grok-4.5")
+        load_llm("XAI", model="grok-4.6")
 
 
 @pytest.mark.parametrize(
@@ -592,7 +593,7 @@ def test_xai_loader_does_not_fall_back_to_openai_key(monkeypatch) -> None:
 def test_xai_loader_pins_api_endpoint(endpoint_override: dict[str, str]) -> None:
     llm = load_llm(
         "XAI",
-        model="grok-4.5",
+        model="grok-4.6",
         api_key="xai-secret",
         **endpoint_override,
     )

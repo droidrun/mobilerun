@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -31,7 +32,8 @@ class MCPClientManager:
         self._tools: dict[str, MCPToolInfo] = {}
         self._server_tools: dict[str, list[str]] = {}
         self._sessions: dict = {}  # type: ignore
-        self._exit_stacks: dict[str, AsyncExitStack] = {}
+        self._shutdown_events: dict[str, asyncio.Event] = {}
+        self._connection_tasks: dict[str, asyncio.Task] = {}
 
     async def discover_tools(self) -> dict[str, MCPToolInfo]:
         """Discover tools from all configured servers."""
@@ -130,28 +132,59 @@ class MCPClientManager:
 
         logger.debug(f"MCP '{server_name}': connecting...")
 
-        stack = AsyncExitStack()
-        self._exit_stacks[server_name] = stack
+        ready: asyncio.Future = asyncio.get_running_loop().create_future()
+        shutdown = asyncio.Event()
 
-        transport = await stack.enter_async_context(stdio_client(server_params))
-        read, write = transport
-        session = await stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
+        # The transport must be closed by the task that opened it, so one task
+        # owns the connection until disconnect_all() signals shutdown.
+        async def own_connection() -> None:
+            try:
+                async with AsyncExitStack() as stack:
+                    read, write = await stack.enter_async_context(
+                        stdio_client(server_params)
+                    )
+                    session = await stack.enter_async_context(
+                        ClientSession(read, write)
+                    )
+                    await session.initialize()
+                    ready.set_result(session)
+                    await shutdown.wait()
+            except BaseException as e:
+                if ready.done():
+                    raise
+                if isinstance(e, asyncio.CancelledError):
+                    ready.cancel()
+                    raise
+                ready.set_exception(e)
+
+        task = asyncio.create_task(own_connection(), name=f"mcp:{server_name}")
+        try:
+            session = await ready
+        except BaseException:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise
 
         self._sessions[server_name] = session
+        self._shutdown_events[server_name] = shutdown
+        self._connection_tasks[server_name] = task
         logger.info(f"MCP '{server_name}': connected")
 
     async def disconnect_all(self) -> None:
         """Clean up all server connections."""
-        for server_name, stack in list(self._exit_stacks.items()):
+        for shutdown in self._shutdown_events.values():
+            shutdown.set()
+
+        for server_name, task in list(self._connection_tasks.items()):
             try:
-                await stack.aclose()
+                await task
                 logger.debug(f"MCP '{server_name}': disconnected")
             except Exception as e:
                 logger.warning(f"MCP '{server_name}': disconnect error: {e}")
 
         self._sessions.clear()
-        self._exit_stacks.clear()
+        self._shutdown_events.clear()
+        self._connection_tasks.clear()
 
     @property
     def tools(self) -> dict[str, MCPToolInfo]:

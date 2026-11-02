@@ -4,13 +4,47 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docker.yml"
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  check-image:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          platforms: ${{ matrix.platform }}
+          tags: mobilerun:pr
+      - name: Check installed dependencies
+        run: docker run --rm --platform '${{ matrix.platform }}' --entrypoint uv mobilerun:pr pip check
+      - name: Smoke test installed CLI
+        run: docker run --rm --platform '${{ matrix.platform }}' mobilerun:pr --help
+
   push-image:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     permissions:

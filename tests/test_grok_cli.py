@@ -8,6 +8,7 @@ from rich.console import Console
 
 import mobilerun.cli.configure_wizard as configure_wizard
 import mobilerun.cli.main as cli_main
+from mobilerun.agent.providers.registry import resolve_provider_variant
 from mobilerun.agent.utils.oauth.login_timeout import OAuthLoginDeadline
 from mobilerun.cli import oauth_actions
 from mobilerun.cli.configure_wizard import ConfigureWizardCallbacks
@@ -52,13 +53,13 @@ def test_wizard_prepares_xai_oauth_with_selected_model(tmp_path) -> None:
         callbacks=callbacks,
         variant=SimpleNamespace(id="xai_oauth"),
         credential_path=str(tmp_path / "auth-profiles.json"),
-        selected_model="grok-4.5",
+        selected_model="grok-4.6",
     )
 
     assert calls == [
         {
             "credential_path": str(tmp_path / "auth-profiles.json"),
-            "model": "grok-4.5",
+            "model": "grok-4.6",
         }
     ]
 
@@ -82,7 +83,7 @@ def test_configure_xai_command_forwards_device_code_options(
             "--credential-path",
             str(credential_path),
             "--model",
-            "grok-4.5",
+            "grok-4.6",
             "--timeout",
             "12",
             "--no-browser",
@@ -94,7 +95,7 @@ def test_configure_xai_command_forwards_device_code_options(
     assert calls == [
         {
             "credential_path": str(credential_path),
-            "model": "grok-4.5",
+            "model": "grok-4.6",
             "timeout": 12.0,
             "open_browser": False,
             "device_code": True,
@@ -169,7 +170,7 @@ def test_xai_oauth_action_shares_deadline_and_browser_preference(
 
     deadline = observed["login"]["deadline"]
     assert isinstance(deadline, OAuthLoginDeadline)
-    assert observed["init"]["model"] == "grok-4.6"
+    assert observed["init"]["model"] == "grok-4.7"
     assert observed["init"]["timeout"] == 12
     assert observed["login"]["open_browser"] is False
     assert observed["login"]["device_code"] is True
@@ -286,11 +287,12 @@ def test_exact_xai_configure_forms_keep_provider_and_auth_fixed(
     assert result.exit_code == 0, result.output
     assert saved_configs == [config]
     assert login_calls == []
-    assert model_prompts == [(("grok-4.6", "grok-4.5"), "grok-4.6")]
+    variant = resolve_provider_variant("xai", auth_mode)
+    assert model_prompts == [(variant.models, variant.default_model)]
     assert {
         (profile.provider, profile.provider_family, profile.auth_mode, profile.model)
         for profile in config.llm_profiles.values()
-    } == {(expected_provider, "xai", auth_mode, "grok-4.6")}
+    } == {(expected_provider, "xai", auth_mode, variant.default_model)}
     assert "xai_oauth" not in result.output
     assert "Provider: XAI" in result.output
 
@@ -380,6 +382,6 @@ def test_fixed_provider_and_auth_model_back_returns_to_top_level_once(
         base_url=None,
     )
 
-    assert model_prompts == [(("grok-4.6", "grok-4.5"), "grok-4.6")]
+    assert model_prompts == [(("grok-4.6",), "grok-4.6")]
     assert menu_calls == ["Configure"]
     assert saved_configs == [config]

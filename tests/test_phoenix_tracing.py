@@ -1,3 +1,4 @@
+import sys
 from types import SimpleNamespace
 
 import llama_index.core
@@ -96,3 +97,39 @@ def test_phoenix_setup_stays_disabled_when_endpoint_is_unreachable(monkeypatch):
     )
 
     assert tracing_setup._setup_phoenix_tracing() is False
+
+
+def test_phoenix_setup_reports_reinstall_when_dependencies_are_missing(monkeypatch):
+    warnings = []
+    monkeypatch.setitem(sys.modules, "mobilerun.telemetry.phoenix", None)
+    monkeypatch.setattr(tracing_setup.logger, "warning", warnings.append)
+
+    assert tracing_setup._setup_phoenix_tracing() is False
+
+    assert len(warnings) == 1
+    assert "[phoenix]" not in warnings[0]
+    assert "uv tool install --reinstall mobilerun`\n" in warnings[0]
+    assert "uv pip install --reinstall mobilerun`\n" in warnings[0]
+
+
+def test_phoenix_setup_reports_reinstall_when_handler_imports_fail(monkeypatch):
+    warnings = []
+    global_handler = object()
+
+    def missing_instrumentation():
+        raise ModuleNotFoundError("No module named 'openinference'")
+
+    monkeypatch.setattr(
+        tracing_setup, "_check_phoenix_reachable", lambda _endpoint: True
+    )
+    monkeypatch.setattr(
+        phoenix, "arize_phoenix_callback_handler", missing_instrumentation
+    )
+    monkeypatch.setattr(llama_index.core, "global_handler", global_handler)
+    monkeypatch.setattr(tracing_setup.logger, "warning", warnings.append)
+
+    assert tracing_setup._setup_phoenix_tracing() is False
+
+    assert len(warnings) == 1
+    assert "uv tool install --reinstall mobilerun`\n" in warnings[0]
+    assert llama_index.core.global_handler is global_handler

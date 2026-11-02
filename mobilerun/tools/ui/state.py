@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from mobilerun.tools.helpers.coordinate import to_absolute
+from mobilerun.tools.helpers.coordinate import NORMALIZED_MAX, to_absolute
 from mobilerun.tools.helpers.geometry import (
     find_clear_point,
     find_uncovered_point,
@@ -48,8 +48,9 @@ class UIState:
         # space (== convert_point basis). None means "no contract / native".
         self.model_screenshot_width = model_screenshot_width
         self.model_screenshot_height = model_screenshot_height
-        # Whether the vision coordinate contract (resized+grid screenshot,
-        # declared display space) is active for this snapshot. Action-time
+        # Whether a coordinate contract (resized+grid screenshot with declared
+        # display space, or normalized 0-1000 with a real screen size) is
+        # active for this snapshot. Action-time
         # coordinate guards read it from here so they match the space this
         # snapshot's convert_point uses.
         self.coordinate_contract_active = coordinate_contract_active
@@ -115,10 +116,9 @@ class UIState:
             return point
         left, top, right, bottom = map(int, element["bounds"].split(","))
         if self.screen_width and self.screen_height:
-            width = 1000 if self.use_normalized else self.screen_width
-            height = 1000 if self.use_normalized else self.screen_height
             left, top = max(0, left), max(0, top)
-            right, bottom = min(width, right), min(height, bottom)
+            right = min(self.screen_width, right)
+            bottom = min(self.screen_height, bottom)
         clear = find_uncovered_point((left, top, right, bottom), blockers)
         if clear is None:
             raise ValueError(f"No clear tap point for element {element.get('index')}")
@@ -136,7 +136,7 @@ class UIState:
             "type": element.get("type", "unknown"),
         }
 
-        children = element.get("children", [])
+        children = element.get("children") or []
         if children:
             child_texts = [c.get("text") for c in children if c.get("text")]
             if child_texts:
@@ -179,7 +179,13 @@ class UIState:
     def convert_point(self, x: int, y: int) -> Tuple[int, int]:
         """Convert point to absolute pixels if normalized mode is active."""
         if self.use_normalized:
-            return to_absolute(x, y, self.screen_width, self.screen_height)
+            abs_x, abs_y = to_absolute(x, y, self.screen_width, self.screen_height)
+            # 1000 maps to one past the last pixel; keep it on screen.
+            if x == NORMALIZED_MAX:
+                abs_x = max(self.screen_width - 1, 0)
+            if y == NORMALIZED_MAX:
+                abs_y = max(self.screen_height - 1, 0)
+            return abs_x, abs_y
         return (
             int(round(x * self.coordinate_scale_x)),
             int(round(y * self.coordinate_scale_y)),
@@ -194,7 +200,7 @@ class UIState:
         for item in elements:
             if item.get("index") == target:
                 return item
-            child = UIState._find_by_index(item.get("children", []), target)
+            child = UIState._find_by_index(item.get("children") or [], target)
             if child is not None:
                 return child
         return None
@@ -205,7 +211,7 @@ class UIState:
         for item in elements:
             if item.get("index") is not None:
                 indices.append(item["index"])
-            indices.extend(UIState._collect_indices(item.get("children", [])))
+            indices.extend(UIState._collect_indices(item.get("children") or []))
         return indices
 
     @staticmethod
@@ -215,5 +221,5 @@ class UIState:
         result: List[Dict[str, Any]] = []
         for item in elements:
             result.append(item)
-            result.extend(UIState._collect_all(item.get("children", [])))
+            result.extend(UIState._collect_all(item.get("children") or []))
         return result

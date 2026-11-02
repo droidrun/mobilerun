@@ -35,10 +35,20 @@ def test_claude_5_models_use_high_resolution_budget():
     for model in (
         "claude-fable-5-1",
         "claude-opus-5",
-        "claude-sonnet-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
         "claude-fable-5",
     ):
         assert model_effective_dims(model, 1080, 2400) == (922, 2048)
+
+
+def test_sonnet_5_grounds_on_a_1568_long_edge():
+    assert model_effective_dims("claude-sonnet-5", 1080, 2400) == (706, 1568)
+    assert model_effective_dims("claude-sonnet-5", 2560, 1600) == (1568, 980)
+    assert model_effective_dims("claude-sonnet-5", 720, 1280) == (720, 1280)
+    assert VisionResizePolicy(["claude-opus-5-5", "claude-sonnet-5"]).effective_dims(
+        1080, 2400
+    ) == (706, 1568)
 
 
 def test_unregistered_mythos_model_retains_high_resolution_budget():

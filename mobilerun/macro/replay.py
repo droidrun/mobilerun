@@ -55,7 +55,7 @@ class MacroPlayer:
         Initialize the MacroPlayer.
 
         Args:
-            device_serial: Serial number of the target device. If None, will use first available device.
+            device_serial: Serial number of the target device. If None, uses ANDROID_SERIAL or the only connected device.
             delay_between_actions: Delay in seconds between each action (default: 1.0s)
         """
         self.device_serial = device_serial

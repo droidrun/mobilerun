@@ -1,8 +1,10 @@
-"""FastAgent — XML tool-calling agent for device interaction.
+"""FastAgent — tool-calling agent for device interaction.
 
-Uses a structured XML tool-calling protocol. The LLM emits <function_calls>
-blocks, the agent parses them, executes the tools via ToolRegistry, and feeds
-<function_results> back as user messages.
+Uses a structured XML tool-calling protocol by default. The LLM emits
+<function_calls> blocks, the agent parses them, executes the tools via
+ToolRegistry, and feeds <function_results> back as user messages. LLMs that
+support native function calling receive the tools as API tool definitions
+instead and get tool-result messages back.
 """
 
 import asyncio
@@ -32,6 +34,11 @@ from mobilerun.agent.fast_agent.events import (
     FastAgentResponseEvent,
     FastAgentToolCallEvent,
 )
+from mobilerun.agent.fast_agent.native_tools import (
+    native_tool_kwargs,
+    parse_native_tool_calls,
+    tool_result_messages,
+)
 from mobilerun.agent.fast_agent.xml_parser import (
     ToolCallParseStatus,
     ToolResult,
@@ -48,8 +55,7 @@ from mobilerun.agent.utils.tracing_setup import record_langfuse_screenshot
 from mobilerun.config_manager.config_manager import AgentConfig, TracingConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
 from mobilerun.tools.ui.provider import (
-    resize_model_screenshot_with_grid,
-    should_resize_model_screenshot,
+    resize_model_screenshot_async,
 )
 
 if TYPE_CHECKING:
@@ -61,6 +67,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mobilerun")
 
 _MALFORMED_TOOL_CALL_LIMIT = 3
+_TOOL_CALLING_MODES = ("auto", "xml")
+_NATIVE_NO_TOOL_CALL = (
+    "No tool was called. Call one of the provided tools to continue. To mark the "
+    "task as complete (whether it failed or succeeded), call the `complete` tool."
+)
+_NATIVE_CONTINUE = "The tool results are above. Continue with the next step."
 
 
 def _malformed_tool_call_correction(attempt: int) -> str:
@@ -70,13 +82,45 @@ def _malformed_tool_call_correction(attempt: int) -> str:
         f"(attempt {attempt}/{_MALFORMED_TOOL_CALL_LIMIT}). No tool was executed.\n\n"
         "Repeat the intended call using only the ASCII XML tags shown below. Replace "
         "the placeholder names and value with the intended tool and arguments. Do not "
-        "use provider-specific markers, full-width punctuation, or alternate tag names.\n\n"
+        "use provider-specific markers, full-width punctuation, or alternate tag names, "
+        "and write tool-call tags only inside the call, never in your "
+        "explanation. Write <add_memory> before the <function_calls> block, never "
+        "inside it; memory written inside the block was not saved.\n\n"
         "<function_calls>\n"
         '<invoke name="tool_name">\n'
         '<parameter name="parameter_name">value</parameter>\n'
         "</invoke>\n"
         "</function_calls>"
     )
+
+
+def _truncate_message_text(message: ChatMessage, end: int) -> ChatMessage:
+    """Cut text at offset ``end`` of ``message.content``, keeping non-text blocks."""
+    blocks = []
+    start = 0
+    for block in message.blocks:
+        if not isinstance(block, TextBlock):
+            blocks.append(block)
+            continue
+        text = block.text
+        if start + len(text) <= end:
+            blocks.append(block)
+        elif start < end:
+            blocks.append(block.model_copy(update={"text": text[: end - start]}))
+        # ChatMessage.content joins text blocks with "\n".
+        start += len(text) + 1
+    return message.model_copy(update={"blocks": blocks})
+
+
+def _format_results(results: list[ToolResult], ignored_blocks: int) -> str:
+    output = format_tool_results(results)
+    if ignored_blocks:
+        output += (
+            "\nOnly the first <function_calls> block of your response was executed; "
+            f"{ignored_blocks} later block(s) were ignored. Emit exactly one "
+            "<function_calls> block per response."
+        )
+    return output
 
 
 class FastAgent(Workflow):
@@ -129,9 +173,22 @@ class FastAgent(Workflow):
         self.tool_call_counter = 0
         self._consecutive_malformed_tool_calls = 0
 
+        tool_calling = getattr(self.config, "tool_calling", "auto")
+        if tool_calling not in _TOOL_CALLING_MODES:
+            raise ValueError(
+                f"fast_agent.tool_calling must be one of {_TOOL_CALLING_MODES}, "
+                f"got {tool_calling!r}"
+            )
+        self.native_tools = tool_calling == "auto" and bool(
+            getattr(llm, "supports_native_tool_calls", False)
+        )
+
         # Build tool descriptions and param types from registry
         self.tool_descriptions = self.registry.get_tool_descriptions_xml()
         self.param_types = self.registry.get_param_types()
+        self.tool_specs = (
+            self.registry.get_function_tool_specs() if self.native_tools else None
+        )
 
         self._available_secrets = []
         self._output_schema = None
@@ -151,6 +208,7 @@ class FastAgent(Workflow):
             ),
             "output_schema": self._output_schema,
             "parallel_tools": self.config.parallel_tools,
+            "native_tools": self.native_tools,
             "vision": self.vision,
             "platform": self.shared_state.platform,
             "screenshot_only": bool(
@@ -317,10 +375,11 @@ class FastAgent(Workflow):
             if self.debug:
                 logger.error("State retrieval error details:", exc_info=True)
 
-        # Limit history and build ephemeral copy for LLM
+        # Limit history and build ephemeral copy for LLM. A native step adds
+        # a tool-result message per call besides the assistant and user turns.
         limited_history = limit_history(
             self.shared_state.message_history,
-            LLM_HISTORY_LIMIT * 2,
+            LLM_HISTORY_LIMIT * (3 if self.native_tools else 2),
             preserve_first=True,
         )
         messages_to_send = [self.system_prompt] + copy.deepcopy(limited_history)
@@ -350,10 +409,9 @@ class FastAgent(Workflow):
 
             # Screenshot → last user message
             if self.vision and screenshot:
-                if should_resize_model_screenshot(self.state_provider):
-                    screenshot = resize_model_screenshot_with_grid(
-                        self.state_provider, screenshot
-                    )
+                screenshot = await resize_model_screenshot_async(
+                    self.state_provider, screenshot
+                )
                 messages_to_send[last_user_idx].blocks.append(
                     ImageBlock(image=screenshot)
                 )
@@ -371,8 +429,16 @@ class FastAgent(Workflow):
 
         # Call LLM
         logger.info("FastAgent response:", extra={"color": "yellow"})
+        chat_kwargs = {}
+        if self.native_tools:
+            chat_kwargs = native_tool_kwargs(
+                self.llm, self.tool_specs, self.config.parallel_tools
+            )
         response = await acall_with_retries(
-            self.llm, messages_to_send, stream=self.agent_config.streaming
+            self.llm,
+            messages_to_send,
+            stream=self.agent_config.streaming,
+            **chat_kwargs,
         )
 
         if response is None:
@@ -389,14 +455,27 @@ class FastAgent(Workflow):
         except Exception as e:
             logger.warning(f"Could not get usage: {e}")
 
-        # Store assistant response (preserves ThinkingBlock, additional_kwargs, etc.)
-        self.shared_state.message_history.append(response.message)
-        response_text = response.message.content
+        response_text = response.message.content or ""
 
         # Parse tool calls from response
-        parse_result = parse_tool_calls_detailed(response_text, self.param_types)
+        if self.native_tools:
+            parse_result = parse_native_tool_calls(response.message, self.param_types)
+        else:
+            parse_result = parse_tool_calls_detailed(response_text, self.param_types)
         thought = parse_result.thought
         tool_calls = parse_result.calls
+
+        # Store assistant response (preserves ThinkingBlock, additional_kwargs, etc.)
+        # up to the end of its first block, so later text is never replayed.
+        message = response.message
+        if parse_result.end is not None and response_text[parse_result.end :].strip():
+            message = _truncate_message_text(message, parse_result.end)
+        if parse_result.ignored_blocks:
+            logger.warning(
+                "Ignoring %d <function_calls> block(s) after the first one",
+                parse_result.ignored_blocks,
+            )
+        self.shared_state.message_history.append(message)
 
         # Extract <add_memory> from thought text and append to unified memory
         memory_update = extract_add_memory(thought)
@@ -404,13 +483,17 @@ class FastAgent(Workflow):
             self.shared_state.append_memory(memory_update)
 
         # Store parsed calls for logging/trajectory output. This uses the
-        # executable representation so accidental duplicate XML blocks are not
-        # shown as pending work after deduplication.
+        # executable representation so ignored XML blocks are not shown as
+        # pending work.
         tool_calls_xml = format_tool_calls(tool_calls) if tool_calls else None
+        if self.native_tools and tool_calls_xml:
+            # Native calls are not part of the streamed text.
+            logger.info(tool_calls_xml)
 
         # Store tool calls in context for execute step (avoid re-parsing)
         if tool_calls:
             await ctx.store.set("pending_tool_calls", tool_calls)
+            await ctx.store.set("ignored_tool_call_blocks", parse_result.ignored_blocks)
 
         # Update unified state
         self.shared_state.last_thought = thought
@@ -476,7 +559,11 @@ class FastAgent(Workflow):
 
         self._consecutive_malformed_tool_calls = 0
 
-        if not ev.thought:
+        if not ev.thought and self.native_tools:
+            # Native calls must be answered by tool results before any user
+            # message, and reasoning models may reason without visible text.
+            logger.debug("LLM provided native tool calls without visible text.")
+        elif not ev.thought:
             logger.warning("LLM provided tool calls without reasoning.")
             no_thoughts_text = (
                 "Your previous response called tools without explaining your reasoning first. "
@@ -494,6 +581,11 @@ class FastAgent(Workflow):
             event = FastAgentToolCallEvent(tool_calls_repr=ev.code)
             ctx.write_event_to_stream(event)
             return event
+        elif self.native_tools:
+            self.shared_state.message_history.append(
+                ChatMessage(role="user", content=_NATIVE_NO_TOOL_CALL)
+            )
+            return FastAgentInputEvent()
         else:
             # No tool calls — ask for them
             no_tools_text = (
@@ -517,6 +609,7 @@ class FastAgent(Workflow):
     ) -> FastAgentOutputEvent | FastAgentEndEvent:
         """Execute parsed tool calls and return results."""
         tool_calls = await ctx.store.get("pending_tool_calls", [])
+        ignored_blocks = await ctx.store.get("ignored_tool_call_blocks", 0)
 
         if not tool_calls:
             event = FastAgentOutputEvent(output="No tool calls to execute.")
@@ -525,7 +618,7 @@ class FastAgent(Workflow):
 
         results: list[ToolResult] = []
 
-        for call in tool_calls:
+        for index, call in enumerate(tool_calls):
             logger.debug(f"Executing: {call.name}({call.parameters})")
             self.tool_call_counter += 1
 
@@ -558,7 +651,8 @@ class FastAgent(Workflow):
                     self.shared_state.finished = False
                     self.shared_state.success = None
                     self.shared_state.answer = ""
-                    results_xml = format_tool_results(results)
+                    await self._store_native_results(ctx, tool_calls, results)
+                    results_xml = _format_results(results, ignored_blocks)
                     event = FastAgentOutputEvent(output=results_xml)
                     ctx.write_event_to_stream(event)
                     return event
@@ -585,8 +679,28 @@ class FastAgent(Workflow):
                 ctx.write_event_to_stream(event)
                 return event
 
+            # Later calls were planned assuming this one succeeded.
+            if not action_result.success:
+                skipped = tool_calls[index + 1 :]
+                if skipped:
+                    logger.info(
+                        "Skipping %d tool call(s) after %s failed",
+                        len(skipped),
+                        call.name,
+                    )
+                    results.extend(
+                        ToolResult(
+                            name=later.name,
+                            output=f"Not executed because {call.name} failed.",
+                            is_error=True,
+                        )
+                        for later in skipped
+                    )
+                break
+
         # Format results
-        results_xml = format_tool_results(results)
+        await self._store_native_results(ctx, tool_calls, results)
+        results_xml = _format_results(results, ignored_blocks)
         logger.info("💡 Tool results:", extra={"color": "dim"})
         logger.info(f"{results_xml}")
         await asyncio.sleep(self.agent_config.after_sleep_action)
@@ -595,12 +709,27 @@ class FastAgent(Workflow):
         ctx.write_event_to_stream(event)
         return event
 
+    async def _store_native_results(
+        self, ctx: Context, tool_calls: list, results: list[ToolResult]
+    ) -> None:
+        if self.native_tools:
+            await ctx.store.set(
+                "native_tool_results", tool_result_messages(tool_calls, results)
+            )
+
     @step
     async def handle_execution_result(
         self, ctx: Context, ev: FastAgentOutputEvent
     ) -> FastAgentInputEvent:
         """Add execution result to history and loop back."""
         output = ev.output or "Tool executed, but produced no output."
+        if self.native_tools:
+            # Results go back as tool messages; the user turn carries state.
+            self.shared_state.message_history.extend(
+                await ctx.store.get("native_tool_results", [])
+            )
+            await ctx.store.set("native_tool_results", [])
+            output = _NATIVE_CONTINUE
 
         drained = self.shared_state.drain_user_messages()
         if drained:

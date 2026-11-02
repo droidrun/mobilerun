@@ -34,7 +34,7 @@ class ConciseFilter(TreeFilter):
             return None
 
         filtered_children = []
-        for child in node.get("children", []):
+        for child in node.get("children") or []:
             filtered_child = self._filter_node(child, screen_bounds, filtering_params)
             if filtered_child:
                 filtered_children.append(filtered_child)

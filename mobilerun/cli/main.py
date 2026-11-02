@@ -19,12 +19,14 @@ from async_adbutils import adb
 from mobilerun_core_local.driver.android.portal import (
     DOWNLOAD_BASE,
     PORTAL_PACKAGE_NAME,
+    check_portal_accessibility,
     download_portal_apk,
     download_versioned_portal_apk,
     enable_portal_accessibility,
     ping_portal,
     ping_portal_content,
     ping_portal_tcp,
+    portal_content_uri,
     setup_portal,
 )
 from mobilerun_core_local.driver.ios import discover_ios_device, validate_ios_portal_url
@@ -35,6 +37,13 @@ from rich.text import Text
 
 from mobilerun import MobileAgent, ResultEvent
 from mobilerun.agent.external import list_agents
+from mobilerun.agent.utils.android_device import (
+    AndroidDeviceSelectionError,
+    create_android_portal_http_driver,
+    is_portal_http_url,
+    resolve_android_serial,
+)
+from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.llm_picker import load_llm
 from mobilerun.agent.utils.oauth.openai_oauth_llm import (
     DEFAULT_OPENAI_OAUTH_CALLBACK_HOST,
@@ -42,6 +51,7 @@ from mobilerun.agent.utils.oauth.openai_oauth_llm import (
     DEFAULT_OPENAI_OAUTH_CALLBACK_PORT,
     DEFAULT_OPENAI_OAUTH_CREDENTIAL_PATH,
 )
+from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.cli.configure_wizard import (
     ConfigureWizardCallbacks,
     run_configure_wizard,
@@ -168,6 +178,7 @@ async def run_command(
     debug_mode = debug if debug is not None else config.logging.debug
     _setup_cli_logging(debug_mode)
     logger = logging.getLogger("mobilerun")
+    droid_agent = None
 
     try:
         logger.info(f"🚀 Starting: {command}")
@@ -318,7 +329,7 @@ async def run_command(
             return False
 
         except Exception as e:
-            err_desc = str(e) or type(e).__name__
+            err_desc = describe_error(e) or type(e).__name__
             logger.error(f"💥 Error: {err_desc}")
             if config.logging.debug:
                 import traceback
@@ -327,7 +338,7 @@ async def run_command(
             return False
 
     except Exception as e:
-        err_desc = str(e) or type(e).__name__
+        err_desc = describe_error(e) or type(e).__name__
         logger.error(f"💥 Setup error: {err_desc}")
         if debug_mode:
             import traceback
@@ -335,17 +346,26 @@ async def run_command(
             logger.debug(traceback.format_exc())
         return False
     finally:
-        await _cleanup_android_keyboard(config)
+        await _cleanup_android_keyboard(
+            config, getattr(droid_agent, "android_serial", None)
+        )
 
 
-async def _cleanup_android_keyboard(config: MobileConfig) -> None:
+async def _cleanup_android_keyboard(
+    config: MobileConfig, serial: str | None = None
+) -> None:
     platform = (config.device.platform or "").lower()
     control_backend = (config.device.control_backend or "").lower()
     if platform == "ios" or control_backend == VISUAL_REMOTE_CONNECTION:
         return
 
+    # Without a selected device the keyboard was never enabled.
+    serial = serial or config.device.serial
+    if not serial or is_portal_http_url(serial):
+        return
+
     try:
-        device_obj = await adb.device(config.device.serial)
+        device_obj = await adb.device(serial)
         if device_obj:
             from mobilerun_core_local.driver.android.portal import (
                 PORTAL_PACKAGE_NAME,
@@ -457,7 +477,12 @@ except Exception:
 @cli.command()
 @click.argument("command", type=str)
 @click.option("--config", "-c", help="Path to custom config file", default=None)
-@click.option("--device", "-d", help="Device serial number or IP address", default=None)
+@click.option(
+    "--device",
+    "-d",
+    help="Device serial number, IP address, or Portal HTTP URL",
+    default=None,
+)
 @click.option(
     "--agent",
     "-a",
@@ -828,22 +853,48 @@ async def disconnect(serial: str):
         console.print(f"[red]Error disconnecting from device: {e}[/]")
 
 
+async def _wait_for_portal_service(
+    device_obj, timeout: float = 30.0, interval: float = 1.0
+) -> bool:
+    """Wait until Portal's accessibility service responds.
+
+    Android drops the service when it is enabled before a fresh install is
+    registered, so it is enabled again while waiting. ``/ping`` answers once
+    the service is bound, even without an active window. A busy device can
+    take well over 10s to bind it.
+    """
+    uri = portal_content_uri(PORTAL_PACKAGE_NAME, "ping")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        try:
+            result = await device_obj.shell(f"content query --uri {uri}")
+            if '"status":"success"' in result:
+                return True
+            if not await check_portal_accessibility(device_obj):
+                await enable_portal_accessibility(device_obj)
+        except Exception:
+            pass
+        await asyncio.sleep(interval)
+    return False
+
+
 async def _setup_portal(
     path: str | None,
     device: str | None,
     debug: bool,
     latest: bool = False,
     specific_version: str | None = None,
+    in_place: bool = False,
 ):
     """Internal async function to install and enable the Mobilerun Portal on a device."""
     try:
         if not device:
-            devices = await adb.list()
-            if not devices:
-                console.print("[yellow]No devices connected.[/]")
+            try:
+                device = await resolve_android_serial()
+            except AndroidDeviceSelectionError as e:
+                console.print(f"[bold red]Error:[/] {e}")
                 return
-
-            device = devices[0].serial
             console.print(f"[blue]Using device:[/] {device}")
 
         device_obj = await adb.device(device)
@@ -867,7 +918,11 @@ async def _setup_portal(
             apk_context = download_portal_apk(debug)
         else:
             # Default: delegate to shared setup_portal()
-            success = await setup_portal(device_obj, debug)
+            success = await setup_portal(
+                device_obj,
+                debug,
+                **portal_version_kwargs(setup_portal, in_place=in_place),
+            )
             if success:
                 console.print(
                     "\n[bold green]Setup complete![/] The Mobilerun Portal is now installed and ready to use."
@@ -887,7 +942,11 @@ async def _setup_portal(
             console.print(f"[bold blue]Step 1/2: Installing APK:[/] {apk_path}")
             try:
                 await device_obj.install(
-                    apk_path, uninstall=True, flags=["-g"], silent=not debug
+                    apk_path,
+                    nolaunch=True,
+                    uninstall=True,
+                    flags=["-g"],
+                    silent=not debug,
                 )
             except Exception as e:
                 console.print(f"[bold red]Installation failed:[/] {e}")
@@ -899,6 +958,8 @@ async def _setup_portal(
 
             try:
                 await enable_portal_accessibility(device_obj)
+                if not await _wait_for_portal_service(device_obj):
+                    raise RuntimeError("the service did not respond in time")
 
                 console.print("[green]Accessibility service enabled successfully![/]")
                 console.print(
@@ -977,7 +1038,12 @@ async def setup(
 
 
 @cli.command()
-@click.option("--device", "-d", help="Device serial number or IP address", default=None)
+@click.option(
+    "--device",
+    "-d",
+    help="Device serial number, IP address, or Portal HTTP URL",
+    default=None,
+)
 @click.option(
     "--tcp/--no-tcp",
     default=None,
@@ -992,6 +1058,17 @@ async def ping(device: str | None, tcp: bool | None, debug: bool | None):
     use_tcp_mode = tcp if tcp is not None else False
 
     try:
+        if is_portal_http_url(device):
+            token = ConfigLoader.load(None).device.resolve_auth_token()
+            driver = create_android_portal_http_driver(device, token)
+            await driver.connect()
+            await driver.get_ui_tree()
+            console.print(
+                "[bold green]Portal HTTP is reachable and serving the UI tree. "
+                "You're good to go![/]"
+            )
+            return
+
         device_obj = await adb.device(device)
         if not device_obj:
             console.print(f"[bold red]Error:[/] Could not find device {device}")
@@ -1418,7 +1495,7 @@ async def test(
             logger.info("⏹️ Stopped by user")
 
         except Exception as e:
-            logger.error(f"💥 Error: {e}")
+            logger.error(f"💥 Error: {describe_error(e)}")
             if config.logging.debug:
                 import traceback
 
@@ -1437,7 +1514,7 @@ if __name__ == "__main__":
     command = "use open_app to open the settings and search for the battery and enter the first result"
     device = None
     provider = "OpenAIResponses"
-    model = "gpt-5.4-pro"
+    model = "gpt-6-astra"
     temperature = 1
     api_key = os.getenv("OPENAI_API_KEY")
     steps = 15

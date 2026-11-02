@@ -16,4 +16,4 @@ jobs:
         with:
           options: "--check --diff --verbose"
           src: "."
-          version: "26.5.1"
+          version: "26.10.1"
