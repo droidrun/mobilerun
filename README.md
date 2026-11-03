@@ -5,7 +5,7 @@
 </picture>
 
 <p align="center">
-  <strong>Mobilerun is an open-source framework for controlling Android and iOS devices with LLM agents.</strong><br>
+  <strong>Mobilerun is an open-source framework for mobile app testing, QA, and running AI agents on real Android and iOS devices.</strong><br>
   It gives agents mobile-native tools to inspect UI state, understand screenshots, tap, swipe, type, plan multi-step workflows, and return results through a CLI or Python API.
 </p>
 
@@ -179,13 +179,11 @@ Use the framework when you want full local control of the agent runtime. Use [Mo
 | --- | --- | --- |
 | Personal | Your own hardware connected to Mobilerun Cloud | Quick automation on devices you own |
 | Cloud Phone (Hosted) | Instantly available cloud-hosted phone | Scalable hosted automation |
-| Physical Phone (Hosted) | Real hardware with stronger identity characteristics | Workflows that need high device authenticity and trust |
+| Physical Phone (Hosted) | Real hardware, not emulated | QA and workflows that need real device behavior (sensors, camera, push, payments) |
 
-### Automate WhatsApp on a Cloud Phone
+### Run an agent on a Cloud Phone
 
-<a href="https://www.youtube.com/watch?v=2A8D8NtNfz8">
-  <img src="./static/whatsapp-automation.gif" alt="Mobilerun automating WhatsApp on a cloud device" width="800">
-</a>
+Ask an agent to test the onboarding flow in your app: open the app, complete the welcome screens, sign in with a test account, and confirm that the home screen loads. Watch each step live and inspect the results to diagnose failures.
 
 ### Generate leads with Google Maps on a Cloud Phone
 
@@ -230,7 +228,7 @@ Shows browsing, app navigation, and result extraction from a natural-language ta
 - Repetitive task automation on mobile devices
 - Event-driven automation from schedules, notifications, or custom triggers
 - Data extraction from native mobile apps
-- Running automations on multiple devices at once
+- Testing the same flow across many devices and OS versions in parallel
 
 ## 🌐 Part of Mobilerun
 
@@ -240,7 +238,7 @@ Mobilerun is one piece of a toolkit for driving real phones with AI agents:
 - **[mobilerun-ios](https://github.com/droidrun/mobilerun-ios-releases)**: connects an iPhone over USB, either to this framework (`--local`) or to Mobilerun Cloud.
 - **[iOS Portal](https://github.com/droidrun/ios-portal)**: the iOS app that lets the framework drive the iOS Simulator.
 - **[mobile-harness](https://github.com/droidrun/mobile-harness)**: an agent skill that lets Claude Code, Codex, and OpenClaw control Android, iOS, and cloud phones. App cards teach the agent how each app works, and shared memory keeps what it learns across tasks. It scores 100% on AndroidWorld and 98.34% on iOSWorld ([benchmark results](https://mobilerun.ai/benchmark/)).
-- **[Mobilerun Cloud](https://mobilerun.ai)**: cloud phones for AI agents. Hosted Android phones and dedicated iPhones, real numbers and inboxes for SMS and email codes, residential and mobile IPs in any region, scheduled and event triggers, and mobilerun VA, a no-code assistant for mobile tasks. Drive it through the REST API, [Python](https://github.com/droidrun/mobilerun-sdk-python) and [TypeScript](https://github.com/droidrun/mobilerun-sdk-typescript) SDKs, or MCP, and watch every step live.
+- **[Mobilerun Cloud](https://mobilerun.ai)**: cloud phones for AI agents. Hosted Android phones and dedicated iPhones for testing and running your agents on real devices, with phone numbers and inboxes so end to end flows like sign in and verification work in your own apps, devices in multiple regions for localized testing, and scheduled and event triggers. Drive it through the REST API, [Python](https://github.com/droidrun/mobilerun-sdk-python) and [TypeScript](https://github.com/droidrun/mobilerun-sdk-typescript) SDKs, or MCP, and watch every step live.
 
 ## 📚 Documentation
 

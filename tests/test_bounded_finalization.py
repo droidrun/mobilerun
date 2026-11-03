@@ -454,6 +454,9 @@ def test_trajectory_write_error_still_stops_and_disconnects_without_saved_log(
 
 
 def test_android_final_observation_is_single_read_and_normal_read_retries(monkeypatch):
+    async def parse(value):
+        return value
+
     async def run():
         final_provider = object.__new__(AndroidStateProvider)
         final_calls = []
@@ -464,7 +467,7 @@ def test_android_final_observation_is_single_read_and_normal_read_retries(monkey
                 return {"raw": True}
 
         final_provider.driver = Driver()
-        final_provider._state_from_data = lambda value: value
+        final_provider._state_from_data_async = parse
 
         async def no_retry(*args, **kwargs):
             raise AssertionError("final observation must not retry")
@@ -477,7 +480,7 @@ def test_android_final_observation_is_single_read_and_normal_read_retries(monkey
         normal_provider.driver = object.__new__(AndroidDriver)
         normal_provider.driver.device = object()
         normal_provider.driver.get_ui_tree = object()
-        normal_provider._state_from_data = lambda value: value
+        normal_provider._state_from_data_async = parse
         retried = False
 
         async def retry(*, fetch, recovery):

@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from copy import copy, deepcopy
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
@@ -256,6 +258,25 @@ def resize_model_screenshot_with_grid(state_provider: Any, screenshot: bytes) ->
     return resize_image_to_max_side_with_grid(screenshot, divisions=divisions)
 
 
+async def resize_model_screenshot_async(
+    state_provider: Any, screenshot: bytes
+) -> bytes:
+    """Resize when required, snapshotting model geometry before offloading."""
+    if not should_resize_model_screenshot(state_provider):
+        return screenshot
+
+    geometry = SimpleNamespace(
+        model_screenshot_width=getattr(state_provider, "model_screenshot_width", None),
+        model_screenshot_height=getattr(
+            state_provider, "model_screenshot_height", None
+        ),
+        model_screenshot_grid=getattr(state_provider, "model_screenshot_grid", True),
+    )
+    return await asyncio.to_thread(
+        resize_model_screenshot_with_grid, geometry, screenshot
+    )
+
+
 class AndroidStateProvider(StateProvider):
     """Fetches state from an Android device via ``driver.get_ui_tree()``.
 
@@ -371,11 +392,35 @@ class AndroidStateProvider(StateProvider):
             fetch=self.driver.get_ui_tree,
             recovery=self._portal_recovery(),
         )
-        return self._state_from_data(combined_data)
+        return await self._state_from_data_async(combined_data)
 
     async def get_final_state(self) -> UIState:
         """Finalization must not restart accessibility after a failed read."""
-        return self._state_from_data(await self.driver.get_ui_tree())
+        combined_data = await self.driver.get_ui_tree()
+        return await self._state_from_data_async(combined_data)
+
+    async def _state_from_data_async(self, combined_data: dict) -> UIState:
+        # Workers may outlive cancellation. Only their per-call copies may change.
+        processor = copy(self)
+        processor.tree_filter = deepcopy(self.tree_filter)
+        processor.tree_formatter = deepcopy(self.tree_formatter)
+        processor.vision_resize_policy = deepcopy(self.vision_resize_policy)
+
+        def process() -> tuple[UIState, bool]:
+            state = processor._state_from_data(combined_data)
+            return state, processor.resize_model_screenshot
+
+        state, resize = await asyncio.to_thread(process)
+        # Publish together on the loop only when processing completed successfully.
+        self.resize_model_screenshot = resize
+        self.model_screenshot_width = state.model_screenshot_width
+        self.model_screenshot_height = state.model_screenshot_height
+        self.tree_formatter.screen_width = state.screen_width
+        self.tree_formatter.screen_height = state.screen_height
+        self.tree_formatter.use_normalized = state.use_normalized
+        self.tree_formatter.display_scale_x = state.coordinate_scale_x
+        self.tree_formatter.display_scale_y = state.coordinate_scale_y
+        return state
 
     def _state_from_data(self, combined_data: dict) -> UIState:
 

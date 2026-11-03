@@ -336,7 +336,7 @@ class ScreenshotOnlyStateProviderTest(unittest.TestCase):
         ]
 
         for path in agent_files:
-            self.assertIn("resize_model_screenshot_with_grid", path.read_text())
+            self.assertIn("resize_model_screenshot_async", path.read_text())
 
     def test_visual_remote_exact_app_launch_tool_needs_only_start_app(self):
         async def run():

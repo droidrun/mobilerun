@@ -55,8 +55,7 @@ from mobilerun.agent.utils.tracing_setup import record_langfuse_screenshot
 from mobilerun.config_manager.config_manager import AgentConfig, TracingConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
 from mobilerun.tools.ui.provider import (
-    resize_model_screenshot_with_grid,
-    should_resize_model_screenshot,
+    resize_model_screenshot_async,
 )
 
 if TYPE_CHECKING:
@@ -410,10 +409,9 @@ class FastAgent(Workflow):
 
             # Screenshot → last user message
             if self.vision and screenshot:
-                if should_resize_model_screenshot(self.state_provider):
-                    screenshot = resize_model_screenshot_with_grid(
-                        self.state_provider, screenshot
-                    )
+                screenshot = await resize_model_screenshot_async(
+                    self.state_provider, screenshot
+                )
                 messages_to_send[last_user_idx].blocks.append(
                     ImageBlock(image=screenshot)
                 )
