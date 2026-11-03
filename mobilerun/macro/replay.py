@@ -202,6 +202,12 @@ class MacroPlayer:
                 await driver.start_app(package, activity)
                 return True
 
+            elif action_type == "open_deep_link":
+                await driver.open_deep_link(
+                    action.get("deep_link"), action.get("package") or None
+                )
+                return True
+
             elif action_type == "tap":
                 x = action.get("x", 0)
                 y = action.get("y", 0)

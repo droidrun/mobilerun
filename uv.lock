@@ -1492,7 +1492,7 @@ requires-dist = [
     { name = "llama-index-workflows", specifier = ">=2.16.0,<3.0.0" },
     { name = "mcp", specifier = ">=1.28.1,<2.0.0" },
     { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
-    { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.6.3" },
+    { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
     { name = "mobilerun-sdk", specifier = ">=3.2.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
@@ -1523,7 +1523,7 @@ dev = [
 
 [[package]]
 name = "mobilerun-core-local"
-version = "0.6.3"
+version = "0.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "async-adbutils" },
@@ -1531,9 +1531,9 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/ce/288ebd92a732d314d5122186863c72ed72b33cab70cce3073d5aaf8130e3/mobilerun_core_local-0.6.3.tar.gz", hash = "sha256:f7187d42f060767e58037c3aa3bdbf774920ea4e4519879c301c9b2bc7a00458", size = 54914, upload-time = "2026-10-13T17:02:26.808Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/b1/4d0c69257cc19ec85c2c816bdce4fc9d25f5af2def1de59cc89074988326/mobilerun_core_local-0.7.2.tar.gz", hash = "sha256:4730e1b839cd0d2d268f1ff3e830da0dde0152b74e782ba52ca96da830fb704b", size = 64928, upload-time = "2026-11-03T15:58:07.926Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/9b/19572366a08eef8c8c475693d71432af16ed5e12efcdc610cb2cad51356d/mobilerun_core_local-0.6.3-py3-none-any.whl", hash = "sha256:91364da308591a3c50911f481e4a6d783cde9ae91cc948bbfe4f9ea72c6e2d4a", size = 52246, upload-time = "2026-10-13T17:02:25.282Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/73/347d1ab1816eb6bc5780e2df7650eb5f75398f7ef9e5b4dcbdb75199e1ae/mobilerun_core_local-0.7.2-py3-none-any.whl", hash = "sha256:62f9e53b22589f78e46bd56d1417018f547657b9b6e60642fae140f691c28f30", size = 58337, upload-time = "2026-11-03T15:58:06.562Z" },
 ]
 
 [package.optional-dependencies]
