@@ -1,17 +1,306 @@
 import asyncio
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from enum import Enum
 from types import SimpleNamespace
 
 import pytest
-from llama_index.core.base.llms.types import ChatMessage, ChatResponse, ToolCallBlock
+from llama_index.core.base.llms.types import (
+    ChatMessage,
+    ChatResponse,
+    CompletionResponse,
+    ThinkingBlock,
+    ToolCallBlock,
+)
 from llama_index.core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from mobilerun.agent.utils.inference import (
+    _empty_response_diagnostics,
     _http_status_code,
+    _log_empty_response,
     acall_with_retries,
     acomplete_with_retries,
     astructured_predict_with_retries,
 )
+
+
+class RawModel(BaseModel):
+    id: str
+    choices: list[dict]
+
+
+def _chat(content: str = "", **kwargs) -> ChatResponse:
+    return ChatResponse(
+        message=ChatMessage(role="assistant", content=content), **kwargs
+    )
+
+
+def _msg(**kwargs) -> ChatResponse:
+    return ChatResponse(message=ChatMessage(role="assistant", **kwargs))
+
+
+@pytest.mark.parametrize(
+    ("response", "stream", "category", "finish_reason"),
+    [
+        (None, False, "no_response", None),
+        (_chat(), False, "empty_content", None),
+        (_chat(), True, "empty_stream", None),
+        (_chat(raw={"finish_reason": "SAFETY"}), False, "provider_blocked", "safety"),
+        (
+            _chat(raw={"candidates": [{"finishReason": "MAX_TOKENS"}]}),
+            False,
+            "truncated",
+            "max_tokens",
+        ),
+        (
+            _chat(raw=RawModel(id="r1", choices=[{"finish_reason": "content_filter"}])),
+            False,
+            "provider_blocked",
+            "content_filter",
+        ),
+        (
+            _chat(additional_kwargs={"tool_calls": [{"id": "c1"}]}),
+            False,
+            "tool_calls_only",
+            None,
+        ),
+        (
+            _msg(additional_kwargs={"tool_calls": [{"id": "toolu_1"}]}),
+            False,
+            "tool_calls_only",
+            None,
+        ),
+        (
+            _msg(blocks=[ToolCallBlock(tool_name="harmless", tool_call_id="c1")]),
+            False,
+            "tool_calls_only",
+            None,
+        ),
+        (
+            _msg(additional_kwargs={"content_blocks": [{"type": "tool_use"}]}),
+            False,
+            "tool_calls_only",
+            None,
+        ),
+        (
+            _msg(blocks=[ThinkingBlock(content="t")]),
+            False,
+            "thinking_only",
+            None,
+        ),
+        (
+            _msg(additional_kwargs={"thinking": {"type": "thinking"}}),
+            False,
+            "thinking_only",
+            None,
+        ),
+        (
+            CompletionResponse(text="", raw={"finish_reason": "length"}),
+            False,
+            "truncated",
+            "length",
+        ),
+        (
+            _chat(raw={"response": {"candidates": [{"finishReason": "MAX_TOKENS"}]}}),
+            False,
+            "truncated",
+            "max_tokens",
+        ),
+    ],
+)
+def test_empty_response_category(response, stream, category, finish_reason) -> None:
+    diagnostics = _empty_response_diagnostics(
+        response, SimpleNamespace(), stream=stream
+    )
+    assert diagnostics["category"] == category
+    assert diagnostics["finish_reason"] == finish_reason
+
+
+def _responses_raw(reason: str) -> dict:
+    return {
+        "id": "resp_1",
+        "status": "incomplete",
+        "incomplete_details": {"reason": reason},
+    }
+
+
+@pytest.mark.parametrize(
+    ("message", "reason", "category"),
+    [
+        (ChatMessage(role="assistant", content=""), "max_output_tokens", "truncated"),
+        (
+            ChatMessage(role="assistant", blocks=[ThinkingBlock(content="t")]),
+            "max_output_tokens",
+            "truncated",
+        ),
+        (ChatMessage(role="assistant"), "content_filter", "provider_blocked"),
+    ],
+)
+def test_responses_incomplete_reason_is_classified(message, reason, category) -> None:
+    diagnostics = _empty_response_diagnostics(
+        ChatResponse(message=message, raw=_responses_raw(reason)), SimpleNamespace()
+    )
+
+    assert diagnostics["category"] == category
+    assert diagnostics["finish_reason"] == reason
+    assert diagnostics["http_status"] is None
+    assert diagnostics["provider_request_id"] == "resp_1"
+
+
+def test_responses_incomplete_reason_reads_model_dump() -> None:
+    raw = SimpleNamespace(model_dump=lambda: _responses_raw("max_output_tokens"))
+    response = _msg(blocks=[ThinkingBlock(content="t")])
+    response.raw = raw
+
+    diagnostics = _empty_response_diagnostics(response, SimpleNamespace())
+
+    assert diagnostics["category"] == "truncated"
+
+
+def test_str_enum_finish_reason_is_picked_up() -> None:
+    class FinishReason(str, Enum):
+        STOP = "stop"
+
+    diagnostics = _empty_response_diagnostics(
+        _chat(raw={"finish_reason": FinishReason.STOP}), SimpleNamespace()
+    )
+
+    assert diagnostics["finish_reason"] is not None
+
+
+def test_http_status_diagnostic_keeps_integer_status_only() -> None:
+    response = _chat(
+        raw={"status": "incomplete"}, additional_kwargs={"status_code": 200}
+    )
+    diagnostics = _empty_response_diagnostics(response, None)
+
+    assert diagnostics["http_status"] == 200
+
+
+def test_empty_response_diagnostics_never_leak_content() -> None:
+    response = ChatResponse(
+        message=ChatMessage(
+            role="assistant",
+            blocks=[ThinkingBlock(content="private reasoning")],
+            additional_kwargs={
+                "thinking": {"content": "hidden thought"},
+                "tool_calls": [{"input": "secret arg"}],
+            },
+        ),
+        raw=RawModel(id="req-1", choices=[{"message": {"content": "leaked"}}]),
+        additional_kwargs={"prompt": "user prompt"},
+    )
+    diagnostics = _empty_response_diagnostics(response, SimpleNamespace(model="gemini"))
+    rendered = str(diagnostics)
+
+    assert diagnostics["model"] == "gemini"
+    assert diagnostics["provider_request_id"] == "req-1"
+    assert diagnostics["raw_keys"] == ["choices", "id"]
+    assert diagnostics["additional_kwargs_keys"] == ["prompt"]
+    for secret in (
+        "private reasoning",
+        "leaked",
+        "user prompt",
+        "hidden thought",
+        "secret arg",
+    ):
+        assert secret not in rendered
+
+
+@contextmanager
+def _captured_logs() -> Iterator[list[str]]:
+    # The "mobilerun" logger does not propagate, so caplog never sees it.
+    messages: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: messages.append(record.getMessage())  # type: ignore[method-assign]
+    logging.getLogger("mobilerun").addHandler(handler)
+    try:
+        yield messages
+    finally:
+        logging.getLogger("mobilerun").removeHandler(handler)
+
+
+class EmptyLLM:
+    calls = 0
+
+    async def achat(self, *, messages):
+        self.calls += 1
+        return _chat(raw={"finish_reason": "SAFETY"})
+
+    async def astream_chat(self, *, messages):
+        self.calls += 1
+
+        async def chunks():
+            return
+            yield
+
+        return chunks()
+
+    async def acomplete(self, prompt):
+        self.calls += 1
+        return CompletionResponse(text="")
+
+    async def astructured_predict(self, output_cls, prompt, **prompt_args):
+        self.calls += 1
+        return None
+
+
+@pytest.mark.parametrize(
+    ("call", "category"),
+    [
+        (
+            lambda llm: acall_with_retries(llm, ["hello"], retries=3, delay=0),
+            "provider_blocked",
+        ),
+        (
+            lambda llm: acall_with_retries(
+                llm, ["hello"], retries=3, delay=0, stream=True
+            ),
+            "empty_stream",
+        ),
+        (
+            lambda llm: acomplete_with_retries(llm, "hello", retries=3, delay=0),
+            "empty_content",
+        ),
+        (
+            lambda llm: astructured_predict_with_retries(
+                llm,
+                StructuredResult,
+                PromptTemplate("{value}"),
+                retries=3,
+                delay=0,
+                value="x",
+            ),
+            "no_response",
+        ),
+    ],
+)
+def test_empty_responses_log_category_and_still_retry(call, category) -> None:
+    llm = EmptyLLM()
+    with (
+        _captured_logs() as messages,
+        pytest.raises(ValueError, match="Empty response"),
+    ):
+        asyncio.run(call(llm))
+
+    diagnostics = [m for m in messages if "LLM response unusable" in m]
+    assert llm.calls == 3
+    assert len(diagnostics) == 3
+    assert f"'category': '{category}'" in diagnostics[0]
+    assert "hello" not in diagnostics[0]
+
+
+def test_log_empty_response_never_raises() -> None:
+    class Exploding:
+        @property
+        def message(self):
+            raise RuntimeError("boom")
+
+    with _captured_logs() as messages:
+        _log_empty_response(Exploding(), SimpleNamespace(), 1)
+    assert any("diagnostics unavailable" in m for m in messages)
 
 
 class StatusError(Exception):
