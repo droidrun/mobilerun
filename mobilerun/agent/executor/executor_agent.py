@@ -15,7 +15,6 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from llama_index.core.base.llms.types import ChatMessage, ImageBlock, TextBlock
-from llama_index.core.llms.llm import LLM
 from llama_index.core.workflow import Context, StartEvent, StopEvent, Workflow, step
 
 from mobilerun.agent.executor.events import (
@@ -24,10 +23,7 @@ from mobilerun.agent.executor.events import (
     ExecutorContextEvent,
     ExecutorResponseEvent,
 )
-from mobilerun.agent.executor.prompts import parse_executor_response
-from mobilerun.agent.usage import get_usage_from_response
-from mobilerun.agent.utils.errors import describe_error
-from mobilerun.agent.utils.inference import acall_with_retries
+from mobilerun.agent.selectors import ActionSelector, LlamaIndexLLMSelector, SelectionRequest
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.config_manager.config_manager import AgentConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
@@ -56,16 +52,31 @@ class ExecutorAgent(Workflow):
 
     def __init__(
         self,
-        llm: LLM,
-        registry: "ToolRegistry | None",
-        action_ctx: "ActionContext | None",
-        shared_state: "MobileAgentState",
-        agent_config: AgentConfig,
+        action_selector: ActionSelector | None = None,
+        registry: "ToolRegistry | None" = None,
+        action_ctx: "ActionContext | None" = None,
+        shared_state: "MobileAgentState | None" = None,
+        agent_config: AgentConfig | None = None,
         prompt_resolver: Optional[PromptResolver] = None,
         **kwargs,
     ):
+        if "llm" in kwargs:
+            logger.debug(
+                "ExecutorAgent(llm=...) is deprecated. Use action_selector=LlamaIndexLLMSelector(llm)."
+            )
+        llm = kwargs.pop("llm", None)
+        if action_selector is None and llm is not None:
+            action_selector = LlamaIndexLLMSelector(llm)
+        if action_selector is None:
+            raise ValueError("action_selector or llm is required")
+        if not isinstance(action_selector, ActionSelector):
+            raise TypeError("action_selector must implement ActionSelector")
+        if agent_config is None:
+            raise TypeError("agent_config is required")
+        if shared_state is None:
+            raise TypeError("shared_state is required")
         super().__init__(**kwargs)
-        self.llm = llm
+        self.action_selector = action_selector
         self.agent_config = agent_config
         self.config = agent_config.executor
         self.vision = agent_config.executor.vision
@@ -129,14 +140,14 @@ class ExecutorAgent(Workflow):
             prompt_text = PromptLoader.render_template(custom_prompt, variables)
         else:
             prompt_text = await PromptLoader.load_prompt(
-                self.agent_config.get_executor_system_prompt_path(),
-                variables,
+                self.agent_config.get_executor_system_prompt_path(), variables,
             )
 
         # Build message
         messages = [ChatMessage(role="user", blocks=[TextBlock(text=prompt_text)])]
 
         # Add screenshot if vision enabled
+        screenshot = None
         if self.vision:
             screenshot = self.shared_state.screenshot
             if screenshot is not None:
@@ -148,6 +159,8 @@ class ExecutorAgent(Workflow):
             else:
                 logger.warning("⚠️ Vision enabled but no screenshot available")
         await ctx.store.set("executor_messages", messages)
+        await ctx.store.set("executor_history", action_history)
+        await ctx.store.set("executor_screenshot", screenshot)
         event = ExecutorContextEvent(subgoal=subgoal)
         ctx.write_event_to_stream(event)
         return event
@@ -156,41 +169,50 @@ class ExecutorAgent(Workflow):
     async def get_response(
         self, ctx: Context, ev: ExecutorContextEvent
     ) -> ExecutorResponseEvent:
-        """Get LLM response."""
+        """Select an action using the current observation and subgoal."""
         logger.debug("Executor getting LLM response...")
 
         # Get messages from context
         messages = await ctx.store.get("executor_messages")
-
-        try:
-            logger.info("Executor response:", extra={"color": "green"})
-            response = await acall_with_retries(
-                self.llm, messages, stream=self.agent_config.streaming
+        logger.info("Executor response:", extra={"color": "green"})
+        tools = self.registry.get_signatures(exclude=self._EXCLUDE_TOOLS)
+        if self.action_selector.requires_action_candidates:
+            options = await self.action_ctx.state_provider.build_action_candidates(
+                self.action_ctx, tools, include_device_actions=True,
             )
-            response_text = str(response)
-        except ValueError as e:
-            logger.warning(f"Executor LLM returned empty response: {e}")
-            error_response = (
-                "### Thought\nExecutor failed to respond, try again\n"
-                '### Action\n{"action": "invalid"}\n'
-                "### Description\nExecutor failed to respond, try again"
-            )
-            event = ExecutorResponseEvent(response=error_response, usage=None)
-            ctx.write_event_to_stream(event)
-            return event
-        except Exception as e:
-            raise RuntimeError(
-                f"Error calling LLM in executor: {describe_error(e)}"
-            ) from e
-
-        # Extract usage
-        usage = None
-        try:
-            usage = get_usage_from_response(self.llm.class_name(), response)
-        except Exception as e:
-            logger.warning(f"Could not get usage: {e}")
-
-        event = ExecutorResponseEvent(response=response_text, usage=usage)
+        else:
+            options = self.action_ctx.state_provider.get_action_candidates(self.action_ctx.ui) if self.action_ctx.ui is not None else ()
+        request = SelectionRequest(
+            goal=ev.subgoal,
+            state=self.action_ctx.ui,
+            memory=self.shared_state.agent_memory,
+            history=await ctx.store.get("executor_history", default=[]),
+            screenshot=await ctx.store.get("executor_screenshot", default=self.shared_state.screenshot)
+            if self.vision else None,
+            tools=tools,
+            variables=self.shared_state.custom_variables,
+            messages=messages,
+            protocol="executor",
+            stream=self.agent_config.streaming,
+            options=options,
+        )
+        if self.action_selector.requires_action_candidates:
+            decision_variables = request.get_decision_prompt_variables()
+            custom_prompt = self.prompt_resolver.get_prompt("decision_system")
+            if custom_prompt:
+                request.instructions = PromptLoader.render_template(custom_prompt, decision_variables)
+            else:
+                request.instructions = await PromptLoader.load_prompt(
+                    self.agent_config.get_decision_system_prompt_path(), decision_variables,
+                )
+        selection = await self.action_selector.select(request)
+        if selection is None:
+            raise ValueError("Action selector abstained without a fallback")
+        if len(selection.actions) > 1 or (not selection.actions and selection.action_json is None):
+            raise ValueError("Executor requires exactly one selected action")
+        await ctx.store.set("executor_selection", selection)
+        response_text = selection.response_text
+        event = ExecutorResponseEvent(response=response_text, usage=selection.usage)
         ctx.write_event_to_stream(event)
         return event
 
@@ -198,30 +220,29 @@ class ExecutorAgent(Workflow):
     async def process_response(
         self, ctx: Context, ev: ExecutorResponseEvent
     ) -> ExecutorActionEvent:
-        """Parse LLM response and extract action."""
+        """Translate the selection to the existing execution event."""
         logger.debug("⚙️ Processing executor response...")
-
-        response_text = ev.response
-
-        try:
-            parsed = parse_executor_response(response_text)
-        except Exception as e:
-            logger.error(f"❌ Failed to parse executor response: {e}")
+        selection = await ctx.store.get("executor_selection")
+        if selection.parse_error is not None:
+            logger.error(f"❌ Failed to parse executor response: {selection.parse_error}")
             return ExecutorActionEvent(
                 action_json=json.dumps({"action": "invalid"}),
-                thought=f"Failed to parse response: {str(e)}",
-                description="Invalid response format from LLM",
-                full_response=response_text,
+                thought=selection.thought,
+                description=selection.description,
+                full_response=ev.response,
             )
-
-        # Update unified state
-        self.shared_state.last_thought = parsed["thought"]
-
+        action_json = selection.action_json
+        if action_json is None:
+            action = selection.actions[0]
+            action_json = json.dumps({"action": action.name, **action.parameters})
+        self.shared_state.last_thought = selection.thought
+        if selection.memory_update:
+            self.shared_state.append_memory(selection.memory_update)
         event = ExecutorActionEvent(
-            action_json=parsed["action"],
-            thought=parsed["thought"],
-            description=parsed["description"],
-            full_response=response_text,
+            action_json=action_json,
+            thought=selection.thought,
+            description=selection.description,
+            full_response=ev.response,
         )
 
         ctx.write_event_to_stream(event)

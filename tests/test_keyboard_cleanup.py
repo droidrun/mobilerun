@@ -212,7 +212,10 @@ def test_agent_records_android_serial(monkeypatch, serial, expected):
         device=DeviceConfig(serial=serial, auto_setup=False),
         telemetry=TelemetryConfig(enabled=False),
     )
-    agent = agent_module.MobileAgent("Open settings", config=config, llms=MockLLM())
+    monkeypatch.setattr(agent_module, "load_agent_llms", lambda **kw: {
+        name: MockLLM() for name in ("fast_agent", "app_opener")
+    })
+    agent = agent_module.MobileAgent("Open settings", config=config)
     assert agent.android_serial is None
 
     with pytest.raises(ConnectFailed):
@@ -270,7 +273,10 @@ def test_agent_records_android_serial_when_portal_setup_fails(monkeypatch):
     monkeypatch.setattr(agent_module, "AndroidDriver", unexpected_driver)
 
     config = MobileConfig(telemetry=TelemetryConfig(enabled=False))
-    agent = agent_module.MobileAgent("Open settings", config=config, llms=MockLLM())
+    monkeypatch.setattr(agent_module, "load_agent_llms", lambda **kw: {
+        name: MockLLM() for name in ("fast_agent", "app_opener")
+    })
+    agent = agent_module.MobileAgent("Open settings", config=config)
 
     with pytest.raises(PortalSetupFailed):
         asyncio.run(agent.start_handler(FakeContext(), StartEvent()))

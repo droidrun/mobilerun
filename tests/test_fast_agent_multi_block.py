@@ -12,6 +12,8 @@ from llama_index.core.base.llms.types import (
 from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.droid.state import MobileAgentState
 from mobilerun.agent.fast_agent.fast_agent import FastAgent
+from mobilerun.agent.selectors import LlamaIndexLLMSelector
+from mobilerun.tools.ui.provider import StateProvider
 
 FABRICATED = "The app has loaded."
 IGNORED_NOTICE = "later block(s) were ignored"
@@ -90,8 +92,11 @@ class _PromptResolver:
         return None
 
 
-class _StateProvider:
+class _StateProvider(StateProvider):
     requires_coordinate_tools = False
+
+    def __init__(self):
+        super().__init__(None)
 
     async def get_state(self):
         return SimpleNamespace(
@@ -113,6 +118,9 @@ class _Registry:
 
     def get_param_types(self):
         return {"index": "number", "success": "boolean"}
+
+    def get_signatures(self):
+        return {name: {} for name in self.tools}
 
     async def execute(self, name, parameters, _action_ctx, workflow_ctx=None):
         self.executed.append((name, parameters))
@@ -138,7 +146,7 @@ def _run(replies, streaming=False, pending_message=None):
             after_sleep_action=0,
         )
         agent = FastAgent(
-            llm=llm,
+            action_selector=LlamaIndexLLMSelector(llm),
             agent_config=config,
             registry=registry,
             action_ctx=SimpleNamespace(

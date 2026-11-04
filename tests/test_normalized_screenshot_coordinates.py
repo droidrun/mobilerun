@@ -228,13 +228,15 @@ def _start_agent(monkeypatch, *, model: str, reasoning: bool = False, config=Non
 
     llm = MockLLM()
     object.__setattr__(llm, "model", model)
+    monkeypatch.setattr(agent_module, "load_agent_llms", lambda **kw: {
+        name: llm for name in ("manager", "executor", "fast_agent", "app_opener")
+    })
     agent_config = config or AgentConfig(vision_only=True, reasoning=reasoning)
     agent = agent_module.MobileAgent(
         "Tap send",
         config=MobileConfig(
             agent=agent_config, telemetry=TelemetryConfig(enabled=False)
         ),
-        llms=llm,
         driver=_Driver(),
     )
     asyncio.run(agent.start_handler(FakeContext(), StartEvent()))
@@ -429,7 +431,7 @@ def test_shared_gemma_llm_without_executor_vision_keeps_pixel_coordinates(
         ),
     )
 
-    assert agent.manager_llm is agent.executor_llm
+    assert agent.manager_llm is agent.action_selector.llm
     assert agent.state_provider.use_normalized is False
 
 

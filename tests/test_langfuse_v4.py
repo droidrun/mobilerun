@@ -28,7 +28,9 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
+from selector_helpers import StubSelector
 
+from mobilerun.agent.droid.state import MobileAgentState
 from mobilerun.agent.utils import tracing_setup
 from mobilerun.config_manager.config_manager import TracingConfig
 from mobilerun.telemetry import langfuse_processor
@@ -263,7 +265,9 @@ def test_langfuse_base_url_precedence(
     assert tracing_setup._resolve_langfuse_base_url(config) == expected
 
 
-def test_processor_normalizes_agent_and_llm_metadata():
+@pytest.mark.parametrize("reasoning", [False, True])
+@pytest.mark.parametrize("selector_kind", ["none", "non_llm", "single_llm", "multi_llm"])
+def test_processor_normalizes_agent_and_llm_metadata(reasoning, selector_kind):
     class LLM:
         model = "test-model"
         temperature = 0.2
@@ -272,17 +276,26 @@ def test_processor_normalizes_agent_and_llm_metadata():
         def class_name():
             return "TestLLM"
 
+    selector_llms = (LLM(),) * {"single_llm": 1, "multi_llm": 2}.get(selector_kind, 0)
+    if selector_kind == "none":
+        selector = None
+    elif selector_kind == "non_llm":
+        # Non-LLM selectors explicitly expose an empty native-LLM collection.
+        selector = StubSelector(llms=())
+    else:
+        selector = StubSelector(llms=selector_llms)
+
     agent = SimpleNamespace(
         shared_state=SimpleNamespace(
             instruction="Open Settings",
-            agent_memory=["memory"],
+            agent_memory="memory",
             message_history=[],
             current_subgoal=None,
             error_flag_plan=False,
         ),
         config=SimpleNamespace(
             agent=SimpleNamespace(
-                reasoning=False,
+                reasoning=reasoning,
                 after_sleep_action=1,
                 manager=SimpleNamespace(vision=False),
                 executor=SimpleNamespace(vision=False),
@@ -292,9 +305,14 @@ def test_processor_normalizes_agent_and_llm_metadata():
                 platform="android", serial="emulator", use_tcp=False
             ),
         ),
-        output_model=None,
-        fast_agent_llm=LLM(),
-        app_opener_llm=None,
+        output_model=SimpleNamespace(__name__="Output"),
+        action_selector=selector,
+        manager_llm=LLM() if reasoning else None,
+        app_opener_llm=LLM(),
+        structured_output_llm=LLM(),
+        # These compatibility attributes must not override selector metadata.
+        executor_llm=SimpleNamespace(model="unused-executor"),
+        fast_agent_llm=SimpleNamespace(model="unused-fast-agent"),
     )
     provider = TracerProvider()
     exporter = InMemorySpanExporter()
@@ -309,15 +327,81 @@ def test_processor_normalizes_agent_and_llm_metadata():
     metadata = json.loads(attrs["langfuse.observation.input"])
     assert metadata["goal"] == "Open Settings"
     assert metadata["vision_enabled"] is True
-    assert metadata["llms"][0] == {
-        "role": "fast_agent",
-        "provider": "TestLLM",
-        "vision": True,
-        "model": "test-model",
-        "temperature": 0.2,
-    }
-    assert attrs["langfuse.trace.tags"] == ("fast",)
+    assert metadata["output_model"] == "Output"
+    assert metadata["reasoning"] is reasoning
+    action_role = "executor" if reasoning else "fast_agent"
+    expected_roles = (["manager"] if reasoning else []) + [action_role] * len(selector_llms)
+    expected_roles.extend(["app_opener", "structured_output"])
+    expected_llms = []
+    for role in expected_roles:
+        info = {
+            "role": role,
+            "provider": "TestLLM",
+            "model": "test-model",
+            "temperature": 0.2,
+        }
+        if role in ("manager", "executor", "fast_agent"):
+            info["vision"] = role == "fast_agent"
+        expected_llms.append(info)
+    assert metadata["llms"] == expected_llms
+    assert attrs["langfuse.trace.tags"] == (("reasoning",) if reasoning else ("fast",))
     provider.shutdown()
+
+
+@pytest.mark.parametrize(
+    "span_name",
+    [
+        "MobileAgent.run",
+        "ManagerAgent.run",
+        "StatelessManagerAgent.run",
+        "FastAgent.run",
+        "ExecutorAgent.run",
+    ],
+)
+def test_processor_skips_agent_metadata_without_current_agent(span_name):
+    processor = LangfuseSpanProcessor()
+    span = Mock()
+    span.name = span_name
+    span._attributes = {"input.value": "original"}
+
+    processor.on_start(span)
+
+    assert processor._extract_agent_input() is None
+    assert span._attributes == {"input.value": "original"}
+
+
+@pytest.mark.parametrize(
+    "span_name",
+    [
+        "ManagerAgent.run",
+        "StatelessManagerAgent.run",
+        "FastAgent.run",
+        "ExecutorAgent.run",
+    ],
+)
+@pytest.mark.parametrize("subgoal", ["", "Tap Settings"])
+def test_processor_adds_step_metadata(span_name, subgoal):
+    agent = Mock()
+    agent.shared_state = MobileAgentState(
+        agent_memory="memory",
+        current_subgoal=subgoal,
+        error_flag_plan=True,
+    )
+    processor = LangfuseSpanProcessor(agent)
+    span = Mock()
+    span.name = span_name
+    span._attributes = {}
+
+    processor.on_start(span)
+
+    expected: dict[str, int | str] = {
+        "memory_size": len("memory"),
+        "message_history_count": 1,
+    }
+    if span_name == "ExecutorAgent.run":
+        expected["subgoal"] = subgoal or "Unknown"
+    assert json.loads(span._attributes["langfuse.observation.input"]) == expected
+    assert span._attributes["langfuse.trace.tags"] == ["error_recovery"]
 
 
 class _CollectingExporter(SpanExporter):
