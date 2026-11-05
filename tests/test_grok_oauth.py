@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import multiprocessing
+import os
 import stat
 import threading
 import time
@@ -197,7 +198,8 @@ def test_auth_profile_store_preserves_siblings_and_writes_private_file(tmp_path:
     payload = json.loads(path.read_text())
     assert payload["openaiOauth"] == {"access": "keep"}
     assert payload["grokOauth"] == {"accessToken": "secret"}
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name != "nt":  # POSIX file modes are not available on Windows
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert not list(tmp_path.glob(".auth-profiles.json.*.tmp"))
 
 
@@ -258,7 +260,8 @@ def test_saved_api_keys_use_shared_transaction_and_reject_malformed(
     payload = json.loads(path.read_text())
     assert payload["grokOauth"] == {"accessToken": "keep"}
     assert payload["apiKeys"]["xai"] == "api-key"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name != "nt":  # POSIX file modes are not available on Windows
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
     path.write_text("broken")
     with pytest.raises(AuthProfileFormatError):
