@@ -1,7 +1,7 @@
 # Mobilerun Configuration File
 # This file is auto-generated. Edit values as needed.
 
-_version: 7
+_version: 8
 
 # === Agent Settings ===
 agent:
@@ -17,6 +17,11 @@ agent:
   after_sleep_action: 1.0
   # Wait duration for UI to stabilize (seconds)
   wait_for_stable_ui: 0.3
+  # Workflow timeout in seconds. The CLI raises
+  # `Operation timed out after N seconds` once the total run exceeds this.
+  # Set to 0 for no limit.
+  # Tune via `mobilerun configure → Advanced settings` (Workflow timeout).
+  timeout: 1000
 
   # Coordinate system for swipe and state bounds output
   # false = absolute pixels (default)
