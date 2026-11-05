@@ -108,7 +108,7 @@ def get_user_id() -> str:
 
         # Read existing ID if valid
         if USER_ID_PATH.exists():
-            user_id = USER_ID_PATH.read_text().strip()
+            user_id = USER_ID_PATH.read_text(encoding="utf-8").strip()
 
             # Validate UUID format
             if user_id and _is_valid_uuid(user_id):
