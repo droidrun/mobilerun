@@ -158,9 +158,7 @@ class DelegationConfig:
         None  # Defaults to executor or fast_agent for the active mode.
     )
     delegate: str = "delegate"
-    description: str = (
-        "Ask the delegate model to choose the next action when you need its capabilities."
-    )
+    description: str | None = None  # None derives it from the delegate's type.
 
 
 @dataclass

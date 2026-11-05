@@ -546,3 +546,17 @@ def test_invalid_native_delegation_drops_unanswered_tool_calls():
     )
     assert selection.response is None
     assert selection.failure
+
+
+def test_default_description_names_what_an_llm_delegate_adds():
+    from mobilerun.agent.selectors.delegating import (
+        DEFAULT_DESCRIPTION,
+        LLM_DELEGATE_DESCRIPTION,
+    )
+
+    decision = DecisionSelector(SimpleNamespace(decide=AsyncMock()))
+    llm = LlamaIndexLLMSelector(MockLLM())
+
+    assert DelegatingSelector(decision, llm).description == LLM_DELEGATE_DESCRIPTION
+    assert DelegatingSelector(llm, decision).description == DEFAULT_DESCRIPTION
+    assert DelegatingSelector(decision, llm, "Custom").description == "Custom"

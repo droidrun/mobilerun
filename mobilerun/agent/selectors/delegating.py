@@ -23,6 +23,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("mobilerun")
 
+DEFAULT_DESCRIPTION = (
+    "Ask the delegate model to choose the next action when you need its capabilities."
+)
+# Decision models only see this text, so name what an LLM delegate adds.
+LLM_DELEGATE_DESCRIPTION = (
+    "Hand this step to a general model that can type text into fields "
+    "(for example a search box) and handle steps that need free text."
+)
+
 
 class DelegatingSelector(BaseActionSelector):
     """Offer the primary a virtual ``delegate`` action, not an error fallback.
@@ -36,11 +45,13 @@ class DelegatingSelector(BaseActionSelector):
         self,
         primary: ActionSelector,
         delegate: ActionSelector,
-        description: str = "Ask the delegate model to choose the next action when you need its capabilities.",
+        description: str | None = None,
     ):
         self.primary = primary
         self.delegate = delegate
-        self.description = description
+        self.description = description or (
+            LLM_DELEGATE_DESCRIPTION if delegate.llms else DEFAULT_DESCRIPTION
+        )
 
     @property
     def requires_action_candidates(self) -> bool:
