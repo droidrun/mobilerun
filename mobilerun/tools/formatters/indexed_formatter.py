@@ -265,4 +265,7 @@ class IndexedFormatter(TreeFormatter):
         }
         if display_bounds_str is not None:
             formatted["displayBounds"] = display_bounds_str
+        for key in ("isClickable", "isLongClickable", "isEnabled", "isVisibleToUser"):
+            if key in node:
+                formatted[key] = node[key]
         return formatted

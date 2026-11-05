@@ -6,6 +6,7 @@ previously received.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -16,6 +17,14 @@ if TYPE_CHECKING:
     from mobilerun.macro.recorder import MacroRecorder
     from mobilerun.tools.ui.provider import StateProvider
     from mobilerun.tools.ui.state import UIState
+
+
+@dataclass(frozen=True)
+class ActionCandidateApp:
+    """Installed app available to native decision action candidates."""
+
+    identifier: str
+    label: str
 
 
 class ActionContext:
@@ -40,3 +49,5 @@ class ActionContext:
         self.credential_manager = credential_manager
         self.streaming = streaming
         self.macro_recorder = macro_recorder
+        # Per-run installed-app cache for native decision action candidates.
+        self.action_candidate_apps: tuple[ActionCandidateApp, ...] | None = None
