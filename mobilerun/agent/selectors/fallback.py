@@ -16,6 +16,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mobilerun")
 
 
+def _usable(selection: ActionSelection | None) -> bool:
+    """An error placeholder (executor 'invalid', failure, parse error) is not usable."""
+    return (
+        selection is not None
+        and bool(selection.actions)
+        and selection.failure is None
+        and selection.parse_error is None
+        and any(action.name != "invalid" for action in selection.actions)
+    )
+
+
 class FallbackSelector(BaseActionSelector):
     def __init__(
         self,
@@ -60,7 +71,7 @@ class FallbackSelector(BaseActionSelector):
         for selector in selectors[:-1]:
             try:
                 selection = await selector.select(request)
-                if selection is not None and selection.actions:
+                if _usable(selection):
                     return selection
             except self.errors as e:
                 logger.warning(

@@ -351,3 +351,46 @@ def test_elements_with_off_screen_centres_are_not_clickable_candidates():
     options = ctx.state_provider.get_action_candidates(ctx.ui)
 
     assert [option.description for option in options] == ["Click Visible"]
+
+
+def test_llm_in_the_chain_keeps_name_based_app_launching(monkeypatch):
+    from mobilerun.agent.droid import droid_agent
+    from mobilerun.agent.selectors import DelegatingSelector, LlamaIndexLLMSelector
+
+    async def run():
+        config = MobileConfig()
+        config.telemetry.enabled = False
+        selector = DelegatingSelector(
+            DecisionSelector(SimpleNamespace(decide=AsyncMock())),
+            LlamaIndexLLMSelector(MockLLM()),
+        )
+        ctx = _context()
+        ctx.driver.get_date = AsyncMock(return_value="2026-10-23")
+        monkeypatch.setattr(
+            droid_agent,
+            "load_agent_llms",
+            Mock(return_value={"fast_agent": None, "app_opener": MockLLM()}),
+        )
+        agent = MobileAgent(
+            "Calculate", config=config, action_selectors=selector, driver=ctx.driver
+        )
+        with patch.object(Context, "write_event_to_stream"):
+            await agent.start_handler(Context(agent), StartEvent())
+        assert "text" in agent.registry.get_signatures()["open_app"]["parameters"]
+        options = await agent.state_provider.build_action_candidates(
+            ctx, agent.registry.get_signatures(), include_device_actions=True
+        )
+        assert ToolCall("open_app", {"text": "com.android.settings"}) in [
+            option.action for option in options
+        ]
+
+    asyncio.run(run())
+
+
+def test_decision_models_reject_screenshot_only_states():
+    config = MobileConfig()
+    config.agent.vision_only = True
+    selector = DecisionSelector(SimpleNamespace(decide=AsyncMock()))
+
+    with pytest.raises(ValueError, match="accessibility tree"):
+        MobileAgent("Calculate", config=config, action_selectors=selector)

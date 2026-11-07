@@ -576,3 +576,20 @@ def test_native_support_follows_the_llm_selectors():
     assert not DelegatingSelector(decision, decision).supports_native_tool_calls
     assert FallbackSelector(native, [decision]).supports_native_tool_calls
     assert not FallbackSelector(native, [xml]).supports_native_tool_calls
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    [
+        ActionSelection([ToolCall("invalid")], action_json='{"action": "invalid"}'),
+        ActionSelection([ToolCall("invalid")], parse_error="Bad format"),
+        ActionSelection([ToolCall("invalid")], failure="Abstained"),
+    ],
+)
+def test_fallback_skips_error_placeholders(placeholder):
+    from mobilerun.agent.selectors import FallbackSelector
+
+    expected = ActionSelection([ToolCall("click", {"index": 2})])
+    selector = FallbackSelector(_selector(placeholder), [_selector(expected)])
+
+    assert asyncio.run(selector.select(_request("executor"))) is expected

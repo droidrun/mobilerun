@@ -407,11 +407,12 @@ class MobileAgent(Workflow):
         control_backend = _normalize_control_backend(
             self.resolved_device_config.control_backend
         )
-        if (
+        self._screenshot_only = bool(
             self.config.agent.vision_only
             or control_backend == VISUAL_REMOTE_CONNECTION
             or getattr(state_provider, "requires_coordinate_tools", False)
-        ):
+        )
+        if self._screenshot_only:
             _force_screenshot_only_vision(self.config.agent)
 
         # These are populated in start_handler (unless injected via __init__)
@@ -450,6 +451,17 @@ class MobileAgent(Workflow):
                 role = "executor" if self.config.agent.reasoning else "fast_agent"
                 if role in decision_models:
                     self.action_selector = DecisionSelector(decision_models[role])
+        if (
+            self._screenshot_only
+            and self.action_selector is not None
+            and self.action_selector.requires_action_candidates
+            and not self.action_selector.llms
+        ):
+            # Screenshot-only states have no elements to offer as choices.
+            raise ValueError(
+                "Decision-model action selection needs the accessibility tree; "
+                "it cannot run with vision_only or a visual-remote backend."
+            )
 
         self._stream_screenshots = (
             os.environ.get("MOBILERUN_STREAM_SCREENSHOTS")
@@ -888,8 +900,12 @@ class MobileAgent(Workflow):
             supported_buttons=driver.supported_buttons,
             credential_manager=self.credential_manager,
             platform="ios" if driver.platform.lower() == "ios" else "android",
+            # An LLM in the chain cannot see installed-app ids, so it keeps
+            # name-based launching; decision candidates then pass the id as the name.
             exact_app_launch=is_visual_remote
-            or action_selector.requires_action_candidates,
+            or (
+                action_selector.requires_action_candidates and not action_selector.llms
+            ),
             screenshot_only=getattr(
                 self.state_provider,
                 "requires_coordinate_tools",
