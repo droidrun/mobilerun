@@ -560,3 +560,19 @@ def test_default_description_names_what_an_llm_delegate_adds():
     assert DelegatingSelector(decision, llm).description == LLM_DELEGATE_DESCRIPTION
     assert DelegatingSelector(llm, decision).description == DEFAULT_DESCRIPTION
     assert DelegatingSelector(decision, llm, "Custom").description == "Custom"
+
+
+def test_native_support_follows_the_llm_selectors():
+    from mobilerun.agent.selectors import FallbackSelector
+
+    native = LlamaIndexLLMSelector(SimpleNamespace(supports_native_tool_calls=True))
+    xml = LlamaIndexLLMSelector(SimpleNamespace(supports_native_tool_calls=False))
+    decision = DecisionSelector(SimpleNamespace(decide=AsyncMock()))
+
+    assert DelegatingSelector(decision, native).supports_native_tool_calls
+    assert DelegatingSelector(native, decision).supports_native_tool_calls
+    assert not DelegatingSelector(decision, xml).supports_native_tool_calls
+    assert not DelegatingSelector(native, xml).supports_native_tool_calls
+    assert not DelegatingSelector(decision, decision).supports_native_tool_calls
+    assert FallbackSelector(native, [decision]).supports_native_tool_calls
+    assert not FallbackSelector(native, [xml]).supports_native_tool_calls

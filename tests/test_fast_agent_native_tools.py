@@ -121,6 +121,7 @@ def _run(
     parallel_tools=True,
     native_tool_api="responses",
     use_selector=False,
+    selector=None,
 ):
     async def _go():
         shared_state = MobileAgentState()
@@ -130,9 +131,13 @@ def _run(
             supports_native_tool_calls=native, native_tool_api=native_tool_api
         )
         selection_kwargs = (
-            {"action_selector": LlamaIndexLLMSelector(llm)}
-            if use_selector
-            else {"llm": llm}
+            {"action_selector": selector(llm)}
+            if selector
+            else (
+                {"action_selector": LlamaIndexLLMSelector(llm)}
+                if use_selector
+                else {"llm": llm}
+            )
         )
         agent = FastAgent(
             **selection_kwargs,
@@ -405,3 +410,39 @@ def test_openai_xai_and_deepseek_llms_use_native_tools(monkeypatch):
     assert deepseek.class_name() == "OpenAILike"
     assert OpenAIOAuth.supports_native_tool_calls
     assert GrokOAuth.supports_native_tool_calls
+
+
+def test_delegated_actions_without_native_ids_stay_a_valid_native_exchange():
+    from unittest.mock import AsyncMock
+
+    from selector_helpers import StubSelector
+
+    from mobilerun.agent.fast_agent.xml_parser import ToolCall
+    from mobilerun.agent.selectors import ActionSelection, DelegatingSelector
+
+    delegate = StubSelector(
+        select=AsyncMock(
+            return_value=ActionSelection([ToolCall("click", {"index": 3})])
+        )
+    )
+    result, responder, registry, shared_state = _run(
+        [_reply("", _call("call_d", "delegate", {})), _complete()],
+        selector=lambda llm: DelegatingSelector(LlamaIndexLLMSelector(llm), delegate),
+    )
+
+    assert result["success"] is True
+    assert registry.executed[0] == ("click", {"index": 3})
+    first_tools = responder.requests[0][1]["tools"]
+    assert [spec["name"] for spec in first_tools] == ["click", "delegate"]
+
+    items = to_openai_message_dicts(responder.requests[1][0][1:], is_responses_api=True)
+    calls = [item for item in items if item.get("type") == "function_call"]
+    outputs = [item for item in items if item.get("type") == "function_call_output"]
+    assert [call["name"] for call in calls] == ["click"]
+    assert calls[0]["call_id"] == outputs[0]["call_id"]
+    assert calls[0]["call_id"].startswith("call_")
+    assert not any(
+        isinstance(block, ToolCallBlock) and block.tool_name == "delegate"
+        for message in shared_state.message_history
+        for block in message.blocks
+    )

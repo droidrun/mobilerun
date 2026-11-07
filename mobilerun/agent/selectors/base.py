@@ -128,6 +128,14 @@ class ActionSelector(ABC):
         ...
 
 
+def supports_native_tool_calls(selectors: tuple[ActionSelector, ...]) -> bool:
+    """Native when every LLM-backed selector supports it; others ignore the protocol."""
+    llm_selectors = [selector for selector in selectors if selector.llms]
+    return bool(llm_selectors) and all(
+        selector.supports_native_tool_calls for selector in llm_selectors
+    )
+
+
 class BaseActionSelector(ActionSelector):
     """Capability defaults for selectors that implement their own select()."""
 

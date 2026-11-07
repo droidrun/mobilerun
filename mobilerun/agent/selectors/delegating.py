@@ -13,6 +13,7 @@ from mobilerun.agent.selectors.base import (
     ActionSelector,
     BaseActionSelector,
     SelectionRequest,
+    supports_native_tool_calls,
 )
 from mobilerun.agent.usage import UsageResult
 from mobilerun.config_manager.config_manager import AgentConfig
@@ -54,6 +55,10 @@ class DelegatingSelector(BaseActionSelector):
         )
 
     @property
+    def supports_native_tool_calls(self) -> bool:
+        return supports_native_tool_calls((self.primary, self.delegate))
+
+    @property
     def requires_action_candidates(self) -> bool:
         return any(
             selector.requires_action_candidates
@@ -92,10 +97,12 @@ class DelegatingSelector(BaseActionSelector):
         )
         messages = [message.model_copy(deep=True) for message in request.messages]
         if messages:
-            example = (
-                '{"action":"delegate"}'
-                if request.protocol == "executor"
-                else '<function_calls><invoke name="delegate"></invoke></function_calls>'
+            example = {
+                "executor": '{"action":"delegate"}',
+                "native": "call the delegate function with no arguments",
+            }.get(
+                request.protocol,
+                '<function_calls><invoke name="delegate"></invoke></function_calls>',
             )
             target = next(
                 (message for message in messages if message.role == "system"),
@@ -117,6 +124,17 @@ class DelegatingSelector(BaseActionSelector):
             ),
             messages=messages,
         )
+        if request.tool_specs is not None:
+            primary_request.tool_specs = [
+                *request.tool_specs,
+                {
+                    "type": "function",
+                    "name": "delegate",
+                    "description": self.description,
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                    "strict": False,
+                },
+            ]
         instructions = request.instructions
         if not instructions and self.primary.requires_action_candidates:
             instructions = await PromptLoader.load_prompt(

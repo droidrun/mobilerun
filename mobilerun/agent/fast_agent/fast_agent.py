@@ -11,9 +11,16 @@ import asyncio
 import copy
 import logging
 import os
+import uuid
+from dataclasses import replace
 from typing import TYPE_CHECKING, Optional, Type
 
-from llama_index.core.base.llms.types import ChatMessage, ImageBlock, TextBlock
+from llama_index.core.base.llms.types import (
+    ChatMessage,
+    ImageBlock,
+    TextBlock,
+    ToolCallBlock,
+)
 from llama_index.core.llms.llm import LLM
 from llama_index.core.workflow import Context, StartEvent, StopEvent, Workflow, step
 from mobilerun_core_local.driver.base import DeviceDisconnectedError
@@ -519,13 +526,34 @@ class FastAgent(Workflow):
 
         # Store assistant response (preserves ThinkingBlock, additional_kwargs, etc.)
         # up to the end of its first block, so later text is never replayed.
-        message = (
-            selection.response.message
-            if selection.response is not None
-            else ChatMessage(
+        if self.native_tools and any(call.call_id is None for call in tool_calls):
+            # Calls from a non-LLM or delegated selector get ids so the tool
+            # results that answer them form a valid native exchange.
+            tool_calls = [
+                replace(call, call_id=call.call_id or f"call_{uuid.uuid4().hex}")
+                for call in tool_calls
+            ]
+            parse_result = replace(parse_result, calls=tool_calls, end=None)
+            message = ChatMessage(
+                role="assistant",
+                blocks=[
+                    *([TextBlock(text=thought)] if thought else []),
+                    *(
+                        ToolCallBlock(
+                            tool_call_id=call.call_id,
+                            tool_name=call.name,
+                            tool_kwargs=call.parameters,
+                        )
+                        for call in tool_calls
+                    ),
+                ],
+            )
+        elif selection.response is not None:
+            message = selection.response.message
+        else:
+            message = ChatMessage(
                 role="assistant", content=thought + "\n" + format_tool_calls(tool_calls)
             )
-        )
         response_text = message.content or ""
         if parse_result.end is not None and response_text[parse_result.end :].strip():
             message = _truncate_message_text(message, parse_result.end)

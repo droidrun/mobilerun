@@ -7,6 +7,7 @@ from mobilerun.agent.selectors.base import (
     ActionSelector,
     BaseActionSelector,
     SelectionRequest,
+    supports_native_tool_calls,
 )
 
 if TYPE_CHECKING:
@@ -25,6 +26,10 @@ class FallbackSelector(BaseActionSelector):
         self.primary = primary
         self.fallbacks = tuple(fallbacks)
         self.errors = errors
+
+    @property
+    def supports_native_tool_calls(self) -> bool:
+        return supports_native_tool_calls((self.primary, *self.fallbacks))
 
     @property
     def requires_action_candidates(self) -> bool:
