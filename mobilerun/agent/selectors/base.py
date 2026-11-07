@@ -131,8 +131,16 @@ class ActionSelector(ABC):
 def supports_native_tool_calls(selectors: tuple[ActionSelector, ...]) -> bool:
     """Native when every LLM-backed selector supports it; others ignore the protocol."""
     llm_selectors = [selector for selector in selectors if selector.llms]
-    return bool(llm_selectors) and all(
-        selector.supports_native_tool_calls for selector in llm_selectors
+    # One history is shared, so every LLM must speak the same native API.
+    apis = {
+        getattr(llm, "native_tool_api", "responses")
+        for selector in llm_selectors
+        for llm in selector.llms
+    }
+    return (
+        bool(llm_selectors)
+        and len(apis) == 1
+        and all(selector.supports_native_tool_calls for selector in llm_selectors)
     )
 
 

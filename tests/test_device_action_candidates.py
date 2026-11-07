@@ -394,3 +394,41 @@ def test_decision_models_reject_screenshot_only_states():
 
     with pytest.raises(ValueError, match="accessibility tree"):
         MobileAgent("Calculate", config=config, action_selectors=selector)
+
+
+def test_composite_without_app_opener_keeps_exact_app_launching():
+    from mobilerun.agent.selectors import DelegatingSelector, LlamaIndexLLMSelector
+
+    async def run():
+        selector = DelegatingSelector(
+            DecisionSelector(SimpleNamespace(decide=AsyncMock())),
+            LlamaIndexLLMSelector(MockLLM()),
+        )
+        ctx = _context()
+        ctx.driver.get_date = AsyncMock(return_value="2026-10-23")
+        agent = MobileAgent("Calculate", action_selectors=selector, driver=ctx.driver)
+        agent.config.telemetry.enabled = False
+        assert agent.app_opener_llm is None
+        with patch.object(Context, "write_event_to_stream"):
+            await agent.start_handler(Context(agent), StartEvent())
+        assert "app_id" in agent.registry.get_signatures()["open_app"]["parameters"]
+
+    asyncio.run(run())
+
+
+def test_injected_state_provider_skips_the_screenshot_only_check(monkeypatch):
+    from mobilerun.agent.droid import droid_agent
+
+    monkeypatch.setattr(
+        droid_agent, "load_agent_llms", Mock(return_value={"app_opener": MockLLM()})
+    )
+    config = MobileConfig()
+    config.agent.vision_only = True
+    selector = DecisionSelector(SimpleNamespace(decide=AsyncMock()))
+    provider = StateProvider(SimpleNamespace(supported=set(), supported_buttons=set()))
+
+    agent = MobileAgent(
+        "Calculate", config=config, action_selectors=selector, state_provider=provider
+    )
+
+    assert agent.action_selector is selector

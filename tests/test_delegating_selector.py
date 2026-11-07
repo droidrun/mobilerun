@@ -593,3 +593,17 @@ def test_fallback_skips_error_placeholders(placeholder):
     selector = FallbackSelector(_selector(placeholder), [_selector(expected)])
 
     assert asyncio.run(selector.select(_request("executor"))) is expected
+
+
+def test_mixed_native_apis_fall_back_to_xml():
+    responses = LlamaIndexLLMSelector(
+        SimpleNamespace(supports_native_tool_calls=True, native_tool_api="responses")
+    )
+    chat = LlamaIndexLLMSelector(
+        SimpleNamespace(
+            supports_native_tool_calls=True, native_tool_api="chat_completions"
+        )
+    )
+
+    assert not DelegatingSelector(responses, chat).supports_native_tool_calls
+    assert DelegatingSelector(chat, chat).supports_native_tool_calls

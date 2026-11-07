@@ -453,6 +453,7 @@ class MobileAgent(Workflow):
                     self.action_selector = DecisionSelector(decision_models[role])
         if (
             self._screenshot_only
+            and state_provider is None
             and self.action_selector is not None
             and self.action_selector.requires_action_candidates
             and not self.action_selector.llms
@@ -901,10 +902,12 @@ class MobileAgent(Workflow):
             credential_manager=self.credential_manager,
             platform="ios" if driver.platform.lower() == "ios" else "android",
             # An LLM in the chain cannot see installed-app ids, so it keeps
-            # name-based launching; decision candidates then pass the id as the name.
+            # name-based launching when an app opener exists; decision
+            # candidates then pass the id as the name.
             exact_app_launch=is_visual_remote
             or (
-                action_selector.requires_action_candidates and not action_selector.llms
+                action_selector.requires_action_candidates
+                and (not action_selector.llms or self.app_opener_llm is None)
             ),
             screenshot_only=getattr(
                 self.state_provider,
