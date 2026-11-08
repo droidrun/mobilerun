@@ -346,7 +346,8 @@ async def build_tool_registry(
                 description=(
                     "Type a secret credential from the credential store into an "
                     "input field. The agent never sees the actual secret value, "
-                    "only the secret_id. "
+                    "only the secret_id. Some secrets need the host's approval "
+                    "first; if it is refused, the run ends. "
                     'Usage: {"action": "type_secret", "secret_id": "MY_PASSWORD", "index": 5}'
                 ),
                 deps={"tap", "input_text", "element_index"},

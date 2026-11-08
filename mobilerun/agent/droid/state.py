@@ -91,6 +91,9 @@ class MobileAgentState(BaseModel):
     # ========================================================================
     finished: bool = False
     success: Optional[bool] = None
+    # Sticky terminal failure (e.g. a denied approval). Unlike ``finished`` it
+    # is never reset by queued messages and ends the run before any new turn.
+    terminal_abort: Optional[str] = None
 
     # ========================================================================
     # Message History (for stateful agents - preserves ChatMessage blocks)
@@ -143,6 +146,11 @@ class MobileAgentState(BaseModel):
         self.finished = True
         self.success = success
         self.answer = answer or "Task completed successfully."
+
+    def abort_run(self, reason: str) -> None:
+        """End the run as failed with ``reason``. Cannot be undone within a run."""
+        if self.terminal_abort is None:
+            self.terminal_abort = reason
 
     def queue_user_message(self, message: str) -> QueuedUserMessage:
         if not message or not message.strip():
