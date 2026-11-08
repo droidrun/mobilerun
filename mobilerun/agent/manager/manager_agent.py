@@ -373,7 +373,9 @@ class ManagerAgent(Workflow):
                     self.llm, retry_messages, stream=self.agent_config.streaming
                 )
                 output = response.message.content
-                parsed = parse_manager_response(output, require_next_step=require_next_step)
+                parsed = parse_manager_response(
+                    output, require_next_step=require_next_step
+                )
             except Exception as e:
                 logger.error(f"LLM retry failed: {describe_error(e)}")
                 raise ManagerResponseValidationError(validation_error) from e

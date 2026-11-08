@@ -21,7 +21,6 @@ from mobilerun.agent.manager.stateless_manager_agent import StatelessManagerAgen
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.config_manager.config_manager import AgentConfig, ManagerConfig
 
-
 CHECKLIST_STEP = (
     "Enter this text in Note body:\n"
     "Packing checklist\n1. USB cable\n2. Phone charger\n\n  Keep in hand luggage."
@@ -164,7 +163,9 @@ def test_multiline_plan_repair_respects_manager_prompt_source(
 ):
     manager = make_manager()
     if prompt_source == "pinned":
-        manager.agent_config.manager.system_prompt = "config/prompts/manager/rev1.jinja2"
+        manager.agent_config.manager.system_prompt = (
+            "config/prompts/manager/rev1.jinja2"
+        )
     elif prompt_source == "custom":
         manager.prompt_resolver = PromptResolver({"manager_system": "Legacy prompt"})
 

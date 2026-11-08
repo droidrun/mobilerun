@@ -176,7 +176,10 @@ def _find_top_level_manager_result_tags(
     return results, errors
 
 
-def _parse_current_subgoal(plan: str, require_next_step: bool) -> tuple[str, str | None]:
+def _parse_current_subgoal(
+    plan: str, require_next_step: bool
+) -> tuple[str, str | None]:
+    """Extract the next instruction and any format error from a plan."""
     script = re.match(r"<script>(.*?)</script>", plan, re.DOTALL)
     if script:
         return f"<script>{script[1].strip()}</script>", None
@@ -362,7 +365,9 @@ def validate_manager_response(parsed: dict) -> ManagerResponseValidation:
 
     if plan:
         if subgoal_error := parsed.get("subgoal_error"):
-            return ManagerResponseValidation(is_valid=False, error_message=subgoal_error)
+            return ManagerResponseValidation(
+                is_valid=False, error_message=subgoal_error
+            )
         return ManagerResponseValidation(is_valid=True)
 
     return ManagerResponseValidation(
