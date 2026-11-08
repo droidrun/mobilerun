@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from mobilerun.agent.selectors.base import (
@@ -7,6 +8,7 @@ from mobilerun.agent.selectors.base import (
     ActionSelector,
     BaseActionSelector,
     SelectionRequest,
+    sum_usage,
     supports_native_tool_calls,
 )
 
@@ -68,13 +70,25 @@ class FallbackSelector(BaseActionSelector):
 
     async def select(self, request: SelectionRequest) -> ActionSelection | None:
         selectors = (self.primary, *self.fallbacks)
+        # Unusable attempts still made model calls; report their usage too.
+        spent = []
         for selector in selectors[:-1]:
             try:
                 selection = await selector.select(request)
                 if _usable(selection):
-                    return selection
+                    return _with_usage(selection, spent)
+                if selection is not None:
+                    spent.append(selection.usage)
             except self.errors as e:
                 logger.warning(
                     "%s failed, falling back: %s", type(selector).__name__, e
                 )
-        return await selectors[-1].select(request)
+        return _with_usage(await selectors[-1].select(request), spent)
+
+
+def _with_usage(
+    selection: ActionSelection | None, spent: list
+) -> ActionSelection | None:
+    if selection is None or not any(usage is not None for usage in spent):
+        return selection
+    return replace(selection, usage=sum_usage(*spent, selection.usage))

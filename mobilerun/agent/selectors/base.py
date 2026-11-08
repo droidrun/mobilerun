@@ -63,6 +63,19 @@ class SelectionRequest:
         }
 
 
+def sum_usage(*usages: UsageResult | None) -> UsageResult | None:
+    """Add the usage of every model call made for one step."""
+    present = [usage for usage in usages if usage is not None]
+    if not present:
+        return None
+    return UsageResult(
+        **{
+            name: sum(getattr(usage, name) for usage in present)
+            for name in UsageResult.model_fields
+        }
+    )
+
+
 @dataclass
 class ActionSelection:
     actions: list[ToolCall] = field(default_factory=list)

@@ -13,9 +13,9 @@ from mobilerun.agent.selectors.base import (
     ActionSelector,
     BaseActionSelector,
     SelectionRequest,
+    sum_usage,
     supports_native_tool_calls,
 )
-from mobilerun.agent.usage import UsageResult
 from mobilerun.config_manager.config_manager import AgentConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
 
@@ -175,19 +175,7 @@ class DelegatingSelector(BaseActionSelector):
         if delegated is None:
             return None
 
-        usages = [
-            usage for usage in (selection.usage, delegated.usage) if usage is not None
-        ]
-        usage = (
-            UsageResult(
-                **{
-                    field: sum(getattr(item, field) for item in usages)
-                    for field in UsageResult.model_fields
-                }
-            )
-            if usages
-            else None
-        )
+        usage = sum_usage(selection.usage, delegated.usage)
         memory_update = "\n".join(
             filter(
                 None,

@@ -710,6 +710,26 @@ def test_fallback_composes_selection_without_execution(primary_result):
     asyncio.run(run())
 
 
+def test_fallback_reports_usage_of_unusable_attempts():
+    from mobilerun.agent.usage import UsageResult
+
+    usage = UsageResult(
+        request_tokens=10, response_tokens=2, total_tokens=12, requests=1
+    )
+    failed = ActionSelection(parse_error="bad XML", usage=usage)
+    chosen = ActionSelection(actions=[ToolCall("click", {"index": 1})], usage=usage)
+    selector = FallbackSelector(
+        StubSelector(select=AsyncMock(return_value=failed)),
+        StubSelector(select=AsyncMock(return_value=chosen)),
+    )
+
+    selection = asyncio.run(selector.select(_request()))
+
+    assert selection.actions == chosen.actions
+    assert selection.usage.requests == 2
+    assert selection.usage.total_tokens == 24
+
+
 def test_successful_selection_does_not_call_fallback():
     result = ActionSelection([ToolCall("click", {"index": 2})])
     primary = StubSelector(select=AsyncMock(return_value=result))
