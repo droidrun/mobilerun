@@ -720,7 +720,7 @@ def test_fallback_reports_usage_of_unusable_attempts():
     chosen = ActionSelection(actions=[ToolCall("click", {"index": 1})], usage=usage)
     selector = FallbackSelector(
         StubSelector(select=AsyncMock(return_value=failed)),
-        StubSelector(select=AsyncMock(return_value=chosen)),
+        [StubSelector(select=AsyncMock(return_value=chosen))],
     )
 
     selection = asyncio.run(selector.select(_request()))
