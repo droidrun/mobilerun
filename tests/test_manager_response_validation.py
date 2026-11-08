@@ -18,6 +18,16 @@ from mobilerun.agent.manager.prompts import (
     validate_manager_response,
 )
 from mobilerun.agent.manager.stateless_manager_agent import StatelessManagerAgent
+from mobilerun.agent.utils.prompt_resolver import PromptResolver
+from mobilerun.config_manager.config_manager import AgentConfig, ManagerConfig
+
+CHECKLIST_STEP = (
+    "Enter this text in Note body:\n"
+    "Packing checklist\n1. USB cable\n2. Phone charger\n\n  Keep in hand luggage."
+)
+CHECKLIST_PLAN = (
+    f"<plan>\n<next_step>\n{CHECKLIST_STEP}\n</next_step>\n2. Save the note.\n</plan>"
+)
 
 
 def _response(content: str) -> SimpleNamespace:
@@ -31,13 +41,16 @@ def _run(coro):
 def _stateful_manager() -> ManagerAgent:
     agent = object.__new__(ManagerAgent)
     agent.llm = SimpleNamespace()
-    agent.agent_config = SimpleNamespace(streaming=False)
+    agent.agent_config = AgentConfig(streaming=False)
+    agent.prompt_resolver = PromptResolver()
     return agent
 
 
 def _stateless_manager() -> StatelessManagerAgent:
     agent = object.__new__(StatelessManagerAgent)
     agent.llm = SimpleNamespace()
+    agent.agent_config = AgentConfig(manager=ManagerConfig(stateless=True))
+    agent.prompt_resolver = PromptResolver()
     return agent
 
 
@@ -53,7 +66,9 @@ def _stateless_manager() -> StatelessManagerAgent:
     ],
 )
 def test_validate_accepts_one_nonempty_result_with_optional_metadata(response):
-    validation = validate_manager_response(parse_manager_response(response))
+    validation = validate_manager_response(
+        parse_manager_response(response, require_next_step=True)
+    )
 
     assert validation.is_valid
 
@@ -91,11 +106,89 @@ def test_validate_accepts_markup_as_top_level_result_content(response, field, ex
 
 
 def test_validate_preserves_paired_script_plan_content():
-    parsed = parse_manager_response("<plan><script>tap Settings</script></plan>")
+    script = "<script>tap Settings\ntype '<next_step>'</script>"
+    parsed = parse_manager_response(f"<plan>{script}</plan>", require_next_step=True)
 
     assert validate_manager_response(parsed).is_valid
-    assert parsed["plan"] == "<script>tap Settings</script>"
-    assert parsed["current_subgoal"] == "<script>tap Settings</script>"
+    assert parsed["plan"] == script
+    assert parsed["current_subgoal"] == script
+
+
+def test_multiline_subgoal_preserves_checklist_and_excludes_later_steps():
+    parsed = parse_manager_response(CHECKLIST_PLAN)
+
+    assert validate_manager_response(parsed).is_valid
+    assert parsed["current_subgoal"] == CHECKLIST_STEP
+    assert "2. Save the note." in parsed["plan"]
+
+
+def test_next_step_decodes_literal_markup_once_and_preserves_line_endings():
+    parsed = parse_manager_response(
+        "<plan><next_step>\r\n"
+        'Type "café &amp; &lt;/next_step&gt; &amp;lt;"\r\n'
+        "  with this indentation.  \r\n"
+        "</next_step></plan>"
+    )
+
+    assert validate_manager_response(parsed).is_valid
+    assert parsed["current_subgoal"] == (
+        'Type "café & </next_step> &lt;"\r\n  with this indentation.  '
+    )
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        "<next_step>\n\n</next_step>",
+        "<next_step>Type the note.",
+        "<next_step/>\n2. Save the note.",
+        "<next_step>Type the note.</next_step><next_step>Save it.</next_step>",
+        "1. Open Notes.\n<next_step>Type the note.</next_step>",
+        "<next_step>Type <next_step>the note.</next_step></next_step>",
+    ],
+)
+def test_invalid_next_step_cannot_fall_back_to_a_partial_instruction(plan):
+    parsed = parse_manager_response(f"<plan>{plan}</plan>")
+    validation = validate_manager_response(parsed)
+
+    assert not validation.is_valid
+    assert "<next_step>" in validation.error_message
+    assert parsed["current_subgoal"] == ""
+
+
+@pytest.mark.parametrize("make_manager", [_stateful_manager, _stateless_manager])
+@pytest.mark.parametrize("prompt_source", ["automatic", "pinned", "custom"])
+def test_multiline_plan_repair_respects_manager_prompt_source(
+    monkeypatch, make_manager, prompt_source
+):
+    manager = make_manager()
+    if prompt_source == "pinned":
+        manager.agent_config.manager.system_prompt = (
+            "config/prompts/manager/rev1.jinja2"
+        )
+    elif prompt_source == "custom":
+        manager.prompt_resolver = PromptResolver({"manager_system": "Legacy prompt"})
+
+    calls = []
+
+    async def fake_acall(llm, messages, **kwargs):
+        calls.append(messages)
+        return _response(CHECKLIST_PLAN)
+
+    monkeypatch.setattr(f"{type(manager).__module__}.acall_with_retries", fake_acall)
+    legacy_plan = f"<plan>1. {CHECKLIST_STEP}\n2. Save the note.</plan>"
+    output = _run(manager._validate_and_retry([], legacy_plan))
+
+    if prompt_source == "automatic":
+        assert len(calls) == 1
+        assert output == CHECKLIST_PLAN
+        assert parse_manager_response(output)["current_subgoal"] == CHECKLIST_STEP
+    else:
+        assert calls == []
+        assert output == legacy_plan
+        assert parse_manager_response(output)["current_subgoal"] == (
+            "Enter this text in Note body:"
+        )
 
 
 @pytest.mark.parametrize(
@@ -325,10 +418,18 @@ def test_unknown_or_false_final_success_never_becomes_successful(success):
     assert result.success is False
 
 
-def test_valid_plan_routes_to_the_executor():
-    parsed = parse_manager_response(
-        "<thought>Need the About screen next.</thought><plan>1. Open Settings</plan>"
-    )
+@pytest.mark.parametrize(
+    ("response", "expected_subgoal"),
+    [
+        (
+            "<thought>Need the About screen next.</thought><plan>1. Open Settings</plan>",
+            "Open Settings",
+        ),
+        (CHECKLIST_PLAN, CHECKLIST_STEP),
+    ],
+)
+def test_valid_plan_routes_to_the_executor(response, expected_subgoal):
+    parsed = parse_manager_response(response)
     agent = object.__new__(MobileAgent)
     agent.shared_state = SimpleNamespace(
         pending_user_messages=[],
@@ -349,4 +450,4 @@ def test_valid_plan_routes_to_the_executor():
     )
 
     assert isinstance(result, ExecutorInputEvent)
-    assert result.current_subgoal == "Open Settings"
+    assert result.current_subgoal == expected_subgoal

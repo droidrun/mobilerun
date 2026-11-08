@@ -342,7 +342,11 @@ class ManagerAgent(Workflow):
     ) -> str:
         """Validate LLM response and retry if needed."""
         output = initial_response
-        parsed = parse_manager_response(output)
+        require_next_step = (
+            self.agent_config.manager.system_prompt is None
+            and not self.prompt_resolver.get_prompt("manager_system")
+        )
+        parsed = parse_manager_response(output, require_next_step=require_next_step)
 
         max_retries = 3
         retry_count = 0
@@ -369,7 +373,9 @@ class ManagerAgent(Workflow):
                     self.llm, retry_messages, stream=self.agent_config.streaming
                 )
                 output = response.message.content
-                parsed = parse_manager_response(output)
+                parsed = parse_manager_response(
+                    output, require_next_step=require_next_step
+                )
             except Exception as e:
                 logger.error(f"LLM retry failed: {describe_error(e)}")
                 raise ManagerResponseValidationError(validation_error) from e
