@@ -81,6 +81,9 @@ Progress Tracking:
 Analyze the current state and compare with previous state (if available). Determine if progress was made, if the plan needs adjustment, or if the task is complete.
 
 Use `<plan>` for unfinished work. Use `<answer success="true">` when the task is complete and `<answer success="false">` when it is blocked.
+Start the plan with `<next_step>` containing the complete next action, including every line of text to type.
+Close it with `</next_step>` before listing later actions.
+In the block, escape literal `&`, `<`, and `>` as `&amp;`, `&lt;`, and `&gt;`.
 
 <thought>
 Brief reasoning about the current situation and what to do next.
@@ -96,7 +99,13 @@ Brief cumulative summary of all progress so far. This replaces the previous prog
 
 **When work remains:**
 <plan>
-Updated plan with numbered steps. The first item is what the executor will do next.
+<next_step>
+Enter this note:
+Packing checklist
+1. USB cable
+2. Phone charger
+</next_step>
+2. Verify the note.
 </plan>
 
 **When the task is complete or cannot proceed:**

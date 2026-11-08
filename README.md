@@ -153,6 +153,7 @@ Read the full [framework documentation](https://docs.mobilerun.ai/framework/quic
 - **Portal-based control:** Use UI trees, screenshots, text input, gestures, app launching, and device state from the Portal runtime.
 - **Vision mode:** Send screenshots to the LLM with `--vision`, or use screenshot-only control with `--vision-only` (useful for the apps that do not have a11y tree information).
 - **Reasoning mode:** Use `--reasoning` for manager-executor planning on longer or more complex tasks.
+  Custom manager prompts can start a `<plan>` with a `<next_step>...</next_step>` block to pass a complete multiline instruction to the executor. Put later steps after the block and escape literal `&`, `<`, and `>` inside it as `&amp;`, `&lt;`, and `&gt;`.
 - **Tracing and telemetry:** Debug execution with Arize Phoenix, Langfuse, saved trajectories, and detailed logs.
 - **Structured output:** Return structured data from mobile workflows.
 - **App cards and custom tools:** Add app-specific guidance to make agent perform better on your use-cases.

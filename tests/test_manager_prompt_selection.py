@@ -15,6 +15,16 @@ from mobilerun.config_manager.config_manager import (
 from mobilerun.config_manager.migrations import CURRENT_VERSION, migrate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+NEXT_STEP_EXAMPLE = """**When work remains:**
+<plan>
+<next_step>
+Enter this note:
+Packing checklist
+1. USB cable
+2. Phone charger
+</next_step>
+2. Verify the note.
+</plan>"""
 
 
 def _run(coro):
@@ -97,10 +107,7 @@ def test_default_stateless_prompt_renders_platform_and_progress_context(platform
             "mobilerun/config/prompts/manager/system.jinja2",
             "Use `<plan>` for unfinished work.",
             (
-                """**When work remains:**
-<plan>
-Update or copy the existing plan according to the current page and progress. The first item must be the next subgoal.
-</plan>""",
+                NEXT_STEP_EXAMPLE,
                 """<request_accomplished success="true">
 Confirmation of the completed request.
 </request_accomplished>""",
@@ -113,10 +120,7 @@ Explanation of why the request cannot be completed.
             "mobilerun/config/prompts/manager/stateless.jinja2",
             "Use `<plan>` for unfinished work.",
             (
-                """**When work remains:**
-<plan>
-Updated plan with numbered steps. The first item is what the executor will do next.
-</plan>""",
+                NEXT_STEP_EXAMPLE,
                 """<answer success="true">
 Confirmation of the completed task.
 </answer>""",

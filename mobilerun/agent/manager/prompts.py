@@ -30,6 +30,10 @@ _ATTRIBUTE_RE = re.compile(
     |(?P<bare_value>[^\s>]+)))?""",
     re.DOTALL | re.VERBOSE,
 )
+_NEXT_STEP_TAG_RE = re.compile(r"<\s*/?\s*next_step(?=[\s/>]|\Z)", re.IGNORECASE)
+_NEXT_STEP_BLOCK_RE = re.compile(
+    r"\A<next_step>(.*?)</next_step>", re.DOTALL | re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -172,7 +176,40 @@ def _find_top_level_manager_result_tags(
     return results, errors
 
 
-def parse_manager_response(response: str) -> dict:
+def _parse_current_subgoal(plan: str, require_next_step: bool) -> tuple[str, str | None]:
+    script = re.match(r"<script>(.*?)</script>", plan, re.DOTALL)
+    if script:
+        return f"<script>{script[1].strip()}</script>", None
+
+    markers = _NEXT_STEP_TAG_RE.findall(plan)
+    if markers:
+        block = _NEXT_STEP_BLOCK_RE.match(plan)
+        if not block or len(markers) != 2 or not block[1].strip():
+            return "", (
+                "Begin <plan> with a single nonempty <next_step>...</next_step> block. "
+                "Escape literal tag text inside the instruction."
+            )
+
+        # Remove framing newlines without trimming the instruction's whitespace.
+        step = re.sub(r"\A\r?\n|\r?\n\Z", "", block[1])
+        step = step.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+        return step, None
+
+    lines = [line.strip() for line in plan.splitlines() if line.strip()]
+    if require_next_step and len(lines) > 1:
+        return "", (
+            "Begin the multiline <plan> with <next_step>...</next_step> containing "
+            "the complete next action and its text. Place later actions after the block."
+        )
+
+    first_line = lines[0] if lines else ""
+    first_line = re.sub(r"^\d+\.\s*", "", first_line)
+    first_line = re.sub(r"^[-*]\s*", "", first_line)
+    first_line = re.sub(r"^•\s*", "", first_line)
+    return first_line.strip(), None
+
+
+def parse_manager_response(response: str, *, require_next_step: bool = False) -> dict:
     """
     Parse manager LLM response into structured dict.
 
@@ -183,19 +220,20 @@ def parse_manager_response(response: str) -> dict:
     - <request_accomplished success="true|false">...</request_accomplished> (answer)
 
     Also derives:
-    - current_subgoal: first line of plan (with list markers removed)
-    - If first item is <script> tag, extract script content as current_subgoal
+    - current_subgoal: the explicit next step, a leading script, or the legacy first line
     - success: bool | None parsed from request_accomplished success attribute
 
     Args:
         response: Raw LLM response text
+        require_next_step: Require an explicit step for multiline text plans.
 
     Returns:
         Dict with keys:
             - thought: str
             - memory: str
             - plan: str
-            - current_subgoal: str (first line of plan, cleaned, or script content)
+            - current_subgoal: str (the next instruction or script)
+            - subgoal_error: str | None (invalid next-step format)
             - answer: str (from request_accomplished tag)
             - success: bool | None (True/False if task complete, None if still in progress)
     """
@@ -242,41 +280,14 @@ def parse_manager_response(response: str) -> dict:
         for tag in FINAL_RESPONSE_TAGS
     }
 
-    # Parse current subgoal from first line of plan
-    current_goal_text = plan
-
-    # Check if first item is a <script> tag
-    script_match = re.search(
-        r"^\s*<script>(.*?)</script>", current_goal_text, re.DOTALL
-    )
-
-    if script_match:
-        # Script is first task - extract script content with tag
-        current_subgoal = f"<script>{script_match.group(1).strip()}</script>"
-    else:
-        # Regular subgoal - use existing logic
-        plan_lines = [
-            line.strip() for line in current_goal_text.splitlines() if line.strip()
-        ]
-        if plan_lines:
-            first_line = plan_lines[0]
-        else:
-            first_line = current_goal_text.strip()
-
-        # Remove common list markers like "1.", "-", "*", or bullet characters
-        first_line = re.sub(
-            r"^\s*\d+\.\s*", "", first_line
-        )  # Remove "1. ", "2. ", etc.
-        first_line = re.sub(r"^\s*[-*]\s*", "", first_line)  # Remove "- " or "* "
-        first_line = re.sub(r"^\s*•\s*", "", first_line)  # Remove bullet "• "
-
-        current_subgoal = first_line.strip()
+    current_subgoal, subgoal_error = _parse_current_subgoal(plan, require_next_step)
 
     return {
         "thought": thought,
         "plan": plan,
         "memory": memory_section,
         "current_subgoal": current_subgoal,
+        "subgoal_error": subgoal_error,
         "answer": answer,
         "success": success,
         "progress_summary": progress_summary,
@@ -350,6 +361,8 @@ def validate_manager_response(parsed: dict) -> ManagerResponseValidation:
         return ManagerResponseValidation(is_valid=True)
 
     if plan:
+        if subgoal_error := parsed.get("subgoal_error"):
+            return ManagerResponseValidation(is_valid=False, error_message=subgoal_error)
         return ManagerResponseValidation(is_valid=True)
 
     return ManagerResponseValidation(
