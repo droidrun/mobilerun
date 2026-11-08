@@ -444,12 +444,18 @@ class StateProvider:
         current_app = (
             ctx.ui.phone_state.get("packageName") if ctx.ui is not None else None
         )
+        goal = str(getattr(ctx.shared_state, "instruction", "") or "").casefold()
+        # Apps named in the goal go first so a capped option list keeps them.
+        apps = sorted(
+            ctx.action_candidate_apps,
+            key=lambda app: not (len(app.label) > 1 and app.label.casefold() in goal),
+        )
         return [
             ActionCandidate(
                 ToolCall("open_app", {parameter: app.identifier}),
                 f"Open app {app.label} ({app.identifier})",
             )
-            for app in ctx.action_candidate_apps
+            for app in apps
             if app.identifier != current_app
         ]
 

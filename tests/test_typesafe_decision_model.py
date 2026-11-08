@@ -273,6 +273,19 @@ def test_opaque_choice_labels_preserve_actions_with_duplicate_descriptions(sdk):
     assert criteria["action_0"]["description"] == criteria["action_1"]["description"]
 
 
+def test_choice_limit_is_enforced_before_opening_a_client(sdk):
+    model = TypeSafeDecisionModel()
+    options = tuple(
+        ActionCandidate(ToolCall("click", {"index": index}), f"Click {index}")
+        for index in range(model.max_options + 1)
+    )
+    with pytest.raises(ValueError, match="at most 255 choices"):
+        asyncio.run(
+            model.decide(_request(options=options, tools={"click": {}, "complete": {}}))
+        )
+    sdk.factory.assert_not_called()
+
+
 def test_empty_options_fail_before_opening_a_client(sdk):
     with pytest.raises(ValueError, match="non-empty action options"):
         asyncio.run(TypeSafeDecisionModel().decide(_request(options=())))

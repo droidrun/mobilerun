@@ -316,6 +316,35 @@ def test_decision_filters_disabled_tools_and_preserves_request_context():
     asyncio.run(run())
 
 
+def test_decision_caps_options_and_keeps_screen_actions_first(caplog, monkeypatch):
+    monkeypatch.setattr(logging.getLogger("mobilerun"), "propagate", True)
+    options = (
+        ActionCandidate(ToolCall("open_app", {"app_id": "a"}), "Open app A"),
+        ActionCandidate(ToolCall("click", {"index": 1}), "Click Alice"),
+        ActionCandidate(ToolCall("long_press", {"index": 1}), "Hold Alice"),
+        ActionCandidate(ToolCall("open_app", {"app_id": "b"}), "Open app B"),
+        ActionCandidate(ToolCall("system_button", {"button": "back"}), "Back"),
+        ActionCandidate(ToolCall("delegate"), "Delegate"),
+    )
+    request = SelectionRequest(
+        "Select",
+        tools={name: {} for name in ("click", "long_press", "open_app")}
+        | {"system_button": {}, "delegate": {}},
+        options=options,
+    )
+    model = _model(Decision(1))
+    model.max_options = 4
+
+    with caplog.at_level(logging.WARNING, logger="mobilerun"):
+        selection = asyncio.run(DecisionSelector(model).select(request))
+
+    supplied = model.decide.call_args.args[0].options
+    assert supplied == (options[0], options[1], options[4], options[5])
+    assert selection.actions == [ToolCall("click", {"index": 1})]
+    assert "Dropped 2 decision options" in caplog.text
+    assert "1 long_press, 1 open_app" in caplog.text
+
+
 @pytest.mark.parametrize("index", [-1, 1, True, "0", 0.5])
 def test_decision_rejects_invalid_indices(index):
     request = SelectionRequest(

@@ -153,6 +153,22 @@ def test_app_candidates_match_the_registered_tool_schema(parameter):
     assert "Calculator" in options[0].description
 
 
+def test_apps_named_in_the_goal_are_listed_first():
+    ctx = _context()
+    ctx.ui.phone_state["packageName"] = "other"
+    ctx.shared_state.instruction = "Open settings and check the battery"
+    apps = [
+        option.action.parameters["app_id"]
+        for option in _build(ctx)
+        if option.action.name == "open_app"
+    ]
+    assert apps == [
+        "com.android.settings",
+        "com.google.android.calculator",
+        "com.android.chrome",
+    ]
+
+
 def test_unsupported_app_listing_and_unknown_schema_are_not_guessed():
     ctx = _context()
     ctx.driver.supported.remove("get_apps")

@@ -62,6 +62,9 @@ def _prepare_screenshot(screenshot: bytes) -> bytes:
     return output.getvalue()
 
 
+MAX_CHOICES = 255
+
+
 class TypeSafeDecisionModel:
     """Choose only among supplied actions; abstain on low-confidence answers.
 
@@ -70,6 +73,8 @@ class TypeSafeDecisionModel:
     """
 
     screenshot_max_side = 1568
+    # A Choice accepts 255 options, three of which are abstain and completion.
+    max_options = MAX_CHOICES - 3
 
     def __init__(
         self,
@@ -116,6 +121,10 @@ class TypeSafeDecisionModel:
             )
             criteria["complete_failure"] = (
                 "The goal cannot be achieved with the available capabilities."
+            )
+        if len(criteria) > MAX_CHOICES:
+            raise ValueError(
+                f"TypeSafe accepts at most {MAX_CHOICES} choices, got {len(criteria)}"
             )
 
         state: dict[str, Any] = {

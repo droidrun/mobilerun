@@ -1,14 +1,19 @@
 import asyncio
+import logging
+from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Protocol
 
 from mobilerun.agent.selectors.base import (
+    ActionCandidate,
     ActionSelection,
     BaseActionSelector,
     SelectionRequest,
 )
 from mobilerun.config_manager.config_manager import AgentConfig
 from mobilerun.config_manager.prompt_loader import PromptLoader
+
+logger = logging.getLogger("mobilerun")
 
 
 @dataclass
@@ -21,6 +26,30 @@ class Decision:
 
 class DecisionModel(Protocol):
     async def decide(self, request: SelectionRequest) -> Decision | None: ...
+
+
+# Lower ranks are kept first when a model limits its option count.
+_OPTION_RANKS = {"click": 1, "click_at": 1, "open_app": 2, "long_press": 3}
+
+
+def _cap_options(
+    options: tuple[ActionCandidate, ...], limit: int | None
+) -> tuple[ActionCandidate, ...]:
+    if limit is None or len(options) <= limit:
+        return options
+    ranked = sorted(
+        range(len(options)),
+        key=lambda i: (_OPTION_RANKS.get(options[i].action.name, 0), i),
+    )
+    kept = sorted(ranked[:limit])
+    dropped = Counter(options[i].action.name for i in ranked[limit:])
+    logger.warning(
+        "Dropped %d decision options to fit the model limit of %d: %s",
+        len(options) - limit,
+        limit,
+        ", ".join(f"{count} {name}" for name, count in sorted(dropped.items())),
+    )
+    return tuple(options[i] for i in kept)
 
 
 class DecisionSelector(BaseActionSelector):
@@ -52,6 +81,7 @@ class DecisionSelector(BaseActionSelector):
         options = tuple(o for o in request.options if o.action.name in request.tools)
         if not options:
             raise ValueError("No decision options match the available tools")
+        options = _cap_options(options, getattr(self.model, "max_options", None))
         model_request = replace(request, options=options)
         if not model_request.instructions:
             model_request.instructions = await PromptLoader.load_prompt(
