@@ -358,6 +358,7 @@ class MobileAgent(Workflow):
         # Host decision channel for approval-gated secrets, and the per-run
         # registry of typed values that is masked from observations and logs.
         self.approval_provider = approval_provider
+        self._redactor = SecretRedactor()
 
         self.resolved_device_config = config.device if config else DeviceConfig()
 
@@ -509,14 +510,6 @@ class MobileAgent(Workflow):
         self._init_timeout = timeout
 
         logger.debug("✅ MobileAgent initialized successfully.")
-
-    @property
-    def _redactor(self) -> SecretRedactor:
-        # Lazy so subclasses that skip __init__ still get one.
-        redactor = self.__dict__.get("_secret_redactor")
-        if redactor is None:
-            redactor = self.__dict__["_secret_redactor"] = SecretRedactor()
-        return redactor
 
     def run(self, *args, **kwargs) -> Awaitable[ResultEvent] | WorkflowHandler:
         # Workflow tasks inherit this context when run() schedules them.
@@ -1063,7 +1056,7 @@ class MobileAgent(Workflow):
         self, ctx: Context, ev: FastAgentResultEvent
     ) -> FinalizeEvent:
         try:
-            if abort := getattr(self.shared_state, "terminal_abort", None):
+            if abort := self.shared_state.terminal_abort:
                 return FinalizeEvent(success=False, reason=abort)
             return FinalizeEvent(success=ev.success, reason=ev.reason)
 
@@ -1086,7 +1079,7 @@ class MobileAgent(Workflow):
         self, ctx: Context, ev: ManagerInputEvent
     ) -> ManagerPlanEvent | FinalizeEvent:
         """Run Manager planning phase."""
-        if abort := getattr(self.shared_state, "terminal_abort", None):
+        if abort := self.shared_state.terminal_abort:
             return FinalizeEvent(success=False, reason=abort)
         if self.shared_state.step_number >= self.config.agent.max_steps:
             logger.warning(f"⚠️ Reached maximum steps ({self.config.agent.max_steps})")
@@ -1173,7 +1166,7 @@ class MobileAgent(Workflow):
 
         # A terminal abort (e.g. denied approval) ends the run before the
         # Manager gets another turn.
-        if abort := getattr(self.shared_state, "terminal_abort", None):
+        if abort := self.shared_state.terminal_abort:
             return FinalizeEvent(success=False, reason=abort)
 
         # Update coordination state after execution
@@ -1367,14 +1360,7 @@ class MobileAgent(Workflow):
                 # Prefer rich action-level macro entries; fall back to raw driver logs.
                 if self.macro_recorder and self.macro_recorder.actions:
                     self.trajectory.macro = list(self.macro_recorder.actions)
-                elif isinstance(
-                    (
-                        self.driver.inner
-                        if isinstance(self.driver, SecretSafeDriver)
-                        else self.driver
-                    ),
-                    RecordingDriver,
-                ):
+                elif isinstance(getattr(self.driver, "log", None), list):
                     # Through SecretSafeDriver this is the redacted view.
                     self.trajectory.macro = list(self.driver.log)
                 self.trajectory_writer.write_final(

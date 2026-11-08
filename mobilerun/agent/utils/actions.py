@@ -628,13 +628,6 @@ async def complete(
 _SECRET_FOCUS_SETTLE_SECONDS = 0.3
 
 
-def _abort_run(ctx: "ActionContext", reason: str) -> None:
-    """Mark the run as terminally failed; workflows end it before any new turn."""
-    abort = getattr(getattr(ctx, "shared_state", None), "abort_run", None)
-    if abort is not None:
-        abort(reason)
-
-
 async def _focus_approved_field(
     ctx: "ActionContext", index: int, approved: secret_gate.Target
 ) -> object:
@@ -643,13 +636,16 @@ async def _focus_approved_field(
     Returns the macro pre-state. Raises ``SecretGateError`` when any check
     fails; nothing has been typed at that point.
     """
-    selected_bounds = None
+    identity = None
     tap_point = None
     pre_ui = await _macro_pre_ui(ctx)
     if index != -1:
         fresh = await ctx.state_provider.get_state()
         element = secret_gate.ensure_same_element(ctx.ui, fresh, index)
-        selected_bounds = secret_gate.node_bounds(element)
+        # Pin the element to one editable raw node before touching the screen.
+        identity = secret_gate.identify_selected(
+            await secret_gate.raw_observation(ctx), element
+        )
         tap_point = fresh.get_element_coords(index)
         await ctx.driver.tap(*tap_point)
         _record_macro_action(
@@ -661,7 +657,7 @@ async def _focus_approved_field(
         pre_ui = await _macro_pre_ui_after_focus_tap(ctx)
     observation = await secret_gate.raw_observation(ctx)
     secret_gate.verify_destination(
-        observation, approved, selected_bounds=selected_bounds, tap_point=tap_point
+        observation, approved, identity=identity, tap_point=tap_point
     )
     return pre_ui
 
@@ -677,7 +673,9 @@ async def type_secret(
         )
 
     try:
-        spec = await secret_gate.spec_for(ctx, secret_id)
+        spec = await secret_gate.spec_for(
+            secret_gate.run_state(ctx), ctx.credential_manager, secret_id
+        )
         approved = None
         if spec is not None and spec.requires_approval:
             # Where the secret would go, and whether the host allows that.
@@ -709,6 +707,11 @@ async def type_secret(
             ok = await typer(
                 secret_id, secret_value, redact=redact, protected=protected
             )
+        elif protected:
+            # Without the wrapper nothing would mask the value afterwards.
+            raise secret_gate.SecretGateError(
+                "This driver cannot protect an approved secret; nothing was typed."
+            )
         else:
             ok = await ctx.driver.input_text(secret_value)
         del secret_value
@@ -731,7 +734,7 @@ async def type_secret(
                 summary=f"Failed to type secret '{secret_id}': input failed",
             )
     except secret_gate.SecretApprovalAborted as e:
-        _abort_run(ctx, e.reason)
+        ctx.shared_state.abort_run(e.reason)
         logger.warning("Secret entry not approved: %s", e.reason)
         return ActionResult(
             success=False,

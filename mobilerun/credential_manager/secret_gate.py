@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlsplit
 
-from mobilerun.credential_manager.approval import ApprovalDecision, ApprovalProvider
+from mobilerun.credential_manager.approval import ApprovalProvider
 from mobilerun.credential_manager.credential_manager import SecretSpec
 
 logger = logging.getLogger("mobilerun")
@@ -24,32 +24,50 @@ APPROVAL_DENIED = "approval_denied"
 APPROVAL_EXPIRED = "approval_expired"
 APPROVAL_UNAVAILABLE = "approval_unavailable"
 DEFAULT_APPROVAL_KIND = "secret"
+_REFUSAL_REASONS = {"denied": APPROVAL_DENIED, "expired": APPROVAL_EXPIRED}
 
 # Browser chrome the engine knows how to read the host from: package ->
-# identifiers of its address bar node. The host is only ever read from these
-# nodes, never from page content.
-_BROWSER_ADDRESS_BARS: Dict[str, Tuple[str, ...]] = {
-    "com.android.chrome": ("com.android.chrome:id/url_bar",),
+# (address bar identifiers, allowed classes of that node). The host is only
+# ever read from these nodes, never from page content. ``None`` means no class
+# constraint (iOS: only meaningful where a structured tree with a ``URL`` field
+# exists; on the XCTest text tree the gate fails closed anyway).
+_ANDROID_BAR_CLASSES = frozenset({"android.widget.EditText", "android.widget.TextView"})
+_BROWSER_ADDRESS_BARS: Dict[str, Tuple[Tuple[str, ...], Optional[frozenset]]] = {
+    "com.android.chrome": (("com.android.chrome:id/url_bar",), _ANDROID_BAR_CLASSES),
     "com.sec.android.app.sbrowser": (
-        "com.sec.android.app.sbrowser:id/location_bar_edit_text",
+        ("com.sec.android.app.sbrowser:id/location_bar_edit_text",),
+        _ANDROID_BAR_CLASSES,
     ),
-    "org.mozilla.firefox": ("org.mozilla.firefox:id/mozac_browser_toolbar_url_view",),
-    "com.microsoft.emmx": ("com.microsoft.emmx:id/url_bar",),
-    "com.brave.browser": ("com.brave.browser:id/url_bar",),
-    "com.apple.mobilesafari": ("URL",),
+    "org.mozilla.firefox": (
+        ("org.mozilla.firefox:id/mozac_browser_toolbar_url_view",),
+        _ANDROID_BAR_CLASSES,
+    ),
+    "com.microsoft.emmx": (("com.microsoft.emmx:id/url_bar",), _ANDROID_BAR_CLASSES),
+    "com.brave.browser": (("com.brave.browser:id/url_bar",), _ANDROID_BAR_CLASSES),
+    # From the public DuckDuckGo Android sources (omnibar EditText); not yet
+    # verified on a device.
+    "com.duckduckgo.mobile.android": (
+        ("com.duckduckgo.mobile.android:id/omnibarTextInput",),
+        _ANDROID_BAR_CLASSES,
+    ),
+    "com.apple.mobilesafari": (("URL",), None),
 }
-# Address-bar ids of browsers we do NOT know: seeing one means the target is a
-# web context we cannot bind to a host, so nothing is typed.
+# Address-bar ids of browsers we do NOT know: seeing one outside web content
+# means the target is a browser we cannot bind to a host, so nothing is typed.
 _GENERIC_ADDRESS_BAR_IDS = frozenset(
     {
         "url_bar",
         "url_edit_text",
         "location_bar_edit_text",
         "mozac_browser_toolbar_url_view",
+        "omnibarTextInput",
         "toolbar_url",
         "url_field",
     }
 )
+# Containers that hold web page content: nothing inside is browser chrome.
+_WEB_CONTENT_CLASS_MARKER = "WebView"
+_WEB_CONTENT_ID_SUFFIXES = ("compositor_view_holder", "content_container")
 
 _HOST_RE = re.compile(
     r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
@@ -76,11 +94,31 @@ class Target:
     host: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class NodeInfo:
+    """A raw tree node with where it sits (child-index path, web content)."""
+
+    node: dict
+    path: Tuple[int, ...]
+    in_web_content: bool
+
+
 @dataclass
 class Observation:
     target: Target
-    focused_editable: List[dict] = field(default_factory=list)
-    address_bars: List[dict] = field(default_factory=list)
+    nodes: List[NodeInfo] = field(default_factory=list)
+    focused_editable: List[NodeInfo] = field(default_factory=list)
+    address_bars: List[NodeInfo] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class FieldIdentity:
+    """The element the model selected, as seen in the raw pre-tap tree."""
+
+    resource_id: str
+    class_name: str
+    path: Tuple[int, ...]
+    bounds: Tuple[int, int, int, int]
 
 
 @dataclass
@@ -93,20 +131,16 @@ class SecretRunState:
 
 def run_state(ctx: Any) -> SecretRunState:
     state = getattr(ctx, "secret_run", None)
-    if state is None:
-        state = SecretRunState()
-        try:
-            ctx.secret_run = state
-        except AttributeError:
-            pass
+    if state is None:  # contexts built without ActionContext
+        state = ctx.secret_run = SecretRunState()
     return state
 
 
-async def spec_for(ctx: Any, secret_id: str) -> Optional[SecretSpec]:
+async def spec_for(
+    state: SecretRunState, manager: Any, secret_id: str
+) -> Optional[SecretSpec]:
     """Spec of ``secret_id`` from the per-run cache; ``None`` if unknown."""
-    state = run_state(ctx)
     if state.specs is None:
-        manager = ctx.credential_manager
         getter = getattr(manager, "get_secret_specs", None)
         if getter is not None:
             specs = await getter()
@@ -125,17 +159,37 @@ async def spec_for(ctx: Any, secret_id: str) -> Optional[SecretSpec]:
 # ---------------------------------------------------------------------------
 
 
-def _walk(node: Any) -> Iterator[dict]:
+def _is_web_content(node: dict) -> bool:
+    class_name = node.get("className") or node.get("class") or ""
+    if isinstance(class_name, str) and _WEB_CONTENT_CLASS_MARKER in class_name:
+        return True
+    return any(i.endswith(_WEB_CONTENT_ID_SUFFIXES) for i in _node_ids(node))
+
+
+def _walk(
+    node: Any, path: Tuple[int, ...] = (), in_web: bool = False
+) -> Iterator[NodeInfo]:
+    """Depth-first nodes with their path; ``in_web`` tracks ancestors."""
     if isinstance(node, list):
-        for child in node:
-            yield from _walk(child)
+        for i, child in enumerate(node):
+            yield from _walk(child, path + (i,), in_web)
     elif isinstance(node, dict):
-        yield node
-        yield from _walk(node.get("children") or [])
+        yield NodeInfo(node, path, in_web)
+        below = in_web or _is_web_content(node)
+        for i, child in enumerate(node.get("children") or []):
+            yield from _walk(child, path + (i,), below)
 
 
 def _flag(node: dict, *keys: str) -> bool:
     return any(node.get(key) is True or node.get(key) == "true" for key in keys)
+
+
+def _is_editable(node: dict) -> bool:
+    """Positive evidence that a node is a text field (never keyboard state)."""
+    class_name = node.get("className") or node.get("class") or ""
+    return _flag(node, "isEditable", "editable") or any(
+        marker in class_name for marker in _EDITABLE_CLASS_MARKERS
+    )
 
 
 def _node_ids(node: dict) -> List[str]:
@@ -218,41 +272,45 @@ def observe_target(data: Any) -> Observation:
     if not package:
         raise SecretGateError("Cannot determine the foreground app.")
 
-    known_ids = _BROWSER_ADDRESS_BARS.get(package)
+    adapter = _BROWSER_ADDRESS_BARS.get(package)
     host: Optional[str] = None
-    address_bars: List[dict] = []
-    if known_ids is not None:
-        address_bars = [n for n in nodes if any(i in known_ids for i in _node_ids(n))]
-        hosts = {host_from_text(_node_text(n)) for n in address_bars}
+    address_bars: List[NodeInfo] = []
+    if adapter is not None:
+        ids, classes = adapter
+        # Browser chrome only: not inside web content, and the right class.
+        address_bars = [
+            n
+            for n in nodes
+            if not n.in_web_content
+            and any(i in ids for i in _node_ids(n.node))
+            and (
+                classes is None
+                or (n.node.get("className") or n.node.get("class")) in classes
+            )
+        ]
+        hosts = {host_from_text(_node_text(n.node)) for n in address_bars}
         if not address_bars or len(hosts) != 1 or None in hosts:
             raise SecretGateError(
                 "Cannot verify the website address in the browser; nothing was typed."
             )
         host = next(iter(hosts))
     else:
-        for node in nodes:
-            for node_id in _node_ids(node):
+        for info in nodes:
+            if info.in_web_content:
+                continue
+            for node_id in _node_ids(info.node):
                 if node_id.split(":id/")[-1] in _GENERIC_ADDRESS_BAR_IDS:
                     raise SecretGateError(
                         "This browser is not supported for approved secrets; "
                         "nothing was typed."
                     )
 
-    keyboard_open = phone_state.get("isEditable") is True
     focused = [
         n
         for n in nodes
-        if _flag(n, "focused", "isFocused")
-        and (
-            _flag(n, "isEditable", "editable")
-            or any(
-                m in (n.get("className") or n.get("class") or "")
-                for m in _EDITABLE_CLASS_MARKERS
-            )
-            or keyboard_open
-        )
+        if _flag(n.node, "focused", "isFocused") and _is_editable(n.node)
     ]
-    return Observation(Target(package, host), focused, address_bars)
+    return Observation(Target(package, host), nodes, focused, address_bars)
 
 
 async def raw_observation(ctx: Any) -> Observation:
@@ -298,23 +356,22 @@ async def ensure_approval(ctx: Any, spec: SecretSpec, target: Target) -> None:
     details = {"label": label, "secretGroup": label, "targetPackage": package}
     if host:
         details["targetHost"] = host
-    decision: Any
     try:
-        decision = await provider.request(kind, details)
+        decision: Any = await provider.request(kind, details)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # the provider is host code; fail closed
         logger.warning("Approval request failed: %s", type(exc).__name__)
         decision = None
 
-    decision_: Optional[ApprovalDecision] = decision
-    if decision_ == "approved":
+    if decision == "approved":
         state.approvals.add(key)
         return
-    reason = {"denied": APPROVAL_DENIED, "expired": APPROVAL_EXPIRED}.get(
-        decision_ if isinstance(decision_, str) else "", APPROVAL_UNAVAILABLE
+    raise SecretApprovalAborted(
+        _REFUSAL_REASONS.get(decision, APPROVAL_UNAVAILABLE)
+        if isinstance(decision, str)
+        else APPROVAL_UNAVAILABLE
     )
-    raise SecretApprovalAborted(reason)
 
 
 # ---------------------------------------------------------------------------
@@ -348,14 +405,54 @@ def ensure_same_element(observed_ui: Any, fresh_ui: Any, index: int) -> dict:
     return fresh
 
 
+def _short_class(name: Any) -> str:
+    return name.split(".")[-1] if isinstance(name, str) else ""
+
+
+def identify_selected(observation: Observation, element: dict) -> FieldIdentity:
+    """Pin the selected element to exactly one editable node of the raw tree.
+
+    Fails closed when the element matches no node, several nodes, or a node
+    without positive text-field evidence.
+    """
+    wanted_bounds = node_bounds(element)
+    matches = [
+        n
+        for n in observation.nodes
+        if (n.node.get("resourceId") or "") == (element.get("resourceId") or "")
+        and _short_class(n.node.get("className") or n.node.get("class"))
+        == _short_class(element.get("className"))
+        and node_bounds(n.node) == wanted_bounds
+        and wanted_bounds is not None
+    ]
+    if len(matches) != 1:
+        raise SecretGateError(
+            "Cannot identify the selected element uniquely; nothing was typed."
+        )
+    info = matches[0]
+    if not _is_editable(info.node):
+        raise SecretGateError("The selected element is not a text field.")
+    return FieldIdentity(
+        resource_id=info.node.get("resourceId") or "",
+        class_name=_short_class(info.node.get("className") or info.node.get("class")),
+        path=info.path,
+        bounds=wanted_bounds,
+    )
+
+
 def verify_destination(
     observation: Observation,
     approved: Target,
     *,
-    selected_bounds: Optional[Tuple[int, int, int, int]] = None,
+    identity: Optional[FieldIdentity] = None,
     tap_point: Optional[Tuple[int, int]] = None,
 ) -> None:
-    """Last check before typing. Raises ``SecretGateError`` unless it holds."""
+    """Last check before typing. Raises ``SecretGateError`` unless it holds.
+
+    With an ``identity`` (the field was selected and tapped) the focused node
+    must be exactly that element: identity first (resource id, class, tree
+    path), geometry as an additional check.
+    """
     if observation.target != approved:
         raise SecretGateError(
             "The target app or website changed after approval; nothing was typed."
@@ -364,25 +461,32 @@ def verify_destination(
         raise SecretGateError(
             "No single focused text field was found; nothing was typed."
         )
-    field_node = observation.focused_editable[0]
-    if any(field_node is bar for bar in observation.address_bars):
+    focused = observation.focused_editable[0]
+    if any(focused is bar for bar in observation.address_bars):
         raise SecretGateError("Refusing to type a secret into the address bar.")
-    if selected_bounds is None:
+    if identity is None:
         return
-    focused_bounds = node_bounds(field_node)
+    node = focused.node
+    mismatch = SecretGateError(
+        "The focused field is not the one that was selected; nothing was typed."
+    )
+    if (
+        (node.get("resourceId") or "") != identity.resource_id
+        or _short_class(node.get("className") or node.get("class"))
+        != identity.class_name
+        or focused.path != identity.path
+    ):
+        raise mismatch
+    focused_bounds = node_bounds(node)
     if focused_bounds is None:
         raise SecretGateError("Cannot verify the focused field; nothing was typed.")
     if tap_point is not None and not _contains(focused_bounds, tap_point):
-        raise SecretGateError(
-            "The focused field is not the one that was selected; nothing was typed."
-        )
+        raise mismatch
     if not (
-        _nested(focused_bounds, selected_bounds)
-        or _nested(selected_bounds, focused_bounds)
+        _nested(focused_bounds, identity.bounds)
+        or _nested(identity.bounds, focused_bounds)
     ):
-        raise SecretGateError(
-            "The focused field is not the one that was selected; nothing was typed."
-        )
+        raise mismatch
 
 
 def _contains(bounds: Tuple[int, int, int, int], point: Tuple[int, int]) -> bool:

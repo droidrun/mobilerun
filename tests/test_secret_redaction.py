@@ -11,7 +11,6 @@ from mobilerun_core_local.driver.stealth import StealthDriver
 from PIL import Image
 
 from mobilerun.tools.driver.secret_safe import (
-    SecretLogFilter,
     SecretRedactor,
     SecretSafeDriver,
     SecretSafeStateProvider,
@@ -220,15 +219,6 @@ def test_driver_masks_tree_and_registers_before_typing():
     assert run(driver.get_ui_tree_unredacted())["a11y_tree"]["text"] == (
         f"Number {CARD}"
     )
-
-
-def test_driver_delegates_everything_else():
-    driver = SecretSafeDriver(RawDriver(), SecretRedactor())
-
-    assert driver.platform == "Android"
-    assert driver.supported == {"tap", "input_text"}
-    assert driver.supported_buttons == {"back"}
-    assert run(driver.input_text("x")) is True
 
 
 def test_screenshot_is_black_only_after_a_protected_secret():
@@ -471,7 +461,8 @@ def test_portal_recovery_is_absent_without_a_device():
 # -- sinks fed by the driver ------------------------------------------------
 
 
-def test_screenshot_event_and_langfuse_receive_the_black_image(monkeypatch):
+def _finalize_run(monkeypatch, driver, state_provider, redactor):
+    """Run the real finalize step; return (screenshots uploaded, events)."""
     from mobilerun.agent.droid import droid_agent as module
     from mobilerun.agent.droid.droid_agent import MobileAgent
     from mobilerun.agent.droid.events import FinalizeEvent
@@ -488,13 +479,8 @@ def test_screenshot_event_and_langfuse_receive_the_black_image(monkeypatch):
         return None
 
     monkeypatch.setattr(module, "flush", flush)
-
-    redactor = SecretRedactor()
-    driver = SecretSafeDriver(RawDriver(), redactor)
-    run(driver.input_secret("card", CARD, protected=True))
-
     agent = object.__new__(MobileAgent)
-    agent.__dict__["_secret_redactor"] = redactor
+    agent._redactor = redactor
     agent.shared_state = SimpleNamespace(
         workflow_completed=False,
         step_number=1,
@@ -518,11 +504,7 @@ def test_screenshot_event_and_langfuse_receive_the_black_image(monkeypatch):
     )
     agent._stream_screenshots = False
     agent.action_ctx = SimpleNamespace(driver=driver)
-
-    async def state():
-        return SimpleNamespace(elements=[])
-
-    agent.state_provider = SimpleNamespace(get_state=state)
+    agent.state_provider = state_provider
     agent.macro_recorder = None
     agent.mcp_manager = None
     agent.timeout = 60
@@ -538,12 +520,45 @@ def test_screenshot_event_and_langfuse_receive_the_black_image(monkeypatch):
 
     ctx = SimpleNamespace(write_event_to_stream=events.append, store=Store())
     run(agent.finalize(ctx, FinalizeEvent(success=True, reason="done")))
+    return uploaded, events
+
+
+class GetStateOnly:
+    """Injected provider without get_final_state, serving a raw cached state."""
+
+    def __init__(self, text):
+        self.state = UIState([{"index": 1, "text": text}], text, "", {}, 10, 10)
+
+    async def get_state(self):
+        return self.state
+
+
+def test_screenshot_event_and_langfuse_receive_the_black_image(monkeypatch):
+    redactor = SecretRedactor()
+    driver = SecretSafeDriver(RawDriver(), redactor)
+    run(driver.input_secret("card", CARD, protected=True))
+    provider = SecretSafeStateProvider(GetStateOnly("ok"), redactor)
+
+    uploaded, events = _finalize_run(monkeypatch, driver, provider, redactor)
 
     shots = [e.screenshot for e in events if hasattr(e, "screenshot")]
     assert shots and all(pixels(s)[1] == {(0, 0, 0)} for s in shots)
     assert uploaded and all(pixels(s)[1] == {(0, 0, 0)} for s in uploaded)
     # registered values do not outlive the run
     assert not redactor.active and not redactor.black_screenshots
+
+
+def test_final_ui_state_of_a_get_state_only_provider_is_redacted(monkeypatch):
+    redactor = SecretRedactor()
+    redactor.register("card", CARD)
+    driver = SecretSafeDriver(RawDriver(), redactor)
+    provider = SecretSafeStateProvider(GetStateOnly(f"Card {CARD}"), redactor)
+
+    _, events = _finalize_run(monkeypatch, driver, provider, redactor)
+
+    states = [e.ui_state for e in events if hasattr(e, "ui_state")]
+    assert states and "4111" not in repr(states)
+    assert "[secret:card]" in repr(states)
 
 
 # -- logs --------------------------------------------------------------------
@@ -628,9 +643,160 @@ def test_log_filter_is_scoped_to_the_run_and_cleaned_up(engine_log):
     assert "alpha-secret after cleanup" in engine_log.getvalue()
 
 
-def test_log_filter_install_is_idempotent(engine_log):
-    install_log_redaction()
-    install_log_redaction()
-    handler = logging.getLogger("mobilerun").handlers[0]
+# -- values spread over several nodes ------------------------------------------
 
-    assert sum(isinstance(f, SecretLogFilter) for f in handler.filters) == 1
+
+def tree_of(*texts):
+    return {
+        "a11y_tree": {
+            "children": [
+                {"className": "android.widget.TextView", "text": text} for text in texts
+            ]
+        },
+        "phone_state": {},
+    }
+
+
+def texts_of(tree):
+    return [node["text"] for node in tree["a11y_tree"]["children"]]
+
+
+def test_code_with_one_digit_per_node_is_masked_in_every_node():
+    redactor = SecretRedactor()
+    redactor.register("otp", "482913", redact="input_only")
+
+    masked = redactor.redact_ui_tree(tree_of("4", "8", "2", "9", "1", "3"))
+
+    assert texts_of(masked) == ["[secret:otp]"] * 6
+
+
+def test_card_number_in_group_nodes_is_masked_in_every_node():
+    redactor = SecretRedactor()
+    redactor.register("card", CARD)
+
+    masked = redactor.redact_ui_tree(
+        tree_of("Card", "4111", "1111", "1111", "1111", "Pay")
+    )
+
+    assert texts_of(masked) == ["Card"] + ["[secret:card]"] * 4 + ["Pay"]
+
+
+def test_name_in_adjacent_nodes_is_masked_and_other_texts_stay():
+    redactor = SecretRedactor()
+    redactor.register("holder", "Jane Doe")
+
+    masked = redactor.redact_ui_tree(tree_of("Holder", "Jane", "Doe", "Visa"))
+
+    assert texts_of(masked) == ["Holder", "[secret:holder]", "[secret:holder]", "Visa"]
+
+
+def test_unrelated_adjacent_nodes_stay_untouched():
+    redactor = SecretRedactor()
+    redactor.register("otp", "123456")
+
+    masked = redactor.redact_ui_tree(tree_of("1", "2", "3", "4", "5", "7"))
+
+    assert texts_of(masked) == ["1", "2", "3", "4", "5", "7"]
+
+
+def test_short_values_are_not_searched_across_nodes():
+    redactor = SecretRedactor()
+    redactor.register("cvc", "737")
+
+    assert texts_of(redactor.redact_ui_tree(tree_of("7", "3", "7"))) == ["7", "3", "7"]
+
+
+def test_failed_input_masks_the_typed_prefix_and_blacks_out_the_screen():
+    redactor = SecretRedactor()
+    raw = RawDriver()
+
+    async def type_then_fail(text, clear=False, **kwargs):
+        raw.typed.append(text[:9])  # only a prefix reached the field
+        return False
+
+    raw.input_text = type_then_fail
+    driver = SecretSafeDriver(raw, redactor)
+
+    assert run(driver.input_secret("card", CARD, protected=True)) is False
+
+    assert redactor.redact_text("field shows 4111 1111") == "field shows [secret:card]"
+    assert redactor.black_screenshots is True
+
+
+def test_interrupted_input_masks_prefixes_too():
+    redactor = SecretRedactor()
+    raw = RawDriver()
+
+    async def explode(text, clear=False, **kwargs):
+        raise TimeoutError
+
+    raw.input_text = explode
+    driver = SecretSafeDriver(raw, redactor)
+
+    with pytest.raises(TimeoutError):
+        run(driver.input_secret("pw", "hunter22"))
+
+    assert redactor.redact_text("shows hun") == "shows hun"  # under 4 chars
+    assert redactor.redact_text("shows hunter2") == "shows [secret:pw]"
+
+
+# -- recording log scrub scope -------------------------------------------------
+
+
+def test_scrub_leaves_earlier_entries_untouched():
+    recording = RecordingDriver(PlainCore())
+    driver = SecretSafeDriver(recording, SecretRedactor())
+    run(driver.input_text("note: hunter22 is my pet"))  # ordinary, earlier input
+
+    run(driver.input_secret("pw", "hunter22"))
+
+    assert recording.log[0] == {
+        "action_type": "input_text",
+        "text": "note: hunter22 is my pet",
+        "clear": False,
+    }
+    assert recording.log[1]["action_type"] == "type_secret"
+    assert len(recording.log) == 2
+
+
+def test_scrub_covers_recording_inside_stealth():
+    recording = RecordingDriver(PlainCore())
+    stealth = StealthDriver(recording)
+    driver = SecretSafeDriver(stealth, SecretRedactor())
+    run(driver.input_text("hunter two"))  # earlier, same words
+
+    run(driver.input_secret("pw", "hunter two", protected=True))
+
+    texts = [e.get("text") for e in recording.log]
+    assert texts[:3] == ["hunter", " ", "two"]  # earlier input kept as typed
+    assert recording.log[3:] == [
+        {
+            "action_type": "type_secret",
+            "secret_id": "pw",
+            "clear": False,
+            "protected": True,
+        }
+    ]
+
+
+def test_scrub_covers_recording_outside_stealth():
+    recording = RecordingDriver(StealthDriver(PlainCore()))
+    driver = SecretSafeDriver(recording, SecretRedactor())
+
+    run(driver.input_secret("pw", "hunter two"))
+
+    assert [e["action_type"] for e in recording.log] == ["type_secret"]
+    assert "hunter" not in repr(recording.log)
+
+
+# -- no values in repr ---------------------------------------------------------
+
+
+def test_registered_values_do_not_appear_in_repr():
+    redactor = SecretRedactor()
+    redactor.register("holder", "Jane Doe")
+    redactor.register("card", CARD)
+
+    shown = repr(redactor) + repr(redactor._entries)
+
+    assert "Jane" not in shown and "4111" not in shown

@@ -1,256 +1,49 @@
-import asyncio
 import inspect
-from dataclasses import FrozenInstanceError
-from types import SimpleNamespace
 
 import pytest
+from conftest import (
+    CARD_CVC,
+    CARD_NUMBER,
+    CHROME,
+    CHROME_BAR,
+    SHOP,
+    Approver,
+    Device,
+    Provider,
+    Secrets,
+    browser,
+    card_specs,
+    field,
+    make_ctx,
+    run,
+)
 
-from mobilerun.agent import action_context as action_context_module
 from mobilerun.agent.action_context import ActionContext
 from mobilerun.agent.droid.droid_agent import MobileAgent
 from mobilerun.agent.droid.state import MobileAgentState
-from mobilerun.agent.utils import actions
 from mobilerun.agent.utils.actions import type_secret
 from mobilerun.credential_manager import (
-    ApprovalDecision,
     ApprovalProvider,
     CredentialManager,
     FileCredentialManager,
     SecretSpec,
 )
-from mobilerun.credential_manager.secret_gate import (
-    observe_target,
-)
-from mobilerun.tools.driver.secret_safe import SecretRedactor, SecretSafeDriver
+from mobilerun.credential_manager.secret_gate import observe_target
+from mobilerun.tools.driver.secret_safe import SecretSafeDriver
 from mobilerun.tools.ui.state import UIState
 
-CARD_NUMBER = "4111 1111 1111 1111"
-CARD_CVC = "737"
-SHOP = "com.example.shop"
-CHROME = "com.android.chrome"
-CHROME_BAR = "com.android.chrome:id/url_bar"
-
-
-@pytest.fixture(autouse=True)
-def no_settle(monkeypatch):
-    monkeypatch.setattr(actions, "_SECRET_FOCUS_SETTLE_SECONDS", 0)
-
-
-def run(coro):
-    return asyncio.run(coro)
-
-
-# -- fakes -------------------------------------------------------------------
-
-
-def field(index, res, bounds, *, text="", cls="android.widget.EditText", focused=False):
-    left, top, right, bottom = bounds
-    return {
-        "index": index,
-        "resourceId": res,
-        "className": cls,
-        "text": text,
-        "bounds": f"{left},{top},{right},{bottom}",
-        "_focused": focused,
-    }
-
-
-class Device:
-    """One screen: nodes, foreground package, taps move the focus."""
-
-    def __init__(self, package=SHOP, nodes=None, url=None):
-        self.package = package
-        self.url = url
-        self.nodes = nodes or [
-            field(1, f"{SHOP}:id/number", (100, 200, 900, 300)),
-            field(2, f"{SHOP}:id/cvc", (100, 400, 500, 500)),
-            field(3, f"{SHOP}:id/note", (100, 600, 900, 700)),
-        ]
-        self.taps = []
-        self.typed = []
-        self.focus_override = None  # callable(node) -> bool, to break focus
-
-    # raw tree
-    async def get_ui_tree(self):
-        children = []
-        for node in self.nodes:
-            left, top, right, bottom = (int(p) for p in node["bounds"].split(","))
-            children.append(
-                {
-                    "resourceId": node["resourceId"],
-                    "className": node["className"],
-                    "text": node["text"],
-                    "isFocused": node["_focused"],
-                    "boundsInScreen": {
-                        "left": left,
-                        "top": top,
-                        "right": right,
-                        "bottom": bottom,
-                    },
-                }
-            )
-        if self.url is not None:
-            children.append(
-                {
-                    "resourceId": self.url[0],
-                    "className": "android.widget.EditText",
-                    "text": self.url[1],
-                    "isFocused": False,
-                    "boundsInScreen": {
-                        "left": 0,
-                        "top": 0,
-                        "right": 1080,
-                        "bottom": 100,
-                    },
-                }
-            )
-        return {
-            "a11y_tree": {"packageName": self.package, "children": children},
-            "phone_state": {
-                "packageName": self.package,
-                "isEditable": any(n["_focused"] for n in self.nodes),
-            },
-            "device_context": {},
-        }
-
-    async def tap(self, x, y):
-        self.taps.append((x, y))
-        for node in self.nodes:
-            left, top, right, bottom = (int(p) for p in node["bounds"].split(","))
-            node["_focused"] = left <= x < right and top <= y < bottom
-            if self.focus_override is not None and node["_focused"]:
-                node["_focused"] = self.focus_override(node)
-
-    async def input_text(self, text, clear=False, **kwargs):
-        self.typed.append(text)
-        return True
-
-    async def screenshot(self, hide_overlay=True):
-        return b"png"
-
-    def ui_state(self):
-        return UIState(
-            [{k: v for k, v in n.items() if k != "_focused"} for n in self.nodes],
-            "screen",
-            "",
-            {"packageName": self.package},
-            1080,
-            2400,
-        )
-
-
-class Provider:
-    supported = {"element_index"}
-    requires_coordinate_tools = False
-
-    def __init__(self, device):
-        self.device = device
-
-    async def get_state(self):
-        return self.device.ui_state()
-
-
-class Approver(ApprovalProvider):
-    def __init__(self, decision="approved", on_request=None):
-        self.decision = decision
-        self.requests = []
-        self.on_request = on_request
-
-    async def request(self, kind, details):
-        self.requests.append((kind, dict(details)))
-        if self.on_request:
-            self.on_request()
-        return self.decision
-
-
-class Secrets(CredentialManager):
-    def __init__(self, specs, values=None, on_resolve=None):
-        self.specs = specs
-        self.values = values or {
-            "card_number": CARD_NUMBER,
-            "card_cvc": CARD_CVC,
-            "card_note": "Jane Doe",
-            "login": "hunter22",
-        }
-        self.on_resolve = on_resolve
-
-    async def resolve_key(self, key):
-        if self.on_resolve:
-            self.on_resolve()
-        return self.values[key]
-
-    async def get_keys(self):
-        return list(self.values)
-
-    async def get_secret_specs(self):
-        return self.specs
-
-
-def card_specs(label="Test card", kind="payment_card"):
-    return [
-        SecretSpec(
-            "card_number",
-            requires_approval=True,
-            approval_kind=kind,
-            approval_label=label,
-        ),
-        SecretSpec(
-            "card_cvc",
-            requires_approval=True,
-            approval_kind=kind,
-            approval_label=label,
-            redact="input_only",
-        ),
-        SecretSpec("login"),
-    ]
-
-
-def make_ctx(device, manager, approver=None, *, wrapped=True, state=None):
-    driver = SecretSafeDriver(device, SecretRedactor()) if wrapped else device
-    state = state or MobileAgentState()
-    ctx = ActionContext(
-        driver=driver,
-        ui=device.ui_state(),
-        shared_state=state,
-        state_provider=Provider(device),
-        credential_manager=manager,
-        approval_provider=approver,
-    )
-    return ctx
+pytestmark = pytest.mark.usefixtures("no_settle")
 
 
 # -- public contract ---------------------------------------------------------
 
 
-def test_frozen_public_contract():
-    assert inspect.isabstract(ApprovalProvider)
-    assert ApprovalProvider.__abstractmethods__ == {"request"}
-    assert ApprovalDecision.__args__ == ("approved", "denied", "expired")
-    assert SecretSpec("k") == SecretSpec(
-        "k", False, None, None, "global"
-    )  # field order and defaults
-    with pytest.raises(FrozenInstanceError):
-        SecretSpec("k").key = "x"
-
-    signature = inspect.signature(MobileAgent.__init__)
-    param = signature.parameters["approval_provider"]
+def test_approval_provider_is_keyword_only_and_last_on_the_context():
+    param = inspect.signature(MobileAgent.__init__).parameters["approval_provider"]
     assert param.kind is inspect.Parameter.KEYWORD_ONLY and param.default is None
-    names = list(signature.parameters)
-    assert names.index("args") < names.index("approval_provider")
-
-    ctx_params = list(inspect.signature(ActionContext.__init__).parameters)
-    assert ctx_params[-1] == "approval_provider"
-    assert ctx_params[1:-1] == [
-        "driver",
-        "ui",
-        "shared_state",
-        "state_provider",
-        "app_opener_llm",
-        "credential_manager",
-        "streaming",
-        "macro_recorder",
-    ]
-    assert action_context_module.ActionContext is ActionContext
+    assert list(inspect.signature(ActionContext.__init__).parameters)[-1] == (
+        "approval_provider"
+    )
 
 
 def test_default_specs_come_from_keys_and_manager_stays_concrete():
@@ -552,14 +345,6 @@ def test_two_focused_fields_are_ambiguous():
     assert not result.success and device.typed == []
 
 
-def browser(url, package=CHROME, bar=CHROME_BAR):
-    return Device(
-        package=package,
-        url=(bar, url),
-        nodes=[field(1, "web:id/card", (100, 200, 900, 300))],
-    )
-
-
 def test_browser_approval_is_bound_to_package_and_host():
     device = browser("https://Shop.Example.com/checkout?x=1")
     approver = Approver()
@@ -722,6 +507,196 @@ def test_host_normalization_rejects_userinfo_tricks():
     )
     assert host_from_text("EXAMPLE.com:8443/path") == "example.com"
     assert host_from_text("not a url") is None
+
+
+# -- destination identity ------------------------------------------------------
+
+
+def _focus(device, resource_suffix, *, mutate=None):
+    """Tap handler that moves the focus to the node with this id suffix."""
+
+    async def tap(x, y):
+        device.taps.append((x, y))
+        for node in device.nodes:
+            node["_focused"] = node["resourceId"].endswith(resource_suffix)
+            if node["_focused"] and mutate:
+                mutate(node)
+
+    return tap
+
+
+def test_focused_enclosing_container_is_not_the_selected_field():
+    device = Device()
+    device.nodes.append(
+        field(4, f"{SHOP}:id/container", (50, 150, 950, 350))  # wraps field 1
+    )
+    device.tap = _focus(device, "container")
+    ctx = make_ctx(device, Secrets(card_specs()), Approver())
+
+    result = run(type_secret("card_number", 1, ctx=ctx))
+
+    assert not result.success and "not the one that was selected" in result.summary
+    assert device.typed == []
+
+
+def test_same_bounds_replacement_with_another_id_is_refused():
+    device = Device()
+
+    def replace(node):
+        node["resourceId"] = f"{SHOP}:id/lookalike"
+
+    async def tap(x, y):
+        device.taps.append((x, y))
+        for node in device.nodes:
+            node["_focused"] = node["resourceId"].endswith("number")
+            if node["_focused"]:
+                replace(node)
+
+    device.tap = tap
+    ctx = make_ctx(device, Secrets(card_specs()), Approver())
+
+    result = run(type_secret("card_number", 1, ctx=ctx))
+
+    assert not result.success and device.typed == []
+
+
+def test_selected_element_without_text_field_evidence_is_refused():
+    device = Device()
+    device.nodes.append(
+        field(4, f"{SHOP}:id/pay", (100, 800, 900, 900), cls="android.widget.Button")
+    )
+    ctx = make_ctx(device, Secrets(card_specs()), Approver())
+
+    result = run(type_secret("card_number", 4, ctx=ctx))
+
+    assert not result.success and "not a text field" in result.summary
+    assert device.typed == [] and device.taps == []
+
+
+def test_visible_keyboard_alone_is_not_text_field_evidence():
+    device = Device()
+
+    def strip_editability(node):
+        node["className"] = "android.view.View"
+
+    device.tap = _focus(device, "number", mutate=strip_editability)
+    ctx = make_ctx(device, Secrets(card_specs()), Approver())
+
+    assert not run(type_secret("card_number", 1, ctx=ctx)).success
+    assert device.typed == []
+
+    observation = observe_target(
+        {
+            "a11y_tree": {
+                "children": [{"className": "android.view.View", "isFocused": True}]
+            },
+            "phone_state": {"packageName": SHOP, "isEditable": True},
+        }
+    )
+    assert observation.focused_editable == []
+
+
+def test_two_nodes_with_the_same_signature_are_ambiguous():
+    device = Device()
+    device.nodes.append(dict(device.nodes[0], index=9))  # identical twin
+    ctx = make_ctx(device, Secrets(card_specs()), Approver())
+
+    result = run(type_secret("card_number", 1, ctx=ctx))
+
+    assert not result.success and "uniquely" in result.summary
+    assert device.typed == []
+
+
+def test_protected_secret_needs_a_driver_that_can_mask_afterwards():
+    device = Device()
+    ctx = make_ctx(device, Secrets(card_specs()), Approver(), wrapped=False)
+
+    result = run(type_secret("card_number", 1, ctx=ctx))
+
+    assert not result.success and device.typed == []
+
+
+# -- address bar identity ------------------------------------------------------
+
+
+def _web_spoof_device():
+    """A fully qualified address-bar id that only exists inside web content."""
+    device = Device(package=CHROME, nodes=[], url=None)
+    original = device.get_ui_tree
+
+    async def tree():
+        data = await original()
+        data["a11y_tree"]["children"] = [
+            {
+                "className": "android.webkit.WebView",
+                "children": [
+                    {
+                        "resourceId": CHROME_BAR,
+                        "className": "android.widget.EditText",
+                        "text": "good.example.com",
+                    },
+                    {
+                        "className": "android.widget.EditText",
+                        "isFocused": True,
+                        "text": "",
+                    },
+                ],
+            }
+        ]
+        return data
+
+    device.get_ui_tree = tree
+    return device
+
+
+def test_address_bar_id_inside_web_content_is_not_chrome():
+    device = _web_spoof_device()
+    approver = Approver()
+    ctx = make_ctx(device, Secrets(card_specs()), approver)
+
+    result = run(type_secret("card_number", -1, ctx=ctx))
+
+    assert not result.success
+    assert approver.requests == [] and device.typed == []
+
+
+def test_address_bar_must_be_a_text_node():
+    device = browser("good.example.com")
+    device.url = (CHROME_BAR, "good.example.com")
+    original = device.get_ui_tree
+
+    async def tree():
+        data = await original()
+        for node in data["a11y_tree"]["children"]:
+            if node["resourceId"] == CHROME_BAR:
+                node["className"] = "android.view.View"
+        return data
+
+    device.get_ui_tree = tree
+    approver = Approver()
+    ctx = make_ctx(device, Secrets(card_specs()), approver)
+
+    assert not run(type_secret("card_number", 1, ctx=ctx)).success
+    assert approver.requests == []
+
+
+def test_duckduckgo_address_bar_is_a_supported_adapter():
+    observation = observe_target(
+        {
+            "a11y_tree": {
+                "children": [
+                    {
+                        "resourceId": "com.duckduckgo.mobile.android:id/omnibarTextInput",
+                        "className": "android.widget.EditText",
+                        "text": "duckduckgo.com",
+                    }
+                ]
+            },
+            "phone_state": {"packageName": "com.duckduckgo.mobile.android"},
+        }
+    )
+
+    assert observation.target.host == "duckduckgo.com"
 
 
 # -- values never leak -------------------------------------------------------

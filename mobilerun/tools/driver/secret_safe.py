@@ -28,13 +28,18 @@ import re
 import threading
 import weakref
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any, Iterator, List, Literal, Optional, Pattern
+from dataclasses import dataclass, field
+from typing import Any, Iterator, List, Literal, Optional, Pattern, Tuple
 
 logger = logging.getLogger("mobilerun")
 
 PLACEHOLDER = "[secret:{}]"
 _MIN_GLOBAL_DIGITS = 8
+_MIN_SEGMENTED_CHARS = 4
+# Containers with more leaf texts than this are not scanned for values split
+# across nodes (cost bound; smaller groups such as a code or card row are).
+_MAX_SEGMENT_LEAVES = 40
+_MAX_PARTIAL_PREFIX = 64
 
 # Geometry and identity fields: never carry secrets, and rewriting them would
 # break tap targets.
@@ -54,11 +59,14 @@ _INPUT_CLASS_MARKERS = ("EditText", "TextField", "SearchField")
 @dataclass
 class _Entry:
     secret_id: str
-    pattern: Pattern[str]
+    # The pattern is built from the secret value: keep it out of repr/logs.
+    pattern: Pattern[str] = field(repr=False)
     # Digit-only values of at least _MIN_GLOBAL_DIGITS digits are masked
     # everywhere, whatever the configured policy.
     everywhere: bool
     input_only: bool
+    # Long enough to look for it spread over several adjacent text nodes.
+    segmentable: bool
 
     def applies(self, in_input: bool, structured: bool) -> bool:
         if self.everywhere or not self.input_only:
@@ -121,6 +129,19 @@ def _is_input_node(node: dict) -> bool:
     )
 
 
+def _collect_leaves(node: Any, out: list) -> None:
+    """Ordered nodes that carry their own text and have no children."""
+    if isinstance(node, list):
+        for item in node:
+            _collect_leaves(item, out)
+    elif isinstance(node, dict):
+        children = node.get("children")
+        if isinstance(children, list) and children:
+            _collect_leaves(children, out)
+        elif isinstance(node.get("text"), str) and node["text"]:
+            out.append(node)
+
+
 def _tree_is_structured(node: Any) -> bool:
     """True when the tree says per node whether it is focused or editable."""
     if isinstance(node, list):
@@ -152,19 +173,48 @@ class SecretRedactor:
         protected: bool = False,
     ) -> None:
         """Register a value that is about to be typed (before typing it)."""
+        self._add([self._entry(secret_id, value, redact)], protected)
+
+    def register_partial(
+        self,
+        secret_id: str,
+        value: str,
+        *,
+        redact: Literal["global", "input_only"] = "global",
+    ) -> None:
+        """Also mask every prefix of ``value``: typing may have stopped midway."""
+        stop = min(len(value), _MAX_PARTIAL_PREFIX + 1)
+        prefixes = [
+            self._entry(secret_id, value[:k], redact)
+            for k in range(_MIN_SEGMENTED_CHARS, stop)
+            if value[:k].strip()
+        ]
+        self._add([e for e in prefixes if e is not None], protected=False)
+
+    @staticmethod
+    def _entry(secret_id: str, value: str, redact: str) -> Optional[_Entry]:
         if not value or not value.strip():
-            return
+            return None
         pattern, long_digits = _compile(value)
-        entry = _Entry(
+        compact = re.sub(r"[\s\-]", "", value)
+        return _Entry(
             secret_id=secret_id,
             pattern=pattern,
             everywhere=long_digits,
             input_only=redact == "input_only",
+            segmentable=len(compact) >= _MIN_SEGMENTED_CHARS,
         )
+
+    def _add(self, entries: List[Optional[_Entry]], protected: bool) -> None:
+        added = [e for e in entries if e is not None]
         with self._lock:
-            self._entries.append(entry)
+            # Copy-on-write: readers iterate a list that is never mutated.
             # Longest pattern first so overlapping values mask the longer one.
-            self._entries.sort(key=lambda e: len(e.pattern.pattern), reverse=True)
+            self._entries = sorted(
+                [*self._entries, *added],
+                key=lambda e: len(e.pattern.pattern),
+                reverse=True,
+            )
             if protected:
                 self.black_screenshots = True
 
@@ -199,10 +249,12 @@ class SecretRedactor:
         if isinstance(data, str):
             return self.redact_text(data, in_input=in_input, structured=structured)
         if isinstance(data, list):
-            return [
+            items = [
                 self.redact_data(item, in_input=in_input, structured=structured)
                 for item in data
             ]
+            self._mask_segments(items, structured)
+            return items
         if isinstance(data, tuple):
             return tuple(
                 self.redact_data(item, in_input=in_input, structured=structured)
@@ -210,23 +262,49 @@ class SecretRedactor:
             )
         if isinstance(data, dict):
             node_input = in_input or (structured and _is_input_node(data))
-            return {
-                key: (
-                    value
-                    if key in _SKIP_KEYS
-                    else self.redact_data(
-                        value,
-                        in_input=(
-                            True
-                            if key == "focusedElement"
-                            else (node_input if key != "children" else in_input)
-                        ),
-                        structured=structured,
-                    )
+            masked: dict = {}
+            for key, value in data.items():
+                if key in _SKIP_KEYS:
+                    masked[key] = value
+                    continue
+                if key == "focusedElement":
+                    child_in_input = True
+                elif key == "children":
+                    child_in_input = in_input
+                else:
+                    child_in_input = node_input
+                masked[key] = self.redact_data(
+                    value, in_input=child_in_input, structured=structured
                 )
-                for key, value in data.items()
-            }
+            return masked
         return data
+
+    def _mask_segments(self, nodes: list, structured: bool) -> None:
+        """Mask a value spread over adjacent leaf texts (``nodes`` are copies)."""
+        entries = [
+            e for e in self._entries if e.segmentable and e.applies(False, structured)
+        ]
+        if not entries:
+            return
+        leaves: list = []
+        _collect_leaves(nodes, leaves)
+        if len(leaves) < 2 or len(leaves) > _MAX_SEGMENT_LEAVES:
+            return
+        for entry in entries:
+            for separator in ("", " "):
+                text, spans = "", []
+                for leaf in leaves:
+                    spans.append((len(text), len(text) + len(leaf["text"])))
+                    text += leaf["text"] + separator
+                for match in entry.pattern.finditer(text):
+                    hit = [
+                        leaf
+                        for leaf, (start, end) in zip(leaves, spans)
+                        if start < match.end() and end > match.start()
+                    ]
+                    if len(hit) >= 2:
+                        for leaf in hit:
+                            leaf["text"] = PLACEHOLDER.format(entry.secret_id)
 
     def redact_ui_tree(self, data: Any) -> Any:
         """Redact the payload of ``driver.get_ui_tree()``."""
@@ -343,11 +421,11 @@ class SecretSafeDriver:
         return getattr(self.inner, name)
 
     @property
-    def log(self) -> list:
-        """Redacted view of the recording log, if the chain has one."""
-        raw = self.inner.log
+    def log(self) -> Optional[list]:
+        """Redacted view of the recording log; ``None`` if the chain has none."""
+        raw = getattr(self.inner, "log", None)
         if not isinstance(raw, list):
-            raise AttributeError("log")
+            return None
         return [self.redactor.redact_data(dict(entry)) for entry in raw]
 
     # -- observations ------------------------------------------------------
@@ -380,35 +458,62 @@ class SecretSafeDriver:
     ) -> bool:
         """Type a secret. The value is registered for masking before typing."""
         self.redactor.register(secret_id, value, redact=redact, protected=protected)
+        starts = self._log_lengths()
+        typed = False
         try:
-            return await self.inner.input_text(value, clear)
+            typed = await self.inner.input_text(value, clear)
+            return typed
         finally:
-            self._scrub_recording_log(secret_id, value, protected)
+            if not typed:
+                # Failed or interrupted: part of the value may be on screen.
+                self.redactor.register_partial(secret_id, value, redact=redact)
+            self._scrub_recording_logs(starts, secret_id, value, protected)
 
-    def _scrub_recording_log(self, secret_id: str, value: str, protected: bool) -> None:
-        """Replace plaintext ``input_text`` entries of ``value`` in inner logs."""
+    def _log_lengths(self) -> List[Tuple[list, int]]:
+        """Every recording log in the wrapper chain with its current length."""
+        found: List[Tuple[list, int]] = []
+        seen: set = set()
         node = self.inner
-        seen = 0
-        while node is not None and seen < 8:
-            seen += 1
-            log = node.__dict__.get("log") if hasattr(node, "__dict__") else None
+        while node is not None and id(node) not in seen:
+            seen.add(id(node))
+            attrs = vars(node) if hasattr(node, "__dict__") else {}
+            log = attrs.get("log")
             if isinstance(log, list):
-                for i, entry in enumerate(log):
-                    if (
-                        isinstance(entry, dict)
-                        and entry.get("action_type") == "input_text"
-                        and isinstance(entry.get("text"), str)
-                        and value in entry["text"]
-                    ):
-                        replacement = {
-                            "action_type": "type_secret",
-                            "secret_id": secret_id,
-                            "clear": bool(entry.get("clear", False)),
-                        }
-                        if protected:
-                            replacement["protected"] = True
-                        log[i] = replacement
-            node = node.__dict__.get("inner") if hasattr(node, "__dict__") else None
+                found.append((log, len(log)))
+            node = attrs.get("inner")
+        return found
+
+    @staticmethod
+    def _scrub_recording_logs(
+        starts: List[Tuple[list, int]], secret_id: str, value: str, protected: bool
+    ) -> None:
+        """Replace this call's plaintext ``input_text`` entries by a marker.
+
+        Only entries appended since ``starts`` are touched: the value itself,
+        or the words and blanks an inner Stealth wrapper typed one by one.
+        """
+        spoken = {value, " ", *value.split(" ")}
+        for log, start in starts:
+            hits = [
+                i
+                for i in range(start, len(log))
+                if isinstance(log[i], dict)
+                and log[i].get("action_type") == "input_text"
+                and isinstance(log[i].get("text"), str)
+                and log[i]["text"] in spoken
+            ]
+            if not hits:
+                continue
+            marker = {
+                "action_type": "type_secret",
+                "secret_id": secret_id,
+                "clear": bool(log[hits[0]].get("clear", False)),
+            }
+            if protected:
+                marker["protected"] = True
+            log[hits[0]] = marker
+            for i in reversed(hits[1:]):
+                del log[i]
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +547,9 @@ class SecretSafeStateProvider:
         return self.redactor.redact_ui_state(state, trusted=self.trusted)
 
     async def get_final_state(self, *args: Any, **kwargs: Any) -> Any:
-        state = await self.inner.get_final_state(*args, **kwargs)
+        # Providers that only offer get_state() serve final reads with it too.
+        read = getattr(self.inner, "get_final_state", None) or self.inner.get_state
+        state = await read(*args, **kwargs)
         return self.redactor.redact_ui_state(state, trusted=self.trusted)
 
 

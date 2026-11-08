@@ -3,121 +3,38 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from conftest import SHOP, Approver, Device, Secrets, field, make_ctx, run
 from llama_index.core.base.llms.types import ChatMessage, ChatResponse
 
-from mobilerun.agent.action_context import ActionContext
 from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.droid.droid_agent import MobileAgent
 from mobilerun.agent.droid.events import (
     ExecutorInputEvent,
     FinalizeEvent,
     ManagerInputEvent,
-    ManagerPlanEvent,
 )
 from mobilerun.agent.droid.state import MobileAgentState
 from mobilerun.agent.fast_agent.fast_agent import FastAgent
-from mobilerun.agent.utils import actions
 from mobilerun.agent.utils.actions import type_secret
-from mobilerun.credential_manager import (
-    ApprovalProvider,
-    CredentialManager,
-    SecretSpec,
-)
+from mobilerun.credential_manager import CredentialManager, SecretSpec
 from mobilerun.macro.replay import APPROVAL_REQUIRED, MacroPlayer
 from mobilerun.macro.state import MACRO_SCHEMA_VERSION, normalize_ui_state
-from mobilerun.tools.driver.secret_safe import SecretRedactor, SecretSafeDriver
 
 CARD = "4111 1111 1111 1111"
 
-
-@pytest.fixture(autouse=True)
-def no_settle(monkeypatch):
-    monkeypatch.setattr(actions, "_SECRET_FOCUS_SETTLE_SECONDS", 0)
+pytestmark = pytest.mark.usefixtures("no_settle")
 
 
-def run(coro):
-    return asyncio.run(coro)
-
-
-# -- shared device fake for the real type_secret path -------------------------
-
-
-class Device:
-    def __init__(self):
-        self.typed = []
-        self.taps = []
-        self.focused = False
-
-    async def get_ui_tree(self):
-        node = {
-            "resourceId": "com.example.shop:id/card",
-            "className": "android.widget.EditText",
-            "text": "",
-            "isFocused": self.focused,
-            "boundsInScreen": {"left": 0, "top": 0, "right": 500, "bottom": 100},
-        }
-        return {
-            "a11y_tree": {"packageName": "com.example.shop", "children": [node]},
-            "phone_state": {"packageName": "com.example.shop", "isEditable": True},
-        }
-
-    async def tap(self, x, y):
-        self.taps.append((x, y))
-        self.focused = True
-
-    async def input_text(self, text, clear=False, **kwargs):
-        self.typed.append(text)
-        return True
-
-
-class UI:
-    def get_element(self, index):
-        return {
-            "index": 1,
-            "resourceId": "com.example.shop:id/card",
-            "className": "android.widget.EditText",
-            "bounds": "0,0,500,100",
-        }
-
-    def get_element_coords(self, index):
-        return (250, 50)
-
-
-class Provider:
-    async def get_state(self):
-        return UI()
-
-
-class Denier(ApprovalProvider):
-    def __init__(self, decision="denied"):
-        self.decision = decision
-        self.count = 0
-
-    async def request(self, kind, details):
-        self.count += 1
-        return self.decision
-
-
-class Secrets(CredentialManager):
-    async def resolve_key(self, key):
-        return CARD
-
-    async def get_keys(self):
-        return ["card"]
-
-    async def get_secret_specs(self):
-        return [SecretSpec("card", requires_approval=True, approval_label="Card")]
+# -- real type_secret path on a one-field screen ------------------------------
 
 
 def real_ctx(shared_state, provider):
-    return ActionContext(
-        driver=SecretSafeDriver(Device(), SecretRedactor()),
-        ui=UI(),
-        shared_state=shared_state,
-        state_provider=Provider(),
-        credential_manager=Secrets(),
-        approval_provider=provider,
+    device = Device(nodes=[field(1, f"{SHOP}:id/card", (0, 0, 500, 100))])
+    manager = Secrets(
+        [SecretSpec("card", requires_approval=True, approval_label="Card")],
+        values={"card": CARD},
     )
+    return make_ctx(device, manager, provider, state=shared_state)
 
 
 # -- FastAgent: sticky abort ------------------------------------------------
@@ -197,8 +114,7 @@ def _run_fast(responses, *, queue_message=False, decision="denied", provider=Tru
         state = MobileAgentState()
         if queue_message:
             state.queue_user_message("please continue anyway")
-        denier = Denier(decision) if provider else None
-        ctx = real_ctx(state, denier)
+        ctx = real_ctx(state, Approver(decision) if provider else None)
         registry = _Registry(ctx)
         responder = _Responder(responses)
         agent = FastAgent(
@@ -576,5 +492,36 @@ def test_replay_input_error_never_logs_the_value(caplog):
     assert ok is False and "hunter22" not in caplog.text
 
 
-def test_plan_event_import_surface_is_unchanged():
-    assert ManagerPlanEvent and FinalizeEvent
+def test_replay_that_typed_a_secret_refuses_the_agent_handoff():
+    handoffs = []
+
+    async def handoff(**kwargs):
+        handoffs.append(kwargs)
+        return True
+
+    player = _player(ReplaySecrets(GATED), handoff)
+    player.on_mismatch = "agent"
+    macro = _macro(
+        {"action_type": "type_secret", "secret_id": "login"},
+        {"action_type": "wait", "duration": 0},  # pre-state no longer matches
+    )
+
+    assert run(player.replay_macro(macro)) is False
+
+    assert player.driver.inputs == [("hunter22", False)]
+    assert handoffs == []
+
+
+def test_replay_without_a_typed_secret_still_hands_off():
+    handoffs = []
+
+    async def handoff(**kwargs):
+        handoffs.append(kwargs)
+        return True
+
+    player = _player(ReplaySecrets(GATED), handoff)
+    player.on_mismatch = "agent"
+    player.driver.tree = {"a11y_tree": [], "phone_state": {"package": "other"}}
+
+    assert run(player.replay_macro(_macro({"action_type": "wait", "duration": 0})))
+    assert len(handoffs) == 1

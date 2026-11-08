@@ -8,7 +8,6 @@ that were generated during MobileAgent trajectory recording.
 import asyncio
 import logging
 import time
-from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from mobilerun_core_local.driver.android import AndroidDriver
@@ -21,7 +20,7 @@ from mobilerun.macro.state import (
     UNSUPPORTED_SCHEMA_MESSAGE,
     normalize_ui_state,
 )
-from mobilerun.credential_manager.secret_gate import spec_for
+from mobilerun.credential_manager.secret_gate import SecretRunState, spec_for
 from mobilerun.tools.driver.secret_safe import SecretRedactor, SecretSafeDriver
 from mobilerun.tools.filters import DetailedFilter
 from mobilerun.tools.formatters import IndexedFormatter
@@ -83,6 +82,8 @@ class MacroPlayer:
         self._redactor = SecretRedactor()
         # Set when a replay stopped on an approval-gated secret.
         self.abort_reason: Optional[str] = None
+        # Secret specs, loaded once per replay.
+        self._secret_state = SecretRunState()
 
     async def _initialize_driver(self) -> AndroidDriver:
         """Initialize AndroidDriver for the target device."""
@@ -182,8 +183,7 @@ class MacroPlayer:
         if not secret_id or credential_manager is None:
             return False
         try:
-            ctx = SimpleNamespace(credential_manager=credential_manager)
-            spec = await spec_for(ctx, secret_id)
+            spec = await spec_for(self._secret_state, credential_manager, secret_id)
         except Exception as e:
             logger.error("Cannot read the approval policy: %s", type(e).__name__)
             return True
@@ -387,6 +387,7 @@ class MacroPlayer:
             True if all actions were executed successfully, False otherwise
         """
         self.abort_reason = None
+        self._secret_state = SecretRunState()
         self._redactor.clear()
         try:
             return await self._replay_macro(macro_data, start_from_step, max_steps)
@@ -450,6 +451,14 @@ class MacroPlayer:
                     "score": match_result.score if match_result else None,
                 }
                 if self.on_mismatch == "agent":
+                    if self._redactor.active:
+                        # The handoff agent runs on its own driver and would
+                        # observe the typed value unmasked.
+                        logger.error(
+                            "❌ Not handing off to the agent: this replay typed "
+                            "a secret"
+                        )
+                        return False
                     logger.warning("🤖 Handing off to agent after macro divergence")
                     return await self.handoff_runner(
                         goal=description,

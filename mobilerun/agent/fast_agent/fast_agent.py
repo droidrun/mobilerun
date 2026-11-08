@@ -643,7 +643,7 @@ class FastAgent(Workflow):
 
             # A terminal abort (e.g. denied approval) ends the run now: before
             # completion, queued user messages, further tool calls or LLM turns.
-            if reason := getattr(self.shared_state, "terminal_abort", None):
+            if reason := self.shared_state.terminal_abort:
                 logger.info("Run aborted: %s", reason)
                 self.shared_state.finished = False
                 event = FastAgentEndEvent(
