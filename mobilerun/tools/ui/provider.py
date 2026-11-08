@@ -20,6 +20,8 @@ from mobilerun_core_local.driver.base import DeviceDisconnectedError
 from mobilerun.tools.helpers.coordinate import NORMALIZED_STATE_NOTE
 from mobilerun.tools.helpers.images import (
     fit_dimensions_to_max_side,
+    grid_cell_center,
+    grid_cell_label,
     resize_image_to_dimensions_with_grid,
     resize_image_to_max_side_with_grid,
 )
@@ -286,6 +288,8 @@ class StateProvider:
         from mobilerun.agent.selectors.base import ActionCandidate
 
         options = list(self.get_action_candidates(ctx.ui)) if ctx.ui is not None else []
+        if "click_at" in tools:
+            options.extend(self._grid_candidates(ctx.ui))
         if not include_device_actions:
             return tuple(options)
 
@@ -338,17 +342,15 @@ class StateProvider:
                 unique.append(option)
         return tuple(unique)
 
-    def _swipe_candidates(self, state: UIState | None) -> list[ActionCandidate]:
-        from mobilerun.agent.fast_agent.xml_parser import ToolCall
-        from mobilerun.agent.selectors.base import ActionCandidate
-
+    def _action_space(self, state: UIState | None) -> tuple[float, float] | None:
+        """Size of the coordinate space coordinate actions are written in."""
         if state is None or not state.screen_width or not state.screen_height:
-            return []
+            return None
         if (
             getattr(self, "requires_active_contract_for_coords", False)
             and not state.coordinate_contract_active
         ):
-            return []
+            return None
         if state.use_normalized:
             width = height = 1000
         elif getattr(self, "requires_coordinate_tools", False):
@@ -358,9 +360,45 @@ class StateProvider:
                 width = state.screen_width / state.coordinate_scale_x
                 height = state.screen_height / state.coordinate_scale_y
             except (TypeError, ValueError, ZeroDivisionError):
-                return []
+                return None
         if not all(math.isfinite(value) and value >= 4 for value in (width, height)):
+            return None
+        return width, height
+
+    def _grid_candidates(self, state: UIState | None) -> list[ActionCandidate]:
+        from mobilerun.agent.fast_agent.xml_parser import ToolCall
+        from mobilerun.agent.selectors.base import ActionCandidate
+
+        cells = getattr(self, "model_screenshot_cells", None)
+        space = self._action_space(state)
+        if not cells or space is None:
             return []
+        columns, rows = cells
+        return [
+            ActionCandidate(
+                ToolCall(
+                    "click_at",
+                    dict(
+                        zip(
+                            ("x", "y"),
+                            grid_cell_center(column, row, columns, rows, *space),
+                        )
+                    ),
+                ),
+                f"Tap grid cell {grid_cell_label(column, row)}",
+            )
+            for row in range(rows)
+            for column in range(columns)
+        ]
+
+    def _swipe_candidates(self, state: UIState | None) -> list[ActionCandidate]:
+        from mobilerun.agent.fast_agent.xml_parser import ToolCall
+        from mobilerun.agent.selectors.base import ActionCandidate
+
+        space = self._action_space(state)
+        if space is None:
+            return []
+        width, height = space
 
         def point(x: float, y: float) -> list[int]:
             return [round((width - 1) * x), round((height - 1) * y)]
@@ -487,9 +525,10 @@ def resize_model_screenshot_with_grid(state_provider: Any, screenshot: bytes) ->
     height = getattr(state_provider, "model_screenshot_height", None)
     # A pixel grid contradicts a normalized coordinate contract.
     divisions = 10 if getattr(state_provider, "model_screenshot_grid", True) else 0
+    cells = getattr(state_provider, "model_screenshot_cells", None)
     if width and height:
         return resize_image_to_dimensions_with_grid(
-            screenshot, width, height, divisions=divisions
+            screenshot, width, height, divisions=divisions, cells=cells
         )
     return resize_image_to_max_side_with_grid(screenshot, divisions=divisions)
 
@@ -507,6 +546,7 @@ async def resize_model_screenshot_async(
             state_provider, "model_screenshot_height", None
         ),
         model_screenshot_grid=getattr(state_provider, "model_screenshot_grid", True),
+        model_screenshot_cells=getattr(state_provider, "model_screenshot_cells", None),
     )
     return await asyncio.to_thread(
         resize_model_screenshot_with_grid, geometry, screenshot

@@ -1,8 +1,10 @@
 import asyncio
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from PIL import Image
 from llama_index.core.llms.mock import MockLLM
 from llama_index.core.workflow import Context, StartEvent
 from mobilerun_core_local.driver.base import DeviceDisconnectedError
@@ -20,7 +22,12 @@ from mobilerun.agent.selectors import (
     SelectionRequest,
 )
 from mobilerun.agent.utils.signatures import build_tool_registry
-from mobilerun.tools.ui.provider import StateProvider
+from mobilerun.tools.helpers.images import grid_shape, image_dimensions
+from mobilerun.tools.ui.provider import StateProvider, resize_model_screenshot_async
+from mobilerun.tools.ui.screenshot_provider import (
+    DECISION_GRID_CELLS,
+    ScreenshotOnlyStateProvider,
+)
 from mobilerun.tools.ui.state import UIState
 
 
@@ -403,13 +410,117 @@ def test_llm_in_the_chain_keeps_name_based_app_launching(monkeypatch):
     asyncio.run(run())
 
 
-def test_decision_models_reject_screenshot_only_states():
-    config = MobileConfig()
-    config.agent.vision_only = True
-    selector = DecisionSelector(SimpleNamespace(decide=AsyncMock()))
+def _png(size=(1080, 2400)):
+    output = BytesIO()
+    Image.new("RGB", size, "white").save(output, format="PNG")
+    return output.getvalue()
 
-    with pytest.raises(ValueError, match="accessibility tree"):
-        MobileAgent("Calculate", config=config, action_selectors=selector)
+
+@pytest.mark.parametrize(
+    "size,cells",
+    [((1080, 2400), (8, 20)), ((2400, 1080), (18, 8)), ((1000, 1000), (12, 13))],
+)
+def test_grid_shape_uses_near_square_cells_within_budget(size, cells):
+    assert grid_shape(*size, 160) == cells
+    columns, rows = cells
+    assert columns * rows <= 160
+    assert 0.6 < (size[0] / columns) / (size[1] / rows) < 1.6
+
+
+@pytest.mark.parametrize("use_normalized", [False, True])
+def test_screenshot_only_grid_cells_become_click_at_choices(use_normalized):
+    async def run():
+        driver = SimpleNamespace(
+            supported=set(), supported_buttons=set(), screenshot=AsyncMock()
+        )
+        driver.screenshot.return_value = _png()
+        provider = ScreenshotOnlyStateProvider(driver, use_normalized=use_normalized)
+        provider.action_grid_cells = 160
+        state = await provider.get_state()
+        ctx = ActionContext(driver, state, MobileAgentState(), provider)
+
+        options = await provider.build_action_candidates(
+            ctx, {"click_at": {}}, include_device_actions=True
+        )
+
+        assert provider.model_screenshot_cells == (8, 20)
+        assert "8x20 labelled cells" in state.formatted_text
+        assert "not grid-cell numbers" not in state.formatted_text
+        assert ("0-1000 normalized" in state.formatted_text) is use_normalized
+        assert ("x=/y= labels" in state.formatted_text) is not use_normalized
+        assert len(options) == 160
+        assert options[0].description == "Tap grid cell A1"
+        assert options[-1].description == "Tap grid cell H20"
+        space = (
+            (1000, 1000)
+            if use_normalized
+            else (state.screen_width, state.screen_height)
+        )
+        assert options[0].action == ToolCall(
+            "click_at", {"x": space[0] // 16, "y": space[1] // 40}
+        )
+        for option in options:
+            assert 0 <= option.action.parameters["x"] < space[0]
+            assert 0 <= option.action.parameters["y"] < space[1]
+
+        drawn = await resize_model_screenshot_async(provider, _png())
+        provider.model_screenshot_cells = None
+        plain = await resize_model_screenshot_async(provider, _png())
+        assert image_dimensions(drawn) == image_dimensions(plain)
+        assert drawn != plain
+
+    asyncio.run(run())
+
+
+def test_grid_is_off_without_a_cell_budget():
+    async def run():
+        driver = SimpleNamespace(
+            supported=set(), supported_buttons=set(), screenshot=AsyncMock()
+        )
+        driver.screenshot.return_value = _png()
+        provider = ScreenshotOnlyStateProvider(driver)
+        state = await provider.get_state()
+        ctx = ActionContext(driver, state, MobileAgentState(), provider)
+
+        assert provider.model_screenshot_cells is None
+        assert "not grid-cell numbers" in state.formatted_text
+        assert await provider.build_action_candidates(ctx, {"click_at": {}}) == ()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("decision", [True, False])
+def test_vision_only_turns_on_the_grid_only_for_decision_selectors(
+    monkeypatch, decision
+):
+    from mobilerun.agent.droid import droid_agent
+
+    async def run():
+        monkeypatch.setattr(
+            droid_agent, "load_agent_llms", Mock(return_value={"app_opener": MockLLM()})
+        )
+        ctx = _context()
+        ctx.driver.get_date = AsyncMock(return_value="2026-10-23")
+        ctx.driver.screenshot = AsyncMock(return_value=_png())
+        config = MobileConfig()
+        config.agent.vision_only = True
+        config.telemetry.enabled = False
+        selector = (
+            DecisionSelector(SimpleNamespace(decide=AsyncMock()))
+            if decision
+            else StubSelector(requires_action_llm=False)
+        )
+        agent = MobileAgent(
+            "Calculate", config=config, action_selectors=selector, driver=ctx.driver
+        )
+        with patch.object(Context, "write_event_to_stream"):
+            await agent.start_handler(Context(agent), StartEvent())
+
+        assert isinstance(agent.state_provider, ScreenshotOnlyStateProvider)
+        expected = DECISION_GRID_CELLS if decision else None
+        assert agent.state_provider.action_grid_cells == expected
+
+    asyncio.run(run())
 
 
 def test_composite_without_app_opener_keeps_exact_app_launching():
@@ -430,21 +541,3 @@ def test_composite_without_app_opener_keeps_exact_app_launching():
         assert "app_id" in agent.registry.get_signatures()["open_app"]["parameters"]
 
     asyncio.run(run())
-
-
-def test_injected_state_provider_skips_the_screenshot_only_check(monkeypatch):
-    from mobilerun.agent.droid import droid_agent
-
-    monkeypatch.setattr(
-        droid_agent, "load_agent_llms", Mock(return_value={"app_opener": MockLLM()})
-    )
-    config = MobileConfig()
-    config.agent.vision_only = True
-    selector = DecisionSelector(SimpleNamespace(decide=AsyncMock()))
-    provider = StateProvider(SimpleNamespace(supported=set(), supported_buttons=set()))
-
-    agent = MobileAgent(
-        "Calculate", config=config, action_selectors=selector, state_provider=provider
-    )
-
-    assert agent.action_selector is selector

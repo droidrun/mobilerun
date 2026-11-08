@@ -108,7 +108,11 @@ def resize_image_to_max_side_with_grid(
 
 
 def resize_image_to_dimensions_with_grid(
-    image: bytes, target_width: int, target_height: int, divisions: int = 10
+    image: bytes,
+    target_width: int,
+    target_height: int,
+    divisions: int = 10,
+    cells: tuple[int, int] | None = None,
 ) -> bytes:
     """Resize image to exact ``target_width``x``target_height`` and overlay the grid.
 
@@ -124,10 +128,85 @@ def resize_image_to_dimensions_with_grid(
                 Image.Resampling.LANCZOS,
             )
 
-        _draw_coordinate_grid(screenshot, divisions=divisions)
+        if cells:
+            _draw_cell_grid(screenshot, *cells, pixel_ticks=divisions > 0)
+        else:
+            _draw_coordinate_grid(screenshot, divisions=divisions)
         output = BytesIO()
         screenshot.save(output, format="PNG")
         return output.getvalue()
+
+
+def grid_shape(width: int, height: int, max_cells: int) -> tuple[int, int]:
+    """Columns and rows of the largest near-square cell grid within max_cells."""
+    if width <= 0 or height <= 0 or max_cells < 1:
+        raise ValueError("Grid dimensions and cell budget must be positive.")
+    columns = max(1, min(26, math.floor(math.sqrt(max_cells * width / height))))
+    return columns, max(1, max_cells // columns)
+
+
+def grid_cell_label(column: int, row: int) -> str:
+    return f"{chr(ord('A') + column)}{row + 1}"
+
+
+def grid_cell_center(
+    column: int, row: int, columns: int, rows: int, width: float, height: float
+) -> tuple[int, int]:
+    """Centre of a cell in a width x height space, kept inside its bounds."""
+    x = min(math.floor((column + 0.5) * width / columns), math.ceil(width) - 1)
+    y = min(math.floor((row + 0.5) * height / rows), math.ceil(height) - 1)
+    return x, y
+
+
+def _draw_cell_grid(
+    image: Image.Image, columns: int, rows: int, pixel_ticks: bool = False
+) -> None:
+    width, height = image.size
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    cell_width, cell_height = width / columns, height / rows
+    font = ImageFont.load_default(
+        size=max(9, round(min(cell_width, cell_height) * 0.19))
+    )
+    # Yellow over a dark halo stays visible on light and dark screens.
+    lines = [
+        ((x, 0), (x, height - 1))
+        for x in (min(round(c * cell_width), width - 1) for c in range(columns + 1))
+    ] + [
+        ((0, y), (width - 1, y))
+        for y in (min(round(r * cell_height), height - 1) for r in range(rows + 1))
+    ]
+    for line in lines:
+        draw.line(line, fill=(0, 0, 0, 110), width=3)
+    for line in lines:
+        draw.line(line, fill=(255, 220, 0, 170), width=1)
+    # Labels sit on the tap point: corner labels make models pick a cell off.
+    for column in range(columns):
+        for row in range(rows):
+            center = grid_cell_center(column, row, columns, rows, width, height)
+            label = grid_cell_label(column, row)
+            left, top, right, bottom = draw.textbbox(
+                center, label, font=font, anchor="mm"
+            )
+            draw.rectangle(
+                (left - 2, top - 1, right + 2, bottom + 1), fill=(0, 0, 0, 150)
+            )
+            draw.text(center, label, font=font, anchor="mm", fill=(255, 255, 255, 240))
+    if pixel_ticks:
+        # LLMs sharing this screenshot still write pixel coordinates.
+        tick_font = ImageFont.load_default()
+        tick_colors = ((255, 255, 255, 230), (0, 0, 0, 190), (0, 0, 0, 115))
+        for column in range(1, columns):
+            x = round(column * cell_width)
+            _draw_grid_label(
+                draw, f"x={x}", (min(x + 3, width - 38), 4), tick_font, *tick_colors
+            )
+        for row in range(1, rows):
+            y = round(row * cell_height)
+            _draw_grid_label(
+                draw, f"y={y}", (4, min(y + 3, height - 14)), tick_font, *tick_colors
+            )
+    image.alpha_composite(overlay)
 
 
 def _draw_coordinate_grid(image: Image.Image, divisions: int) -> None:

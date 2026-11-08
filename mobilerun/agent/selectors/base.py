@@ -56,6 +56,7 @@ class SelectionRequest:
             "registered_tools": set(self.tools),
             "can_type": bool(available_tools & {"type", "type_text"}),
             "can_scroll": "swipe" in available_tools,
+            "can_tap_grid": "click_at" in available_tools,
             "can_complete": can_complete,
             "vision": self.screenshot is not None,
             "variables": self.variables,
