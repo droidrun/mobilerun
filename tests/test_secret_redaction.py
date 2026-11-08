@@ -800,3 +800,219 @@ def test_registered_values_do_not_appear_in_repr():
     shown = repr(redactor) + repr(redactor._entries)
 
     assert "Jane" not in shown and "4111" not in shown
+
+
+# -- round two: segmentation without size limits ---------------------------------
+
+
+def raw_node(text, *, cls="android.widget.TextView", focused=False, top=0):
+    return {
+        "text": text,
+        "className": cls,
+        "resourceId": "x:id/n",
+        "isFocused": focused,
+        "isVisibleToUser": True,
+        "boundsInScreen": {"left": 0, "top": top, "right": 100, "bottom": top + 10},
+        "children": [],
+    }
+
+
+def raw_tree(nodes):
+    return {
+        "a11y_tree": {
+            "className": "android.widget.FrameLayout",
+            "isFocused": False,
+            "boundsInScreen": {"left": 0, "top": 0, "right": 100, "bottom": 100},
+            "isVisibleToUser": True,
+            "children": nodes,
+        },
+        "phone_state": {"packageName": "com.example", "currentApp": "Example"},
+        "device_context": {
+            "screen_bounds": {"width": 100, "height": 100},
+            "display_metrics": {"width": 100, "height": 100},
+        },
+    }
+
+
+def test_code_among_many_unrelated_labels_is_masked_through_the_built_in_provider():
+    redactor = SecretRedactor()
+    redactor.register("otp", "482913")
+    labels = [raw_node(f"Label {i}", top=i) for i in range(35)]
+    boxes = [raw_node(d, top=40 + i) for i, d in enumerate("482913")]
+    driver = SecretSafeDriver(
+        RawDriver(raw_tree(labels[:20] + boxes + labels[20:])), redactor
+    )
+    provider = SecretSafeStateProvider(
+        AndroidStateProvider(
+            driver, tree_filter=ConciseFilter(), tree_formatter=IndexedFormatter()
+        ),
+        redactor,
+        trusted=True,
+    )
+
+    state = run(provider.get_state())
+
+    assert state.formatted_text.count("[secret:otp]") == 6
+    assert "Label 3" in state.formatted_text  # unrelated labels survive
+    assert not any(
+        d in repr(state.elements) for d in ("'4'", "'8'", "'2'", "'9'", "'1'")
+    )
+
+
+def test_input_only_code_boxes_are_masked_and_plain_labels_stay():
+    redactor = SecretRedactor()
+    redactor.register("otp", "482913", redact="input_only")
+    boxes = [
+        raw_node(d, cls="android.widget.EditText", top=i)
+        for i, d in enumerate("482913")
+    ]
+    labels = [raw_node(d, top=50 + i) for i, d in enumerate("482913")]
+
+    masked = redactor.redact_ui_tree(raw_tree(boxes + [raw_node("Resend")] + labels))
+
+    texts = [n["text"] for n in masked["a11y_tree"]["children"]]
+    assert texts[:6] == ["[secret:otp]"] * 6
+    assert texts[7:] == list("482913")  # same digits in plain labels stay
+
+
+def test_input_only_segments_are_not_joined_across_a_plain_label():
+    redactor = SecretRedactor()
+    redactor.register("otp", "482913", redact="input_only")
+    nodes = (
+        [raw_node(d, cls="android.widget.EditText", top=i) for i, d in enumerate("482")]
+        + [raw_node("-")]
+        + [
+            raw_node(d, cls="android.widget.EditText", top=9 + i)
+            for i, d in enumerate("913")
+        ]
+    )
+
+    texts = [
+        n["text"]
+        for n in redactor.redact_ui_tree(raw_tree(nodes))["a11y_tree"]["children"]
+    ]
+
+    assert texts == list("482") + ["-"] + list("913")
+
+
+def test_pin_pad_with_other_keys_and_letters_is_not_masked():
+    redactor = SecretRedactor()
+    redactor.register("pin", "1234")
+    pad = ["1", "2 ABC", "3 DEF", "4 GHI", "5 JKL", "6 MNO", "7", "8", "9", "0"]
+
+    texts = [
+        n["text"]
+        for n in redactor.redact_ui_tree(raw_tree([raw_node(k) for k in pad]))[
+            "a11y_tree"
+        ]["children"]
+    ]
+
+    assert texts == pad
+
+
+def test_calendar_labels_are_not_masked_by_a_partial_code():
+    redactor = SecretRedactor()
+    redactor.register_partial("otp", "202611", redact="global")
+
+    texts = [
+        n["text"]
+        for n in redactor.redact_ui_tree(
+            raw_tree([raw_node("Nov"), raw_node("8,"), raw_node("2026")])
+        )["a11y_tree"]["children"]
+    ]
+
+    assert texts == ["Nov", "8,", "2026"]
+    assert redactor.redact_text("Nov 8, 2026", structured=True) == "Nov 8, 2026"
+
+
+# -- round two: partial input --------------------------------------------------
+
+
+def test_prefix_logged_during_a_failing_input_is_masked(engine_log):
+    redactor = SecretRedactor()
+    raw = RawDriver()
+
+    async def log_then_fail(text, clear=False, **kwargs):
+        logging.getLogger("mobilerun.core").warning("typed so far: %s", text[:7])
+        return False
+
+    raw.input_text = log_then_fail
+    with redaction_scope(redactor):
+        run(SecretSafeDriver(raw, redactor).input_secret("pw", "hunter22abc"))
+
+    out = engine_log.getvalue()
+    assert "hunter2" not in out and "[secret:pw]" in out
+
+
+def test_long_alphanumeric_partial_beyond_64_chars_is_masked():
+    redactor = SecretRedactor()
+    value = "a1" * 50 + "zz"
+    redactor.register_partial("tok", value)
+
+    assert redactor.redact_text(value[:90]) == "[secret:tok]"
+    assert redactor.redact_text(value[:5]) == "[secret:tok]"
+
+
+def test_partial_password_does_not_mask_a_plain_label():
+    redactor = SecretRedactor()
+    redactor.register_partial("pw", "Password123!")
+    tree = raw_tree(
+        [
+            raw_node("Forgot password?"),
+            raw_node("Password", cls="android.widget.TextView"),
+            raw_node("Passwor", cls="android.widget.EditText", focused=True),
+        ]
+    )
+
+    texts = [n["text"] for n in redactor.redact_ui_tree(tree)["a11y_tree"]["children"]]
+
+    assert texts == ["Forgot password?", "Password", "[secret:pw]"]
+
+
+def test_partial_values_are_dropped_after_a_successful_input_but_kept_after_failure():
+    redactor = SecretRedactor()
+    raw = RawDriver()
+    driver = SecretSafeDriver(raw, redactor)
+
+    run(driver.input_secret("pw", "hunter22abc"))
+    assert redactor.redact_text("hunter2") == "hunter2"  # prefix gone, full stays
+    assert redactor.redact_text("hunter22abc") == "[secret:pw]"
+
+    async def fail(text, clear=False, **kwargs):
+        return False
+
+    raw.input_text = fail
+    run(driver.input_secret("pw", "hunter22abc"))
+    assert redactor.redact_text("hunter2", in_input=True) == "[secret:pw]"
+
+
+def test_repeated_failed_attempts_keep_one_entry_set_and_stay_fast():
+    import time
+
+    redactor = SecretRedactor()
+    raw = RawDriver()
+
+    async def fail(text, clear=False, **kwargs):
+        return False
+
+    raw.input_text = fail
+    driver = SecretSafeDriver(raw, redactor)
+    tree = raw_tree([raw_node(f"Item {i}", top=i) for i in range(729)])
+    value = "Correct-Horse-Battery-9"
+
+    run(driver.input_secret("pw", value))
+    entries_after_one = len(redactor._entries)
+    started = time.perf_counter()
+    for _ in range(50):
+        redactor.redact_ui_tree(tree)
+    single = time.perf_counter() - started
+
+    for _ in range(4):
+        run(driver.input_secret("pw", value))
+    started = time.perf_counter()
+    for _ in range(50):
+        redactor.redact_ui_tree(tree)
+    after_five = time.perf_counter() - started
+
+    assert len(redactor._entries) == entries_after_one
+    assert after_five < 2 * single + 0.05

@@ -116,7 +116,7 @@ class FieldIdentity:
     """The element the model selected, as seen in the raw pre-tap tree."""
 
     resource_id: str
-    class_name: str
+    class_name: str  # full raw class, compared exactly
     path: Tuple[int, ...]
     bounds: Tuple[int, int, int, int]
 
@@ -127,13 +127,6 @@ class SecretRunState:
 
     specs: Optional[Dict[str, SecretSpec]] = None
     approvals: set = field(default_factory=set)
-
-
-def run_state(ctx: Any) -> SecretRunState:
-    state = getattr(ctx, "secret_run", None)
-    if state is None:  # contexts built without ActionContext
-        state = ctx.secret_run = SecretRunState()
-    return state
 
 
 async def spec_for(
@@ -344,7 +337,7 @@ async def ensure_approval(ctx: Any, spec: SecretSpec, target: Target) -> None:
     One approval covers every field of the same kind/label/target and nothing
     else. Raises ``SecretApprovalAborted`` unless approved.
     """
-    state = run_state(ctx)
+    state = ctx.secret_run
     key = _approval_key(spec, target)
     if key in state.approvals:
         return
@@ -406,6 +399,7 @@ def ensure_same_element(observed_ui: Any, fresh_ui: Any, index: int) -> dict:
 
 
 def _short_class(name: Any) -> str:
+    """Formatted UI elements carry the short class; only used to map to raw nodes."""
     return name.split(".")[-1] if isinstance(name, str) else ""
 
 
@@ -434,7 +428,7 @@ def identify_selected(observation: Observation, element: dict) -> FieldIdentity:
         raise SecretGateError("The selected element is not a text field.")
     return FieldIdentity(
         resource_id=info.node.get("resourceId") or "",
-        class_name=_short_class(info.node.get("className") or info.node.get("class")),
+        class_name=info.node.get("className") or info.node.get("class") or "",
         path=info.path,
         bounds=wanted_bounds,
     )
@@ -472,8 +466,7 @@ def verify_destination(
     )
     if (
         (node.get("resourceId") or "") != identity.resource_id
-        or _short_class(node.get("className") or node.get("class"))
-        != identity.class_name
+        or (node.get("className") or node.get("class") or "") != identity.class_name
         or focused.path != identity.path
     ):
         raise mismatch

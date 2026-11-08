@@ -607,6 +607,25 @@ def test_two_nodes_with_the_same_signature_are_ambiguous():
     assert device.typed == []
 
 
+def test_class_replaced_with_a_lookalike_during_the_tap_is_refused():
+    device = Device()
+
+    async def tap(x, y):
+        device.taps.append((x, y))
+        for node in device.nodes:
+            node["_focused"] = node["resourceId"].endswith("number")
+            if node["_focused"]:
+                node["className"] = "com.example.replacement.EditText"
+
+    device.tap = tap
+    ctx = make_ctx(device, Secrets(card_specs()), Approver())
+
+    result = run(type_secret("card_number", 1, ctx=ctx))
+
+    assert not result.success and "not the one that was selected" in result.summary
+    assert device.typed == []
+
+
 def test_protected_secret_needs_a_driver_that_can_mask_afterwards():
     device = Device()
     ctx = make_ctx(device, Secrets(card_specs()), Approver(), wrapped=False)

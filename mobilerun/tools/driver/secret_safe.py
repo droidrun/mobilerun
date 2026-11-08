@@ -36,10 +36,8 @@ logger = logging.getLogger("mobilerun")
 PLACEHOLDER = "[secret:{}]"
 _MIN_GLOBAL_DIGITS = 8
 _MIN_SEGMENTED_CHARS = 4
-# Containers with more leaf texts than this are not scanned for values split
-# across nodes (cost bound; smaller groups such as a code or card row are).
-_MAX_SEGMENT_LEAVES = 40
-_MAX_PARTIAL_PREFIX = 64
+# Subtrees that never hold screen text: not scanned for split values.
+_NON_TEXT_KEYS = frozenset({"phone_state", "device_context", "focusedElement"})
 
 # Geometry and identity fields: never carry secrets, and rewriting them would
 # break tap targets.
@@ -59,7 +57,7 @@ _INPUT_CLASS_MARKERS = ("EditText", "TextField", "SearchField")
 @dataclass
 class _Entry:
     secret_id: str
-    # The pattern is built from the secret value: keep it out of repr/logs.
+    # Built from the secret value: keep out of repr/logs.
     pattern: Pattern[str] = field(repr=False)
     # Digit-only values of at least _MIN_GLOBAL_DIGITS digits are masked
     # everywhere, whatever the configured policy.
@@ -67,12 +65,31 @@ class _Entry:
     input_only: bool
     # Long enough to look for it spread over several adjacent text nodes.
     segmentable: bool
+    # Characters of the value (plus separators) and its length without blanks:
+    # a text node can only be part of a split value if it uses these characters.
+    chars: frozenset = field(repr=False)
+    max_compact: int = field(repr=False)
+    # Prefix entry for partial input; dropped again when typing succeeded.
+    partial: bool = False
 
     def applies(self, in_input: bool, structured: bool) -> bool:
         if self.everywhere or not self.input_only:
             return True
         # input_only only narrows where the tree says what is editable.
         return in_input or not structured
+
+    def accepts(self, text: str) -> bool:
+        """May ``text`` be one segment of this value?"""
+        return all(c in self.chars or c.isspace() for c in text.lower())
+
+    def key(self) -> tuple:
+        return (
+            self.secret_id,
+            self.pattern.pattern,
+            self.everywhere,
+            self.input_only,
+            self.partial,
+        )
 
 
 def _edge(char: str, *, leading: bool) -> str:
@@ -84,13 +101,20 @@ def _edge(char: str, *, leading: bool) -> str:
     return ""
 
 
+def _digits_of(value: str) -> Optional[str]:
+    """The digits of a digit-only value (blanks and hyphens allowed), else None."""
+    stripped = value.strip()
+    digits = re.sub(r"[\s\-]", "", stripped)
+    if digits and digits.isdigit() and re.fullmatch(r"[\d\s\-]+", stripped):
+        return digits
+    return None
+
+
 def _compile(value: str) -> tuple[Pattern[str], bool]:
     """Return (pattern, digits_only_long) for a secret value."""
     stripped = value.strip()
-    digits = re.sub(r"[\s\-]", "", stripped)
-    numeric_like = (
-        bool(digits) and digits.isdigit() and bool(re.fullmatch(r"[\d\s\-]+", stripped))
-    )
+    digits = _digits_of(value)
+    numeric_like = digits is not None
     if numeric_like:
         # Any grouping of the same digits: spaces or hyphens between any two.
         body = r"[\s\-]*".join(re.escape(d) for d in digits)
@@ -129,17 +153,25 @@ def _is_input_node(node: dict) -> bool:
     )
 
 
-def _collect_leaves(node: Any, out: list) -> None:
-    """Ordered nodes that carry their own text and have no children."""
+def _collect_leaves(node: Any, out: list, in_input: bool, structured: bool) -> None:
+    """Ordered (leaf, is_input) pairs: nodes with their own text and no children.
+
+    ``is_input`` is true for an input node or anything below one.
+    """
     if isinstance(node, list):
         for item in node:
-            _collect_leaves(item, out)
+            _collect_leaves(item, out, in_input, structured)
     elif isinstance(node, dict):
+        below = in_input or (structured and _is_input_node(node))
         children = node.get("children")
         if isinstance(children, list) and children:
-            _collect_leaves(children, out)
+            _collect_leaves(children, out, below, structured)
         elif isinstance(node.get("text"), str) and node["text"]:
-            out.append(node)
+            out.append((node, below))
+        else:
+            for key, value in node.items():
+                if key not in _NON_TEXT_KEYS and isinstance(value, (list, dict)):
+                    _collect_leaves(value, out, below, structured)
 
 
 def _tree_is_structured(node: Any) -> bool:
@@ -173,7 +205,8 @@ class SecretRedactor:
         protected: bool = False,
     ) -> None:
         """Register a value that is about to be typed (before typing it)."""
-        self._add([self._entry(secret_id, value, redact)], protected)
+        entry = self._entry(secret_id, value, redact)
+        self._add([entry] if entry else [], protected)
 
     def register_partial(
         self,
@@ -181,33 +214,106 @@ class SecretRedactor:
         value: str,
         *,
         redact: Literal["global", "input_only"] = "global",
-    ) -> None:
-        """Also mask every prefix of ``value``: typing may have stopped midway."""
-        stop = min(len(value), _MAX_PARTIAL_PREFIX + 1)
-        prefixes = [
-            self._entry(secret_id, value[:k], redact)
-            for k in range(_MIN_SEGMENTED_CHARS, stop)
-            if value[:k].strip()
+    ) -> List[_Entry]:
+        """Mask every prefix of ``value`` (typing may stop midway).
+
+        One alternation per secret, longest prefix first, prefixes of at least
+        four characters. A partial value can only sit in its field, so it is
+        ``input_only``; only prefixes of eight or more digits keep the global
+        digit rule. Returns the entries that were new.
+        """
+        prefixes: List[str] = []
+        for k in range(len(value) - 1, _MIN_SEGMENTED_CHARS - 1, -1):
+            prefix = value[:k].strip()
+            if (
+                prefix
+                and len(re.sub(r"[\s\-]", "", prefix)) >= _MIN_SEGMENTED_CHARS
+                and prefix not in prefixes
+            ):
+                prefixes.append(prefix)
+        digits = _digits_of(value) is not None
+        groups = [
+            (
+                [
+                    p
+                    for p in prefixes
+                    if digits and len(_digits_of(p) or "") >= _MIN_GLOBAL_DIGITS
+                ],
+                True,
+            ),
+            (
+                [
+                    p
+                    for p in prefixes
+                    if not (digits and len(_digits_of(p) or "") >= _MIN_GLOBAL_DIGITS)
+                ],
+                False,
+            ),
         ]
-        self._add([e for e in prefixes if e is not None], protected=False)
+        entries = []
+        for group, everywhere in groups:
+            if not group:
+                continue
+            pattern = re.compile(
+                "(?:" + "|".join(_compile(p)[0].pattern for p in group) + ")",
+                re.IGNORECASE,
+            )
+            entries.append(
+                self._build(secret_id, value, pattern, everywhere, True, True, group)
+            )
+        return self._add(entries, protected=False)
+
+    def drop(self, entries: List[_Entry]) -> None:
+        """Remove entries again (identity), e.g. prefixes after a good input."""
+        with self._lock:
+            self._entries = [
+                e for e in self._entries if not any(e is d for d in entries)
+            ]
 
     @staticmethod
-    def _entry(secret_id: str, value: str, redact: str) -> Optional[_Entry]:
-        if not value or not value.strip():
-            return None
-        pattern, long_digits = _compile(value)
-        compact = re.sub(r"[\s\-]", "", value)
+    def _build(
+        secret_id: str,
+        value: str,
+        pattern: Pattern[str],
+        everywhere: bool,
+        input_only: bool,
+        partial: bool,
+        samples: List[str],
+    ) -> _Entry:
+        compact = max(len(re.sub(r"[\s\-]", "", t)) for t in samples)
         return _Entry(
             secret_id=secret_id,
             pattern=pattern,
-            everywhere=long_digits,
-            input_only=redact == "input_only",
-            segmentable=len(compact) >= _MIN_SEGMENTED_CHARS,
+            everywhere=everywhere,
+            input_only=input_only,
+            segmentable=compact >= _MIN_SEGMENTED_CHARS,
+            chars=frozenset(value.lower()) | {"-"},
+            max_compact=compact,
+            partial=partial,
         )
 
-    def _add(self, entries: List[Optional[_Entry]], protected: bool) -> None:
-        added = [e for e in entries if e is not None]
+    def _entry(self, secret_id: str, value: str, redact: str) -> Optional[_Entry]:
+        if not value or not value.strip():
+            return None
+        pattern, long_digits = _compile(value)
+        return self._build(
+            secret_id,
+            value,
+            pattern,
+            long_digits,
+            redact == "input_only",
+            False,
+            [value],
+        )
+
+    def _add(self, entries: List[_Entry], protected: bool) -> List[_Entry]:
         with self._lock:
+            known = {e.key() for e in self._entries}
+            added = []
+            for entry in entries:
+                if entry.key() not in known:
+                    known.add(entry.key())
+                    added.append(entry)
             # Copy-on-write: readers iterate a list that is never mutated.
             # Longest pattern first so overlapping values mask the longer one.
             self._entries = sorted(
@@ -217,6 +323,7 @@ class SecretRedactor:
             )
             if protected:
                 self.black_screenshots = True
+            return added
 
     def clear(self) -> None:
         with self._lock:
@@ -246,20 +353,18 @@ class SecretRedactor:
         """Return a copy of nested data with every string value masked."""
         if not self._entries:
             return data
+        masked = self._redact(data, in_input, structured)
+        if isinstance(masked, (list, dict)):
+            self._mask_segments(masked, in_input, structured)
+        return masked
+
+    def _redact(self, data: Any, in_input: bool, structured: bool) -> Any:
         if isinstance(data, str):
             return self.redact_text(data, in_input=in_input, structured=structured)
         if isinstance(data, list):
-            items = [
-                self.redact_data(item, in_input=in_input, structured=structured)
-                for item in data
-            ]
-            self._mask_segments(items, structured)
-            return items
+            return [self._redact(item, in_input, structured) for item in data]
         if isinstance(data, tuple):
-            return tuple(
-                self.redact_data(item, in_input=in_input, structured=structured)
-                for item in data
-            )
+            return tuple(self._redact(item, in_input, structured) for item in data)
         if isinstance(data, dict):
             node_input = in_input or (structured and _is_input_node(data))
             masked: dict = {}
@@ -273,38 +378,61 @@ class SecretRedactor:
                     child_in_input = in_input
                 else:
                     child_in_input = node_input
-                masked[key] = self.redact_data(
-                    value, in_input=child_in_input, structured=structured
-                )
+                masked[key] = self._redact(value, child_in_input, structured)
             return masked
         return data
 
-    def _mask_segments(self, nodes: list, structured: bool) -> None:
-        """Mask a value spread over adjacent leaf texts (``nodes`` are copies)."""
-        entries = [
-            e for e in self._entries if e.segmentable and e.applies(False, structured)
-        ]
+    def _mask_segments(self, root: Any, in_input: bool, structured: bool) -> None:
+        """Mask a value spread over consecutive leaf texts (``root`` is a copy).
+
+        Slides a window of at most ``len(value)`` consecutive leaves over the
+        leaves in tree order, so the cost is leaves x value length. Every
+        contributing leaf may only use characters of the value; entries that
+        do not apply outside inputs only look at input leaves.
+        """
+        entries = [e for e in self._entries if e.segmentable]
         if not entries:
             return
         leaves: list = []
-        _collect_leaves(nodes, leaves)
-        if len(leaves) < 2 or len(leaves) > _MAX_SEGMENT_LEAVES:
+        _collect_leaves(root, leaves, in_input, structured)
+        if len(leaves) < 2:
             return
         for entry in entries:
+            restricted = not entry.applies(False, structured)
+            run: list = []
+            for node, eligible in [*leaves, (None, False)]:
+                if restricted and not eligible:
+                    self._scan_run(entry, run)
+                    run = []
+                elif node is not None:
+                    run.append(node)
+            self._scan_run(entry, run)
+
+    @staticmethod
+    def _scan_run(entry: _Entry, run: list) -> None:
+        placeholder = PLACEHOLDER.format(entry.secret_id)
+        for i in range(len(run)):
+            window = []
+            for node in run[i : i + entry.max_compact]:
+                if not entry.accepts(node["text"]):
+                    break
+                window.append(node)
+            if len(window) < 2:
+                continue
             for separator in ("", " "):
-                text, spans = "", []
-                for leaf in leaves:
-                    spans.append((len(text), len(text) + len(leaf["text"])))
-                    text += leaf["text"] + separator
-                for match in entry.pattern.finditer(text):
+                joined, spans = "", []
+                for node in window:
+                    spans.append((len(joined), len(joined) + len(node["text"])))
+                    joined += node["text"] + separator
+                for match in entry.pattern.finditer(joined):
                     hit = [
-                        leaf
-                        for leaf, (start, end) in zip(leaves, spans)
+                        node
+                        for node, (start, end) in zip(window, spans)
                         if start < match.end() and end > match.start()
                     ]
                     if len(hit) >= 2:
-                        for leaf in hit:
-                            leaf["text"] = PLACEHOLDER.format(entry.secret_id)
+                        for node in hit:
+                            node["text"] = placeholder
 
     def redact_ui_tree(self, data: Any) -> Any:
         """Redact the payload of ``driver.get_ui_tree()``."""
@@ -457,16 +585,18 @@ class SecretSafeDriver:
         clear: bool = False,
     ) -> bool:
         """Type a secret. The value is registered for masking before typing."""
+        # Before the call: logs emitted while typing are masked too, and a
+        # failed or interrupted input leaves the typed prefix covered.
         self.redactor.register(secret_id, value, redact=redact, protected=protected)
+        prefixes = self.redactor.register_partial(secret_id, value, redact=redact)
         starts = self._log_lengths()
         typed = False
         try:
             typed = await self.inner.input_text(value, clear)
             return typed
         finally:
-            if not typed:
-                # Failed or interrupted: part of the value may be on screen.
-                self.redactor.register_partial(secret_id, value, redact=redact)
+            if typed:
+                self.redactor.drop(prefixes)
             self._scrub_recording_logs(starts, secret_id, value, protected)
 
     def _log_lengths(self) -> List[Tuple[list, int]]:

@@ -674,7 +674,7 @@ async def type_secret(
 
     try:
         spec = await secret_gate.spec_for(
-            secret_gate.run_state(ctx), ctx.credential_manager, secret_id
+            ctx.secret_run, ctx.credential_manager, secret_id
         )
         approved = None
         if spec is not None and spec.requires_approval:
