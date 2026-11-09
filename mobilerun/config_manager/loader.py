@@ -34,11 +34,27 @@ class ConfigLoader:
         return cls.get_user_config_dir() / cls.CONFIG_FILE
 
     @classmethod
+    def get_env_config_path(cls) -> Optional[Path]:
+        """Config path from MOBILERUN_CONFIG (or deprecated DROIDRUN_CONFIG), if set."""
+        if os.environ.get("MOBILERUN_CONFIG"):
+            return Path(os.environ["MOBILERUN_CONFIG"])
+        if os.environ.get("DROIDRUN_CONFIG"):
+            import warnings
+
+            warnings.warn(
+                "DROIDRUN_CONFIG is deprecated. Use MOBILERUN_CONFIG instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            return Path(os.environ["DROIDRUN_CONFIG"])
+        return None
+
+    @classmethod
     def load(cls, config_path: Optional[str] = None) -> MobileConfig:
         """
         Load config with resolution order:
         1. Explicit config_path argument
-        2. MOBILERUN_CONFIG env var
+        2. MOBILERUN_CONFIG env var (must point to an existing file)
         3. User config (platformdirs config dir for "droidrun", e.g.
            ~/Library/Application Support/droidrun/config.yaml on macOS,
            ~/.config/droidrun/config.yaml on Linux)
@@ -47,19 +63,18 @@ class ConfigLoader:
         if config_path:
             return cls._load_user_config(Path(config_path))
 
-        env_config = os.environ.get("MOBILERUN_CONFIG") or os.environ.get(
-            "DROIDRUN_CONFIG"
-        )
-        if os.environ.get("DROIDRUN_CONFIG") and not os.environ.get("MOBILERUN_CONFIG"):
-            import warnings
-
-            warnings.warn(
-                "DROIDRUN_CONFIG is deprecated. Use MOBILERUN_CONFIG instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if env_config and Path(env_config).exists():
-            return cls._load_user_config(Path(env_config))
+        env_config = cls.get_env_config_path()
+        if env_config:
+            if not env_config.exists():
+                var = (
+                    "MOBILERUN_CONFIG"
+                    if os.environ.get("MOBILERUN_CONFIG")
+                    else "DROIDRUN_CONFIG"
+                )
+                raise FileNotFoundError(
+                    f"{var} points to {env_config}, but that file does not exist."
+                )
+            return cls._load_user_config(env_config)
 
         user_config_path = cls.get_user_config_path()
 

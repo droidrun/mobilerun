@@ -136,9 +136,10 @@ async def check_config(debug: bool) -> tuple[CheckResult, Any]:
     from mobilerun.config_manager import ConfigLoader
     from mobilerun.config_manager.loader import OutdatedConfigError
 
-    config_path = ConfigLoader.get_user_config_path()
+    env_path = ConfigLoader.get_env_config_path()
+    config_path = env_path or ConfigLoader.get_user_config_path()
 
-    if not config_path.exists():
+    if env_path is None and not config_path.exists():
         # Will be created on first load
         try:
             config = ConfigLoader.load()
