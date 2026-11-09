@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from mobilerun.agent.utils.actions import click, long_press, type_secret, type_text
+from mobilerun.credential_manager.secret_gate import SecretRunState
 from mobilerun.tools.filters import ConciseFilter
 from mobilerun.tools.formatters import IndexedFormatter
 from mobilerun.tools.ui.provider import AndroidStateProvider
@@ -244,6 +245,7 @@ def test_normalized_indexed_actions_tap_device_pixels(action, stealth):
     elif action == "type":
         result = asyncio.run(type_text("test", index=index, ctx=ctx))
     else:
+        ctx.secret_run = SecretRunState()
         ctx.credential_manager = SimpleNamespace(
             resolve_key=AsyncMock(return_value="secret"),
             get_keys=AsyncMock(return_value=[]),

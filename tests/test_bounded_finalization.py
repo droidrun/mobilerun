@@ -21,6 +21,7 @@ from mobilerun.agent.droid.droid_agent import MobileAgent
 from mobilerun.agent.droid.events import FinalizeEvent
 from mobilerun.agent.oneflows.structured_output_agent import StructuredOutputAgent
 from mobilerun.agent.trajectory import TrajectoryWriter
+from mobilerun.tools.driver.secret_safe import SecretRedactor
 from mobilerun.tools.ui.provider import AndroidStateProvider
 
 
@@ -54,6 +55,7 @@ def _agent(monkeypatch, screenshot=_nothing, state=_empty_state, *, deadline=Non
 
     monkeypatch.setattr(module, "flush", flush)
     agent = object.__new__(MobileAgent)
+    agent._redactor = SecretRedactor()
     agent.shared_state = SimpleNamespace(
         workflow_completed=False,
         step_number=2,

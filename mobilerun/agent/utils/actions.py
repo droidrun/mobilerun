@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.oneflows.app_starter_workflow import AppStarter
 from mobilerun.agent.utils.errors import describe_error
+from mobilerun.credential_manager import secret_gate
 from mobilerun.tools.helpers.coordinate import NORMALIZED_MAX, to_normalized
 
 logger = logging.getLogger("mobilerun")
@@ -624,6 +625,43 @@ async def complete(
     return ActionResult(success=True, summary=ctx.shared_state.answer)
 
 
+_SECRET_FOCUS_SETTLE_SECONDS = 0.3
+
+
+async def _focus_approved_field(
+    ctx: "ActionContext", index: int, approved: secret_gate.Target
+) -> object:
+    """Select the chosen field and prove the last observed state matches.
+
+    Returns the macro pre-state. Raises ``SecretGateError`` when any check
+    fails; nothing has been typed at that point.
+    """
+    identity = None
+    tap_point = None
+    pre_ui = await _macro_pre_ui(ctx)
+    if index != -1:
+        fresh = await ctx.state_provider.get_state()
+        element = secret_gate.ensure_same_element(ctx.ui, fresh, index)
+        # Pin the element to one editable raw node before touching the screen.
+        identity = secret_gate.identify_selected(
+            await secret_gate.raw_observation(ctx), element
+        )
+        tap_point = fresh.get_element_coords(index)
+        await ctx.driver.tap(*tap_point)
+        _record_macro_action(
+            ctx,
+            {"action_type": "tap", "x": tap_point[0], "y": tap_point[1]},
+            pre_ui=pre_ui,
+        )
+        await asyncio.sleep(_SECRET_FOCUS_SETTLE_SECONDS)
+        pre_ui = await _macro_pre_ui_after_focus_tap(ctx)
+    observation = await secret_gate.raw_observation(ctx)
+    secret_gate.verify_destination(
+        observation, approved, identity=identity, tap_point=tap_point
+    )
+    return pre_ui
+
+
 async def type_secret(
     secret_id: str, index: int, *, ctx: "ActionContext"
 ) -> ActionResult:
@@ -635,31 +673,57 @@ async def type_secret(
         )
 
     try:
+        spec = await secret_gate.spec_for(
+            ctx.secret_run, ctx.credential_manager, secret_id
+        )
+        approved = None
+        if spec is not None and spec.requires_approval:
+            # Where the secret would go, and whether the host allows that.
+            observation = await secret_gate.raw_observation(ctx)
+            await secret_gate.ensure_approval(ctx, spec, observation.target)
+            approved = observation.target
+
         secret_value = await ctx.credential_manager.resolve_key(secret_id)
-        pre_ui = await _macro_pre_ui(ctx)
 
-        # Tap the element first if a specific index is given
-        if index != -1:
-            x, y = ctx.ui.get_element_coords(index)
-            await ctx.driver.tap(x, y)
-            _record_macro_action(
-                ctx,
-                {"action_type": "tap", "x": x, "y": y},
-                pre_ui=pre_ui,
+        if approved is not None:
+            pre_ui = await _focus_approved_field(ctx, index, approved)
+        else:
+            pre_ui = await _macro_pre_ui(ctx)
+            # Tap the element first if a specific index is given
+            if index != -1:
+                x, y = ctx.ui.get_element_coords(index)
+                await ctx.driver.tap(x, y)
+                _record_macro_action(
+                    ctx,
+                    {"action_type": "tap", "x": x, "y": y},
+                    pre_ui=pre_ui,
+                )
+                pre_ui = await _macro_pre_ui_after_focus_tap(ctx)
+
+        protected = approved is not None
+        redact = spec.redact if spec is not None else "global"
+        typer = getattr(ctx.driver, "input_secret", None)
+        if typer is not None:
+            ok = await typer(
+                secret_id, secret_value, redact=redact, protected=protected
             )
-            pre_ui = await _macro_pre_ui_after_focus_tap(ctx)
-
-        ok = await ctx.driver.input_text(secret_value)
+        elif protected:
+            # Without the wrapper nothing would mask the value afterwards.
+            raise secret_gate.SecretGateError(
+                "This driver cannot protect an approved secret; nothing was typed."
+            )
+        else:
+            ok = await ctx.driver.input_text(secret_value)
+        del secret_value
         if ok:
-            _record_macro_action(
-                ctx,
-                {
-                    "action_type": "type_secret",
-                    "secret_id": secret_id,
-                    "clear": False,
-                },
-                pre_ui=pre_ui,
-            )
+            recorded = {
+                "action_type": "type_secret",
+                "secret_id": secret_id,
+                "clear": False,
+            }
+            if protected:
+                recorded["protected"] = True
+            _record_macro_action(ctx, recorded, pre_ui=pre_ui)
             return ActionResult(
                 success=True,
                 summary=f"Successfully typed secret '{secret_id}' into element {index}",
@@ -669,12 +733,31 @@ async def type_secret(
                 success=False,
                 summary=f"Failed to type secret '{secret_id}': input failed",
             )
-    except Exception as e:
-        logger.error(f"Failed to type secret '{secret_id}': {e}")
+    except secret_gate.SecretApprovalAborted as e:
+        ctx.shared_state.abort_run(e.reason)
+        logger.warning("Secret entry not approved: %s", e.reason)
+        return ActionResult(
+            success=False,
+            summary=f"Failed to type secret '{secret_id}': {e.reason}. The run is ending.",
+        )
+    except secret_gate.SecretGateError as e:
+        logger.warning("Secret entry refused: %s", e)
+        return ActionResult(
+            success=False, summary=f"Failed to type secret '{secret_id}': {e}"
+        )
+    except KeyError:  # includes CredentialNotFoundError
+        logger.error("Failed to type secret '%s': not found", secret_id)
         available = (
             await ctx.credential_manager.get_keys() if ctx.credential_manager else []
         )
         return ActionResult(
             success=False,
             summary=f"Failed to type secret '{secret_id}': not found. Available: {available}",
+        )
+    except Exception as e:
+        # Only the type: exception text may be built from the value.
+        logger.error("Failed to type secret '%s': %s", secret_id, type(e).__name__)
+        return ActionResult(
+            success=False,
+            summary=f"Failed to type secret '{secret_id}': {type(e).__name__}",
         )

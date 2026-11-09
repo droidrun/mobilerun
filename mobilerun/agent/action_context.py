@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from mobilerun.credential_manager.secret_gate import SecretRunState
+
 if TYPE_CHECKING:
     from mobilerun_core_local.driver.base import DeviceDriver
 
     from mobilerun.agent.droid.state import MobileAgentState
-    from mobilerun.credential_manager import CredentialManager
+    from mobilerun.credential_manager import ApprovalProvider, CredentialManager
     from mobilerun.macro.recorder import MacroRecorder
     from mobilerun.tools.ui.provider import StateProvider
     from mobilerun.tools.ui.state import UIState
@@ -31,6 +33,7 @@ class ActionContext:
         credential_manager: "Optional[CredentialManager]" = None,
         streaming: bool = False,
         macro_recorder: "Optional[MacroRecorder]" = None,
+        approval_provider: "Optional[ApprovalProvider]" = None,
     ) -> None:
         self.driver = driver
         self.ui = ui  # refreshed each step before tool execution
@@ -40,3 +43,6 @@ class ActionContext:
         self.credential_manager = credential_manager
         self.streaming = streaming
         self.macro_recorder = macro_recorder
+        self.approval_provider = approval_provider
+        # Approvals and spec cache live exactly as long as this context (one run).
+        self.secret_run = SecretRunState()
