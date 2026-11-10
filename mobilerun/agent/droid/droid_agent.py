@@ -97,6 +97,7 @@ from mobilerun.credential_manager import (
     ApprovalProvider,
     CredentialManager,
     FileCredentialManager,
+    SecretSpec,
 )
 from mobilerun.log_handlers import CLILogHandler, configure_logging
 from mobilerun.macro.recorder import MacroRecorder
@@ -552,12 +553,57 @@ class MobileAgent(Workflow):
     @step
     async def start_handler(
         self, ctx: Context, ev: StartEvent
-    ) -> FastAgentExecuteEvent | ManagerInputEvent:
+    ) -> FastAgentExecuteEvent | ManagerInputEvent | FinalizeEvent | ResultEvent:
         await self._initialize_workflow_deadline(ctx)
         # Nothing registered by an earlier run on this agent may carry over.
         self._redactor.clear()
         self.shared_state.terminal_abort = None
         install_log_redaction()
+        specs = []
+        if self.credential_manager is not None:
+            reason = "secret_unavailable"
+            try:
+                getter = getattr(self.credential_manager, "get_secret_specs", None)
+                if getter is not None:
+                    specs = await getter()
+                elif hasattr(self.credential_manager, "get_keys"):
+                    specs = [
+                        SecretSpec(key=key)
+                        for key in await self.credential_manager.get_keys()
+                    ]
+                if self._using_external_agent and any(
+                    spec.mask_from_start or spec.mask_card_numbers for spec in specs
+                ):
+                    raise ValueError("External agent cannot enforce secret masking")
+                self._redactor.mask_card_numbers = any(
+                    spec.mask_card_numbers for spec in specs
+                )
+                self._redactor.black_screenshots = any(
+                    spec.mask_from_start for spec in specs
+                )
+                # __init__ normalizes every screenshot-only path to vision_only.
+                if self._redactor.black_screenshots and self.config.agent.vision_only:
+                    reason = "secret_masking_needs_ui_tree"
+                    raise ValueError("Start masking requires a UI tree")
+                for spec in specs:
+                    if spec.mask_from_start:
+                        value = await self.credential_manager.resolve_key(spec.key)
+                        self._redactor.register(spec.key, value, redact=spec.redact)
+                        self._redactor.register_partial(
+                            spec.key, value, redact=spec.redact
+                        )
+            except Exception:
+                # Host errors may contain an unresolved value. Neither log
+                # them nor take final observations without a complete policy.
+                self.shared_state.abort_run(reason)
+                self.shared_state.workflow_completed = True
+                self._redactor.clear()
+                logger.warning("Cannot initialize secret masking: %s", reason)
+                return ResultEvent(
+                    success=False,
+                    reason=reason,
+                    steps=self.shared_state.step_number,
+                )
         logger.info(
             f"🚀 Running MobileAgent to achieve goal: {self.shared_state.instruction}"
         )
@@ -896,6 +942,7 @@ class MobileAgent(Workflow):
             macro_recorder=self.macro_recorder,
             approval_provider=self.approval_provider,
         )
+        self.action_ctx.secret_run.specs = {spec.key: spec for spec in specs}
 
         # ── 5. Wire up sub-agents ─────────────────────────────────────
         if self.config.agent.reasoning and self.executor_agent:

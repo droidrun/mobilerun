@@ -1,10 +1,10 @@
-"""Redaction of typed secrets from everything the agent observes.
+"""Redaction of registered secrets from everything the agent observes.
 
 Three pieces share one :class:`SecretRedactor` per agent:
 
 * :class:`SecretSafeDriver` wraps the (already Stealth/Recording wrapped)
-  driver. UI trees pass through the redactor, screenshots turn black once an
-  approval-gated secret was typed, and secrets are typed through
+  driver. UI trees pass through the redactor, screenshots turn black when
+  start masking is requested or an approval-gated secret is typed. Input uses
   :meth:`SecretSafeDriver.input_secret`, which keeps the plaintext out of the
   recording log.
 * :class:`SecretSafeStateProvider` redacts the ``UIState`` returned by any
@@ -36,6 +36,7 @@ logger = logging.getLogger("mobilerun")
 PLACEHOLDER = "[secret:{}]"
 _MIN_GLOBAL_DIGITS = 8
 _MIN_SEGMENTED_CHARS = 4
+_CARD_NUMBER_RE = re.compile(r"[0-9]+(?:[\s\-]+[0-9]+)*")
 # Subtrees that never hold screen text: not scanned for split values.
 _NON_TEXT_KEYS = frozenset({"phone_state", "device_context", "focusedElement"})
 
@@ -108,6 +109,54 @@ def _digits_of(value: str) -> Optional[str]:
     if digits and digits.isdigit() and re.fullmatch(r"[\d\s\-]+", stripped):
         return digits
     return None
+
+
+def _luhn_valid(value: str) -> bool:
+    digits = _digits_of(value)
+    if digits is None:
+        return False
+    total = 0
+    for index, char in enumerate(reversed(digits)):
+        digit = int(char)
+        if index % 2:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
+def _card_spans(text: str) -> Iterator[tuple[int, int]]:
+    """Merged Luhn-valid, group-aligned windows of 13–19 digits.
+
+    A compact overlong ID is one indivisible group. Separators use the same
+    whitespace/hyphen rule as declared numeric values, including Unicode blanks.
+    """
+    pending = None
+    for match in _CARD_NUMBER_RE.finditer(text):
+        groups = []
+        offset = match.start()
+        for digits in re.split(r"[\s\-]+", match.group()):
+            start = text.index(digits, offset)
+            offset = start + len(digits)
+            groups.append((start, offset, digits))
+        for i, (start, _, _) in enumerate(groups):
+            value = ""
+            for _, end, digits in groups[i : i + 19]:
+                if len(value) + len(digits) > 19:
+                    break
+                value += digits
+                if len(value) < 13 or not _luhn_valid(value):
+                    continue
+                if pending is not None and start > pending[1]:
+                    yield pending
+                    pending = None
+                pending = (
+                    start if pending is None else pending[0],
+                    end if pending is None else max(end, pending[1]),
+                )
+    if pending is not None:
+        yield pending
 
 
 def _compile(value: str) -> tuple[Pattern[str], bool]:
@@ -186,12 +235,13 @@ def _tree_is_structured(node: Any) -> bool:
 
 
 class SecretRedactor:
-    """Per-run registry of typed secret values and the masking policy."""
+    """Per-run registry of secret values and the masking policy."""
 
     def __init__(self) -> None:
         self._entries: List[_Entry] = []
         self._lock = threading.Lock()
         self.black_screenshots = False
+        self.mask_card_numbers = False
         _ACTIVE.add(self)
 
     # -- registry ----------------------------------------------------------
@@ -204,7 +254,7 @@ class SecretRedactor:
         redact: Literal["global", "input_only"] = "global",
         protected: bool = False,
     ) -> None:
-        """Register a value that is about to be typed (before typing it)."""
+        """Register a value before it can reach observations or logs."""
         entry = self._entry(secret_id, value, redact)
         self._add([entry] if entry else [], protected)
 
@@ -315,10 +365,21 @@ class SecretRedactor:
                     known.add(entry.key())
                     added.append(entry)
             # Copy-on-write: readers iterate a list that is never mutated.
-            # Longest pattern first so overlapping values mask the longer one.
+            # Order secrets by their longest pattern. Only within one secret
+            # must full values precede partial alternations to avoid suffix leaks.
+            combined = [*self._entries, *added]
+            lengths = {}
+            for entry in combined:
+                lengths[entry.secret_id] = max(
+                    lengths.get(entry.secret_id, 0), len(entry.pattern.pattern)
+                )
             self._entries = sorted(
-                [*self._entries, *added],
-                key=lambda e: len(e.pattern.pattern),
+                combined,
+                key=lambda e: (
+                    lengths[e.secret_id],
+                    not e.partial,
+                    len(e.pattern.pattern),
+                ),
                 reverse=True,
             )
             if protected:
@@ -329,10 +390,11 @@ class SecretRedactor:
         with self._lock:
             self._entries = []
             self.black_screenshots = False
+            self.mask_card_numbers = False
 
     @property
     def active(self) -> bool:
-        return bool(self._entries)
+        return bool(self._entries) or self.mask_card_numbers
 
     # -- masking -----------------------------------------------------------
 
@@ -340,8 +402,14 @@ class SecretRedactor:
         self, text: str, *, in_input: bool = False, structured: bool = False
     ) -> str:
         entries = self._entries
-        if not entries or not text:
+        if not self.active or not text:
             return text
+        if self.mask_card_numbers:
+            parts, end = [], 0
+            for start, stop in _card_spans(text):
+                parts.extend((text[end:start], PLACEHOLDER.format("card_number")))
+                end = stop
+            text = "".join([*parts, text[end:]])
         for entry in list(entries):
             if entry.applies(in_input, structured):
                 text = entry.pattern.sub(PLACEHOLDER.format(entry.secret_id), text)
@@ -351,7 +419,7 @@ class SecretRedactor:
         self, data: Any, *, in_input: bool = False, structured: bool = False
     ) -> Any:
         """Return a copy of nested data with every string value masked."""
-        if not self._entries:
+        if not self.active:
             return data
         masked = self._redact(data, in_input, structured)
         if isinstance(masked, (list, dict)):
@@ -388,15 +456,18 @@ class SecretRedactor:
         Slides a window of at most ``len(value)`` consecutive leaves over the
         leaves in tree order, so the cost is leaves x value length. Every
         contributing leaf may only use characters of the value; entries that
-        do not apply outside inputs only look at input leaves.
+        do not apply outside inputs only look at input leaves. The card rule
+        scans group-aligned windows, treating node boundaries as separators.
         """
         entries = [e for e in self._entries if e.segmentable]
-        if not entries:
+        if not entries and not self.mask_card_numbers:
             return
         leaves: list = []
         _collect_leaves(root, leaves, in_input, structured)
         if len(leaves) < 2:
             return
+        if self.mask_card_numbers:
+            self._scan_card_runs(leaves)
         for entry in entries:
             restricted = not entry.applies(False, structured)
             run: list = []
@@ -409,11 +480,33 @@ class SecretRedactor:
             self._scan_run(entry, run)
 
     @staticmethod
+    def _scan_card_runs(leaves: list) -> None:
+        chunks, spans = [], []
+        offset = 0
+        for node, _ in leaves:
+            text = node["text"]
+            chunks.append(text)
+            spans.append((offset, offset + len(text)))
+            offset += len(text) + 1
+        index = 0
+        for start, end in _card_spans(" ".join(chunks)):
+            while index < len(spans) and spans[index][1] <= start:
+                index += 1
+            stop = index
+            while stop < len(spans) and spans[stop][0] < end:
+                stop += 1
+            if stop - index >= 2:
+                for node, _ in leaves[index:stop]:
+                    node["text"] = PLACEHOLDER.format("card_number")
+
+    @staticmethod
     def _scan_run(entry: _Entry, run: list) -> None:
         placeholder = PLACEHOLDER.format(entry.secret_id)
         for i in range(len(run)):
             window = []
-            for node in run[i : i + entry.max_compact]:
+            end = min(len(run), i + entry.max_compact)
+            for index in range(i, end):
+                node = run[index]
                 if not entry.accepts(node["text"]):
                     break
                 window.append(node)
@@ -427,7 +520,7 @@ class SecretRedactor:
                 for match in entry.pattern.finditer(joined):
                     hit = [
                         node
-                        for node, (start, end) in zip(window, spans)
+                        for node, (start, end) in zip(window, spans, strict=True)
                         if start < match.end() and end > match.start()
                     ]
                     if len(hit) >= 2:
@@ -436,7 +529,7 @@ class SecretRedactor:
 
     def redact_ui_tree(self, data: Any) -> Any:
         """Redact the payload of ``driver.get_ui_tree()``."""
-        if not self._entries or not isinstance(data, dict):
+        if not self.active or not isinstance(data, dict):
             return data
         structured = _tree_is_structured(data.get("a11y_tree"))
         return self.redact_data(data, structured=structured)
@@ -450,7 +543,7 @@ class SecretRedactor:
         carries no editable/focused information, so ``input_only`` values are
         masked everywhere (more masking, never less).
         """
-        if not self._entries or state is None:
+        if not self.active or state is None:
             return state
         structured = trusted
         masked = copy.copy(state)
