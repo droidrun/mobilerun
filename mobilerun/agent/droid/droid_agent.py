@@ -552,12 +552,41 @@ class MobileAgent(Workflow):
     @step
     async def start_handler(
         self, ctx: Context, ev: StartEvent
-    ) -> FastAgentExecuteEvent | ManagerInputEvent:
+    ) -> FastAgentExecuteEvent | ManagerInputEvent | FinalizeEvent | ResultEvent:
         await self._initialize_workflow_deadline(ctx)
         # Nothing registered by an earlier run on this agent may carry over.
         self._redactor.clear()
         self.shared_state.terminal_abort = None
         install_log_redaction()
+        if self.credential_manager is not None and not self._using_external_agent:
+            try:
+                specs = await self.credential_manager.get_secret_specs()
+                self._redactor.mask_card_numbers = any(
+                    spec.mask_card_numbers for spec in specs
+                )
+                self._redactor.black_screenshots = any(
+                    spec.mask_from_start for spec in specs
+                )
+                for spec in specs:
+                    if spec.mask_from_start:
+                        value = await self.credential_manager.resolve_key(spec.key)
+                        self._redactor.register(spec.key, value, redact=spec.redact)
+                        self._redactor.register_partial(
+                            spec.key, value, redact=spec.redact
+                        )
+                        del value
+            except Exception:
+                # Host errors may contain an unresolved value. Neither log
+                # them nor take final observations without a complete policy.
+                self.shared_state.abort_run("secret_unavailable")
+                self.shared_state.workflow_completed = True
+                self._redactor.clear()
+                logger.warning("Cannot initialize secret masking: secret_unavailable")
+                return ResultEvent(
+                    success=False,
+                    reason="secret_unavailable",
+                    steps=self.shared_state.step_number,
+                )
         logger.info(
             f"🚀 Running MobileAgent to achieve goal: {self.shared_state.instruction}"
         )

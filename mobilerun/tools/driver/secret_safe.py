@@ -1,10 +1,10 @@
-"""Redaction of typed secrets from everything the agent observes.
+"""Redaction of registered secrets from everything the agent observes.
 
 Three pieces share one :class:`SecretRedactor` per agent:
 
 * :class:`SecretSafeDriver` wraps the (already Stealth/Recording wrapped)
-  driver. UI trees pass through the redactor, screenshots turn black once an
-  approval-gated secret was typed, and secrets are typed through
+  driver. UI trees pass through the redactor, screenshots turn black when
+  start masking is requested or an approval-gated secret is typed. Input uses
   :meth:`SecretSafeDriver.input_secret`, which keeps the plaintext out of the
   recording log.
 * :class:`SecretSafeStateProvider` redacts the ``UIState`` returned by any
@@ -36,6 +36,7 @@ logger = logging.getLogger("mobilerun")
 PLACEHOLDER = "[secret:{}]"
 _MIN_GLOBAL_DIGITS = 8
 _MIN_SEGMENTED_CHARS = 4
+_CARD_NUMBER_RE = re.compile(r"(?<!\d)(?<!\d[ -])[0-9](?:[ -]?[0-9]){12,18}(?![ -]?\d)")
 # Subtrees that never hold screen text: not scanned for split values.
 _NON_TEXT_KEYS = frozenset({"phone_state", "device_context", "focusedElement"})
 
@@ -71,6 +72,7 @@ class _Entry:
     max_compact: int = field(repr=False)
     # Prefix entry for partial input; dropped again when typing succeeded.
     partial: bool = False
+    luhn: bool = False
 
     def applies(self, in_input: bool, structured: bool) -> bool:
         if self.everywhere or not self.input_only:
@@ -108,6 +110,21 @@ def _digits_of(value: str) -> Optional[str]:
     if digits and digits.isdigit() and re.fullmatch(r"[\d\s\-]+", stripped):
         return digits
     return None
+
+
+def _luhn_valid(value: str) -> bool:
+    digits = _digits_of(value)
+    if digits is None:
+        return False
+    total = 0
+    for index, char in enumerate(reversed(digits)):
+        digit = int(char)
+        if index % 2:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
 
 
 def _compile(value: str) -> tuple[Pattern[str], bool]:
@@ -185,13 +202,26 @@ def _tree_is_structured(node: Any) -> bool:
     return _tree_is_structured(node.get("children") or [])
 
 
+_CARD_NUMBER_ENTRY = _Entry(
+    secret_id="card_number",
+    pattern=_CARD_NUMBER_RE,
+    everywhere=True,
+    input_only=False,
+    segmentable=True,
+    chars=frozenset("0123456789 -"),
+    max_compact=19,
+    luhn=True,
+)
+
+
 class SecretRedactor:
-    """Per-run registry of typed secret values and the masking policy."""
+    """Per-run registry of secret values and the masking policy."""
 
     def __init__(self) -> None:
         self._entries: List[_Entry] = []
         self._lock = threading.Lock()
         self.black_screenshots = False
+        self.mask_card_numbers = False
         _ACTIVE.add(self)
 
     # -- registry ----------------------------------------------------------
@@ -204,7 +234,7 @@ class SecretRedactor:
         redact: Literal["global", "input_only"] = "global",
         protected: bool = False,
     ) -> None:
-        """Register a value that is about to be typed (before typing it)."""
+        """Register a value before it can reach observations or logs."""
         entry = self._entry(secret_id, value, redact)
         self._add([entry] if entry else [], protected)
 
@@ -315,10 +345,11 @@ class SecretRedactor:
                     known.add(entry.key())
                     added.append(entry)
             # Copy-on-write: readers iterate a list that is never mutated.
-            # Longest pattern first so overlapping values mask the longer one.
+            # Full values precede partial alternations, whose longer regex
+            # could otherwise mask a prefix and expose the remaining suffix.
             self._entries = sorted(
                 [*self._entries, *added],
-                key=lambda e: len(e.pattern.pattern),
+                key=lambda e: (not e.partial, len(e.pattern.pattern)),
                 reverse=True,
             )
             if protected:
@@ -329,10 +360,11 @@ class SecretRedactor:
         with self._lock:
             self._entries = []
             self.black_screenshots = False
+            self.mask_card_numbers = False
 
     @property
     def active(self) -> bool:
-        return bool(self._entries)
+        return bool(self._entries) or self.mask_card_numbers
 
     # -- masking -----------------------------------------------------------
 
@@ -340,8 +372,17 @@ class SecretRedactor:
         self, text: str, *, in_input: bool = False, structured: bool = False
     ) -> str:
         entries = self._entries
-        if not entries or not text:
+        if not self.active or not text:
             return text
+        if self.mask_card_numbers:
+            text = _CARD_NUMBER_RE.sub(
+                lambda match: (
+                    PLACEHOLDER.format("card_number")
+                    if _luhn_valid(match.group())
+                    else match.group()
+                ),
+                text,
+            )
         for entry in list(entries):
             if entry.applies(in_input, structured):
                 text = entry.pattern.sub(PLACEHOLDER.format(entry.secret_id), text)
@@ -351,7 +392,7 @@ class SecretRedactor:
         self, data: Any, *, in_input: bool = False, structured: bool = False
     ) -> Any:
         """Return a copy of nested data with every string value masked."""
-        if not self._entries:
+        if not self.active:
             return data
         masked = self._redact(data, in_input, structured)
         if isinstance(masked, (list, dict)):
@@ -388,9 +429,12 @@ class SecretRedactor:
         Slides a window of at most ``len(value)`` consecutive leaves over the
         leaves in tree order, so the cost is leaves x value length. Every
         contributing leaf may only use characters of the value; entries that
-        do not apply outside inputs only look at input leaves.
+        do not apply outside inputs only look at input leaves. The card rule
+        checks whole numeric runs to avoid masking substrings of longer IDs.
         """
         entries = [e for e in self._entries if e.segmentable]
+        if self.mask_card_numbers:
+            entries.append(_CARD_NUMBER_ENTRY)
         if not entries:
             return
         leaves: list = []
@@ -412,8 +456,17 @@ class SecretRedactor:
     def _scan_run(entry: _Entry, run: list) -> None:
         placeholder = PLACEHOLDER.format(entry.secret_id)
         for i in range(len(run)):
+            # The card rule must see the entire digit run: a window could
+            # mistake a suffix of an overlong number for a separate card.
+            if entry.luhn and (
+                not entry.accepts(run[i]["text"])
+                or (i and entry.accepts(run[i - 1]["text"]))
+            ):
+                continue
             window = []
-            for node in run[i : i + entry.max_compact]:
+            end = len(run) if entry.luhn else min(len(run), i + entry.max_compact)
+            for index in range(i, end):
+                node = run[index]
                 if not entry.accepts(node["text"]):
                     break
                 window.append(node)
@@ -425,9 +478,11 @@ class SecretRedactor:
                     spans.append((len(joined), len(joined) + len(node["text"])))
                     joined += node["text"] + separator
                 for match in entry.pattern.finditer(joined):
+                    if entry.luhn and not _luhn_valid(match.group()):
+                        continue
                     hit = [
                         node
-                        for node, (start, end) in zip(window, spans)
+                        for node, (start, end) in zip(window, spans, strict=True)
                         if start < match.end() and end > match.start()
                     ]
                     if len(hit) >= 2:
@@ -436,7 +491,7 @@ class SecretRedactor:
 
     def redact_ui_tree(self, data: Any) -> Any:
         """Redact the payload of ``driver.get_ui_tree()``."""
-        if not self._entries or not isinstance(data, dict):
+        if not self.active or not isinstance(data, dict):
             return data
         structured = _tree_is_structured(data.get("a11y_tree"))
         return self.redact_data(data, structured=structured)
@@ -450,7 +505,7 @@ class SecretRedactor:
         carries no editable/focused information, so ``input_only`` values are
         masked everywhere (more masking, never less).
         """
-        if not self._entries or state is None:
+        if not self.active or state is None:
             return state
         structured = trusted
         masked = copy.copy(state)

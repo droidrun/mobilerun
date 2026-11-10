@@ -172,6 +172,62 @@ def test_empty_redactor_changes_nothing():
     assert redactor.redact_text("anything") == "anything"
 
 
+@pytest.mark.parametrize(
+    "number",
+    [
+        "4222222222222",
+        "378282246310005",
+        "5555555555554444",
+        "4000000000000000006",
+        "5555 5555 5555 4444",
+        "5555-5555-5555-4444",
+    ],
+)
+def test_card_rule_masks_undeclared_valid_numbers_everywhere(number):
+    redactor = SecretRedactor()
+    redactor.mask_card_numbers = True
+    state = UIState([{"text": number}], number, number, {"label": number}, 100, 100)
+
+    assert redactor.active
+    assert redactor.redact_text(f"Card: {number}!") == "Card: [secret:card_number]!"
+    assert redactor.redact_ui_tree({"a11y_tree": {"text": number}}) == {
+        "a11y_tree": {"text": "[secret:card_number]"}
+    }
+    masked = redactor.redact_ui_state(state)
+    assert number not in repr(vars(masked))
+    assert state.formatted_text == number
+
+
+@pytest.mark.parametrize(
+    "number",
+    [
+        "5555555555554445",  # invalid checksum
+        "5555 5555 5555 4445",
+        "400000000002",  # valid checksum, too short
+        "94000000000000000006",  # valid 19-digit suffix, too long
+        "9-4000000000000000006",
+    ],
+)
+def test_card_rule_leaves_invalid_and_out_of_range_numbers(number):
+    redactor = SecretRedactor()
+    redactor.mask_card_numbers = True
+
+    assert redactor.redact_text(number) == number
+
+
+def test_card_rule_is_opt_in_and_cleared_between_runs():
+    redactor = SecretRedactor()
+    redactor.register("pw", "hunter22")
+    assert redactor.redact_text(CARD) == CARD
+
+    redactor.mask_card_numbers = True
+    assert redactor.redact_text(CARD) == "[secret:card_number]"
+    redactor.clear()
+
+    assert not redactor.active and not redactor.mask_card_numbers
+    assert redactor.redact_text(CARD) == CARD
+
+
 def test_geometry_fields_are_not_rewritten():
     redactor = SecretRedactor()
     redactor.register("card", "12345678")
@@ -611,6 +667,43 @@ def test_log_filter_masks_traceback_text(engine_log):
     assert "[secret:pw]" in out
 
 
+def test_card_rule_alone_masks_logs_and_tracebacks(engine_log):
+    redactor = SecretRedactor()
+    redactor.mask_card_numbers = True
+    logger = logging.getLogger("mobilerun.agent.child")
+
+    with redaction_scope(redactor):
+        logger.info("observed %s", CARD)
+        try:
+            raise ValueError(f"field {CARD}")
+        except ValueError:
+            logger.exception("observation failed")
+
+    out = engine_log.getvalue()
+    assert CARD not in out
+    assert out.count("[secret:card_number]") == 2
+
+
+def test_start_registered_values_are_masked_in_logs(monkeypatch, engine_log):
+    from conftest import Secrets
+    from test_secret_approval_gate import _started_agent
+
+    from mobilerun.credential_manager import SecretSpec
+
+    agent = _started_agent(
+        monkeypatch,
+        credentials=Secrets(
+            [SecretSpec("cvc", mask_from_start=True, redact="input_only")],
+            values={"cvc": "737"},
+        ),
+    )
+    with redaction_scope(agent._redactor):
+        logging.getLogger("mobilerun.agent.child").info("prefilled field: %s", "737")
+
+    assert "737" not in engine_log.getvalue()
+    assert "[secret:cvc]" in engine_log.getvalue()
+
+
 def test_log_filter_is_scoped_to_the_run_and_cleaned_up(engine_log):
     first, second = SecretRedactor(), SecretRedactor()
     first.register("one", "alpha-secret")
@@ -679,6 +772,21 @@ def test_card_number_in_group_nodes_is_masked_in_every_node():
     )
 
     assert texts_of(masked) == ["Card"] + ["[secret:card]"] * 4 + ["Pay"]
+
+
+def test_card_rule_masks_undeclared_numbers_split_over_nodes():
+    redactor = SecretRedactor()
+    redactor.mask_card_numbers = True
+
+    masked = redactor.redact_ui_tree(
+        tree_of("Card", "5555", "5555", "5555", "4444", "Pay")
+    )
+    assert texts_of(masked) == ["Card"] + ["[secret:card_number]"] * 4 + ["Pay"]
+
+    invalid = tree_of("5555", "5555", "5555", "4445")
+    assert redactor.redact_ui_tree(invalid) == invalid
+    overlong = tree_of("9", "4000", "0000", "0000", "0000", "006")
+    assert redactor.redact_ui_tree(overlong) == overlong
 
 
 def test_name_in_adjacent_nodes_is_masked_and_other_texts_stay():

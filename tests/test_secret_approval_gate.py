@@ -58,6 +58,7 @@ def test_default_specs_come_from_keys_and_manager_stays_concrete():
 
     assert specs == [SecretSpec("a"), SecretSpec("b")]
     assert all(not s.requires_approval and s.redact == "global" for s in specs)
+    assert all(not s.mask_from_start and not s.mask_card_numbers for s in specs)
     assert not getattr(CredentialManager.get_secret_specs, "__isabstractmethod__", 0)
 
 
@@ -906,3 +907,143 @@ def test_run_start_resets_registrations_and_abort(monkeypatch):
 
     assert agent._redactor.active is False
     assert agent.shared_state.terminal_abort is None
+
+
+def test_first_observation_masks_prefilled_card_and_input_only_fields(monkeypatch):
+    from test_secret_redaction import pixels, png, raw_node, raw_tree
+
+    class FilledDriver(InjectableDriver):
+        async def get_ui_tree(self):
+            return raw_tree(
+                [
+                    raw_node(CARD_NUMBER, cls="android.widget.TextView"),
+                    raw_node("12 / 27", cls="android.widget.EditText"),
+                    raw_node(CARD_CVC, cls="android.widget.EditText"),
+                    raw_node("12/27"),
+                    raw_node(f"Price {CARD_CVC}"),
+                ]
+            )
+
+        async def screenshot(self, **kwargs):
+            return png()
+
+    specs = [
+        SecretSpec("number", mask_from_start=True, redact="input_only"),
+        SecretSpec("expiry", mask_from_start=True, redact="input_only"),
+        SecretSpec("cvc", mask_from_start=True, redact="input_only"),
+    ]
+    # Even without approval gating, masking from start blacks out vision.
+    manager = Secrets(
+        specs, values={"number": CARD_NUMBER, "expiry": "12/27", "cvc": CARD_CVC}
+    )
+    agent = _started_agent(monkeypatch, credentials=manager)
+    agent.driver.inner = FilledDriver()
+
+    tree = run(agent.driver.get_ui_tree())
+    assert [n["text"] for n in tree["a11y_tree"]["children"]] == [
+        "[secret:number]",
+        "[secret:expiry]",
+        "[secret:cvc]",
+        "12/27",
+        f"Price {CARD_CVC}",
+    ]
+    state = run(agent.state_provider.get_state())
+    assert CARD_NUMBER not in state.formatted_text
+    assert "[secret:number]" in state.formatted_text
+    assert "[secret:expiry]" in state.formatted_text
+    assert "[secret:cvc]" in state.formatted_text
+    assert pixels(run(agent.driver.screenshot()))[1] == {(0, 0, 0)}
+    assert agent.driver.inner.typed == []
+
+
+def test_start_masking_covers_host_provider_and_preserves_approval(monkeypatch):
+    approver = Approver("denied")
+    device = Device(
+        nodes=[field(1, f"{SHOP}:id/card", (0, 0, 500, 100), text=CARD_NUMBER)]
+    )
+    manager = Secrets(
+        [SecretSpec("card", mask_from_start=True, requires_approval=True)],
+        values={"card": CARD_NUMBER},
+    )
+    agent = _started_agent(
+        monkeypatch,
+        credentials=manager,
+        approval_provider=approver,
+        state_provider=Provider(device),
+    )
+    agent.driver.inner = device
+    state = run(agent.state_provider.get_state())
+    assert state.elements[0]["text"] == "[secret:card]"
+    assert approver.requests == []
+    agent.action_ctx.ui = state
+    result = run(type_secret("card", 1, ctx=agent.action_ctx))
+    assert not result.success
+    assert agent.shared_state.terminal_abort == "approval_denied"
+    assert device.typed == []
+
+
+def test_run_start_enables_global_card_rule_without_resolving_ordinary_secrets(
+    monkeypatch,
+):
+    def no_resolve():
+        pytest.fail("ordinary secrets must still be resolved only when typed")
+
+    manager = Secrets(
+        [SecretSpec("login", mask_card_numbers=True)], on_resolve=no_resolve
+    )
+    agent = _started_agent(monkeypatch, credentials=manager)
+
+    assert agent._redactor.redact_text(CARD_NUMBER) == "[secret:card_number]"
+    assert not agent._redactor.black_screenshots
+
+
+@pytest.mark.parametrize("failure", ["specs", "resolve"])
+def test_start_masking_failure_ends_real_workflow_without_observations_or_llm(
+    monkeypatch, caplog, failure
+):
+    from unittest.mock import Mock
+
+    from llama_index.core.llms.mock import MockLLM
+
+    from mobilerun.config_manager.config_manager import MobileConfig, TelemetryConfig
+
+    class Unavailable(Secrets):
+        async def get_secret_specs(self):
+            if failure == "specs":
+                raise RuntimeError("host error with unregistered-value")
+            return await super().get_secret_specs()
+
+        async def resolve_key(self, key):
+            raise RuntimeError("host error with unregistered-value")
+
+    module = _agent_module(monkeypatch)
+    fast = Mock(side_effect=AssertionError("LLM loop must not start"))
+    extract = Mock(side_effect=AssertionError("structured extraction must not start"))
+    monkeypatch.setattr(module, "FastAgent", fast)
+    monkeypatch.setattr(module, "StructuredOutputAgent", extract)
+    driver = InjectableDriver()
+    driver.get_ui_tree = Mock(
+        side_effect=AssertionError("must not observe unresolved secrets")
+    )
+    config = MobileConfig(telemetry=TelemetryConfig(enabled=False))
+    agent = module.MobileAgent(
+        "Pay",
+        config=config,
+        llms=MockLLM(),
+        driver=driver,
+        credentials=Unavailable([SecretSpec("card", mask_from_start=True)]),
+    )
+
+    async def go():
+        return await agent.run()
+
+    result = run(go())
+    assert result.success is False and result.reason == "secret_unavailable"
+    assert "unregistered-value" not in repr(result)
+    assert "unregistered-value" not in caplog.text
+    assert agent.shared_state.terminal_abort == "secret_unavailable"
+    assert agent.shared_state.workflow_completed
+    assert not agent._redactor.active
+    fast.assert_not_called()
+    extract.assert_not_called()
+    driver.get_ui_tree.assert_not_called()
