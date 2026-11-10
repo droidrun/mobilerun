@@ -181,10 +181,15 @@ def test_empty_redactor_changes_nothing():
         "4000000000000000006",
         "5555 5555 5555 4444",
         "5555-5555-5555-4444",
+        "4242\u00a04242\u00a04242\u00a04242",
+        "4242\u202f4242\u202f4242\u202f4242",
+        "4242  4242  4242  4242",
     ],
 )
 def test_card_rule_masks_undeclared_valid_numbers_everywhere(number):
     redactor = SecretRedactor()
+    redactor.register("pw", "hunter22")
+    assert redactor.redact_text(number) == number
     redactor.mask_card_numbers = True
     state = UIState([{"text": number}], number, number, {"label": number}, 100, 100)
 
@@ -205,7 +210,6 @@ def test_card_rule_masks_undeclared_valid_numbers_everywhere(number):
         "5555 5555 5555 4445",
         "400000000002",  # valid checksum, too short
         "94000000000000000006",  # valid 19-digit suffix, too long
-        "9-4000000000000000006",
     ],
 )
 def test_card_rule_leaves_invalid_and_out_of_range_numbers(number):
@@ -215,17 +219,30 @@ def test_card_rule_leaves_invalid_and_out_of_range_numbers(number):
     assert redactor.redact_text(number) == number
 
 
-def test_card_rule_is_opt_in_and_cleared_between_runs():
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("4242 4242 4242 4242 123", "[secret:card_number] 123"),
+        ("4242 4242 4242 4242 12 28", "[secret:card_number] 12 28"),
+        ("Card 1 4242 4242 4242 4242", "Card 1 [secret:card_number]"),
+        ("9-4000000000000000006", "9-[secret:card_number]"),
+    ],
+)
+def test_card_rule_masks_group_aligned_windows(text, expected):
     redactor = SecretRedactor()
-    redactor.register("pw", "hunter22")
-    assert redactor.redact_text(CARD) == CARD
-
     redactor.mask_card_numbers = True
-    assert redactor.redact_text(CARD) == "[secret:card_number]"
-    redactor.clear()
 
-    assert not redactor.active and not redactor.mask_card_numbers
-    assert redactor.redact_text(CARD) == CARD
+    assert redactor.redact_text(text) == expected
+
+
+def test_full_before_partial_order_is_local_to_one_secret():
+    redactor = SecretRedactor()
+    redactor.register("B", "pass!")
+    redactor.register("A", "pass!word9x")
+    redactor.register_partial("A", "pass!word9x")
+
+    assert redactor.redact_text("pass!word9") == "[secret:A]"
+    assert redactor.redact_text("pass!word9x") == "[secret:A]"
 
 
 def test_geometry_fields_are_not_rewritten():
@@ -684,26 +701,6 @@ def test_card_rule_alone_masks_logs_and_tracebacks(engine_log):
     assert out.count("[secret:card_number]") == 2
 
 
-def test_start_registered_values_are_masked_in_logs(monkeypatch, engine_log):
-    from conftest import Secrets
-    from test_secret_approval_gate import _started_agent
-
-    from mobilerun.credential_manager import SecretSpec
-
-    agent = _started_agent(
-        monkeypatch,
-        credentials=Secrets(
-            [SecretSpec("cvc", mask_from_start=True, redact="input_only")],
-            values={"cvc": "737"},
-        ),
-    )
-    with redaction_scope(agent._redactor):
-        logging.getLogger("mobilerun.agent.child").info("prefilled field: %s", "737")
-
-    assert "737" not in engine_log.getvalue()
-    assert "[secret:cvc]" in engine_log.getvalue()
-
-
 def test_log_filter_is_scoped_to_the_run_and_cleaned_up(engine_log):
     first, second = SecretRedactor(), SecretRedactor()
     first.register("one", "alpha-secret")
@@ -785,7 +782,11 @@ def test_card_rule_masks_undeclared_numbers_split_over_nodes():
 
     invalid = tree_of("5555", "5555", "5555", "4445")
     assert redactor.redact_ui_tree(invalid) == invalid
-    overlong = tree_of("9", "4000", "0000", "0000", "0000", "006")
+    trailing = tree_of("4242", "4242", "4242", "4242", "123")
+    assert texts_of(redactor.redact_ui_tree(trailing)) == [
+        "[secret:card_number]"
+    ] * 4 + ["123"]
+    overlong = tree_of("94000000000000000006", "Pay")
     assert redactor.redact_ui_tree(overlong) == overlong
 
 

@@ -821,14 +821,14 @@ class InjectableDriver:
         return True
 
 
-def _started_agent(monkeypatch, **kwargs):
+def _started_agent(monkeypatch, config=None, **kwargs):
     from llama_index.core.llms.mock import MockLLM
     from llama_index.core.workflow import StartEvent
 
     from mobilerun.config_manager.config_manager import MobileConfig, TelemetryConfig
 
     agent_module = _agent_module(monkeypatch)
-    config = MobileConfig(telemetry=TelemetryConfig(enabled=False))
+    config = config or MobileConfig(telemetry=TelemetryConfig(enabled=False))
     config.logging.save_trajectory = "none"
     agent = agent_module.MobileAgent(
         "Pay", config=config, llms=MockLLM(), driver=InjectableDriver(), **kwargs
@@ -899,6 +899,7 @@ def test_injected_provider_sees_only_redacted_data_after_typing(monkeypatch):
 def test_run_start_resets_registrations_and_abort(monkeypatch):
     agent = _started_agent(monkeypatch, credentials=Secrets(card_specs()))
     agent._redactor.register("x", "leftover-value")
+    agent._redactor.mask_card_numbers = True
     agent.shared_state.abort_run("approval_denied")
 
     from llama_index.core.workflow import StartEvent
@@ -906,11 +907,18 @@ def test_run_start_resets_registrations_and_abort(monkeypatch):
     run(agent.start_handler(FakeFlowContext(), StartEvent()))
 
     assert agent._redactor.active is False
+    assert not agent._redactor.mask_card_numbers
+    assert agent._redactor.redact_text(CARD_NUMBER) == CARD_NUMBER
     assert agent.shared_state.terminal_abort is None
 
 
-def test_first_observation_masks_prefilled_card_and_input_only_fields(monkeypatch):
+@pytest.mark.parametrize("vision", [False, True])
+def test_first_observation_masks_prefilled_card_and_input_only_fields(
+    monkeypatch, vision
+):
     from test_secret_redaction import pixels, png, raw_node, raw_tree
+
+    from mobilerun.config_manager.config_manager import MobileConfig, TelemetryConfig
 
     class FilledDriver(InjectableDriver):
         async def get_ui_tree(self):
@@ -936,7 +944,9 @@ def test_first_observation_masks_prefilled_card_and_input_only_fields(monkeypatc
     manager = Secrets(
         specs, values={"number": CARD_NUMBER, "expiry": "12/27", "cvc": CARD_CVC}
     )
-    agent = _started_agent(monkeypatch, credentials=manager)
+    config = MobileConfig(telemetry=TelemetryConfig(enabled=False))
+    config.agent.fast_agent.vision = vision
+    agent = _started_agent(monkeypatch, credentials=manager, config=config)
     agent.driver.inner = FilledDriver()
 
     tree = run(agent.driver.get_ui_tree())
@@ -957,6 +967,8 @@ def test_first_observation_masks_prefilled_card_and_input_only_fields(monkeypatc
 
 
 def test_start_masking_covers_host_provider_and_preserves_approval(monkeypatch):
+    from unittest.mock import AsyncMock
+
     approver = Approver("denied")
     device = Device(
         nodes=[field(1, f"{SHOP}:id/card", (0, 0, 500, 100), text=CARD_NUMBER)]
@@ -965,6 +977,7 @@ def test_start_masking_covers_host_provider_and_preserves_approval(monkeypatch):
         [SecretSpec("card", mask_from_start=True, requires_approval=True)],
         values={"card": CARD_NUMBER},
     )
+    manager.get_secret_specs = AsyncMock(wraps=manager.get_secret_specs)
     agent = _started_agent(
         monkeypatch,
         credentials=manager,
@@ -980,6 +993,28 @@ def test_start_masking_covers_host_provider_and_preserves_approval(monkeypatch):
     assert not result.success
     assert agent.shared_state.terminal_abort == "approval_denied"
     assert device.typed == []
+    manager.get_secret_specs.assert_awaited_once()
+
+
+def test_run_start_keeps_legacy_manager_fallback(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    class Legacy(Secrets):
+        get_secret_specs = None
+
+    manager = Legacy([])
+    manager.get_keys = AsyncMock(return_value=["login"])
+    manager.resolve_key = AsyncMock(return_value="hunter22")
+    agent = _started_agent(monkeypatch, credentials=manager)
+    # Registry construction also lists keys; the gate must reuse startup's cache.
+    manager.get_keys.reset_mock()
+    from mobilerun.credential_manager.secret_gate import spec_for
+
+    assert run(spec_for(agent.action_ctx.secret_run, manager, "login")) == SecretSpec(
+        "login"
+    )
+    manager.get_keys.assert_not_awaited()
+    manager.resolve_key.assert_not_awaited()
 
 
 def test_run_start_enables_global_card_rule_without_resolving_ordinary_secrets(
@@ -997,11 +1032,23 @@ def test_run_start_enables_global_card_rule_without_resolving_ordinary_secrets(
     assert not agent._redactor.black_screenshots
 
 
-@pytest.mark.parametrize("failure", ["specs", "resolve"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "specs",
+        "resolve",
+        "external_start",
+        "external_cards",
+        "vision_only",
+        "visual_remote",
+        "coordinate_provider",
+    ],
+)
 def test_start_masking_failure_ends_real_workflow_without_observations_or_llm(
     monkeypatch, caplog, failure
 ):
-    from unittest.mock import Mock
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
 
     from llama_index.core.llms.mock import MockLLM
 
@@ -1021,29 +1068,63 @@ def test_start_masking_failure_ends_real_workflow_without_observations_or_llm(
     extract = Mock(side_effect=AssertionError("structured extraction must not start"))
     monkeypatch.setattr(module, "FastAgent", fast)
     monkeypatch.setattr(module, "StructuredOutputAgent", extract)
+    external = Mock(side_effect=AssertionError("external agent must not load"))
+    monkeypatch.setattr(module, "load_agent", external)
     driver = InjectableDriver()
     driver.get_ui_tree = Mock(
         side_effect=AssertionError("must not observe unresolved secrets")
     )
+    driver.screenshot = Mock(side_effect=AssertionError("must not observe screen"))
     config = MobileConfig(telemetry=TelemetryConfig(enabled=False))
+    if failure.startswith("external"):
+        config.agent.name = "external-test"
+    elif failure == "vision_only":
+        config.agent.vision_only = True
+    elif failure == "visual_remote":
+        config.device.control_backend = module.VISUAL_REMOTE_CONNECTION
+    provider = SimpleNamespace(
+        requires_coordinate_tools=failure == "coordinate_provider",
+        get_state=Mock(side_effect=AssertionError("must not observe provider")),
+    )
+    manager = Unavailable(
+        [
+            SecretSpec(
+                "card",
+                mask_from_start=failure != "external_cards",
+                mask_card_numbers=failure == "external_cards",
+            )
+        ]
+    )
+    manager.resolve_key = AsyncMock(wraps=manager.resolve_key)
     agent = module.MobileAgent(
         "Pay",
         config=config,
         llms=MockLLM(),
         driver=driver,
-        credentials=Unavailable([SecretSpec("card", mask_from_start=True)]),
+        credentials=manager,
+        state_provider=provider,
     )
 
     async def go():
         return await agent.run()
 
     result = run(go())
-    assert result.success is False and result.reason == "secret_unavailable"
+    reason = (
+        "secret_masking_needs_ui_tree"
+        if failure in {"vision_only", "visual_remote", "coordinate_provider"}
+        else "secret_unavailable"
+    )
+    assert result.success is False and result.reason == reason
     assert "unregistered-value" not in repr(result)
     assert "unregistered-value" not in caplog.text
-    assert agent.shared_state.terminal_abort == "secret_unavailable"
+    assert agent.shared_state.terminal_abort == reason
     assert agent.shared_state.workflow_completed
     assert not agent._redactor.active
     fast.assert_not_called()
     extract.assert_not_called()
+    external.assert_not_called()
     driver.get_ui_tree.assert_not_called()
+    driver.screenshot.assert_not_called()
+    provider.get_state.assert_not_called()
+    if failure != "resolve":
+        manager.resolve_key.assert_not_awaited()

@@ -36,7 +36,7 @@ logger = logging.getLogger("mobilerun")
 PLACEHOLDER = "[secret:{}]"
 _MIN_GLOBAL_DIGITS = 8
 _MIN_SEGMENTED_CHARS = 4
-_CARD_NUMBER_RE = re.compile(r"(?<!\d)(?<!\d[ -])[0-9](?:[ -]?[0-9]){12,18}(?![ -]?\d)")
+_CARD_NUMBER_RE = re.compile(r"[0-9]+(?:[\s\-]+[0-9]+)*")
 # Subtrees that never hold screen text: not scanned for split values.
 _NON_TEXT_KEYS = frozenset({"phone_state", "device_context", "focusedElement"})
 
@@ -72,7 +72,6 @@ class _Entry:
     max_compact: int = field(repr=False)
     # Prefix entry for partial input; dropped again when typing succeeded.
     partial: bool = False
-    luhn: bool = False
 
     def applies(self, in_input: bool, structured: bool) -> bool:
         if self.everywhere or not self.input_only:
@@ -125,6 +124,39 @@ def _luhn_valid(value: str) -> bool:
                 digit -= 9
         total += digit
     return total % 10 == 0
+
+
+def _card_spans(text: str) -> Iterator[tuple[int, int]]:
+    """Merged Luhn-valid, group-aligned windows of 13–19 digits.
+
+    A compact overlong ID is one indivisible group. Separators use the same
+    whitespace/hyphen rule as declared numeric values, including Unicode blanks.
+    """
+    pending = None
+    for match in _CARD_NUMBER_RE.finditer(text):
+        groups = []
+        offset = match.start()
+        for digits in re.split(r"[\s\-]+", match.group()):
+            start = text.index(digits, offset)
+            offset = start + len(digits)
+            groups.append((start, offset, digits))
+        for i, (start, _, _) in enumerate(groups):
+            value = ""
+            for _, end, digits in groups[i : i + 19]:
+                if len(value) + len(digits) > 19:
+                    break
+                value += digits
+                if len(value) < 13 or not _luhn_valid(value):
+                    continue
+                if pending is not None and start > pending[1]:
+                    yield pending
+                    pending = None
+                pending = (
+                    start if pending is None else pending[0],
+                    end if pending is None else max(end, pending[1]),
+                )
+    if pending is not None:
+        yield pending
 
 
 def _compile(value: str) -> tuple[Pattern[str], bool]:
@@ -200,18 +232,6 @@ def _tree_is_structured(node: Any) -> bool:
     if any(key in node for key in _INPUT_FLAG_KEYS):
         return True
     return _tree_is_structured(node.get("children") or [])
-
-
-_CARD_NUMBER_ENTRY = _Entry(
-    secret_id="card_number",
-    pattern=_CARD_NUMBER_RE,
-    everywhere=True,
-    input_only=False,
-    segmentable=True,
-    chars=frozenset("0123456789 -"),
-    max_compact=19,
-    luhn=True,
-)
 
 
 class SecretRedactor:
@@ -345,11 +365,21 @@ class SecretRedactor:
                     known.add(entry.key())
                     added.append(entry)
             # Copy-on-write: readers iterate a list that is never mutated.
-            # Full values precede partial alternations, whose longer regex
-            # could otherwise mask a prefix and expose the remaining suffix.
+            # Order secrets by their longest pattern. Only within one secret
+            # must full values precede partial alternations to avoid suffix leaks.
+            combined = [*self._entries, *added]
+            lengths = {}
+            for entry in combined:
+                lengths[entry.secret_id] = max(
+                    lengths.get(entry.secret_id, 0), len(entry.pattern.pattern)
+                )
             self._entries = sorted(
-                [*self._entries, *added],
-                key=lambda e: (not e.partial, len(e.pattern.pattern)),
+                combined,
+                key=lambda e: (
+                    lengths[e.secret_id],
+                    not e.partial,
+                    len(e.pattern.pattern),
+                ),
                 reverse=True,
             )
             if protected:
@@ -375,14 +405,11 @@ class SecretRedactor:
         if not self.active or not text:
             return text
         if self.mask_card_numbers:
-            text = _CARD_NUMBER_RE.sub(
-                lambda match: (
-                    PLACEHOLDER.format("card_number")
-                    if _luhn_valid(match.group())
-                    else match.group()
-                ),
-                text,
-            )
+            parts, end = [], 0
+            for start, stop in _card_spans(text):
+                parts.extend((text[end:start], PLACEHOLDER.format("card_number")))
+                end = stop
+            text = "".join([*parts, text[end:]])
         for entry in list(entries):
             if entry.applies(in_input, structured):
                 text = entry.pattern.sub(PLACEHOLDER.format(entry.secret_id), text)
@@ -430,17 +457,17 @@ class SecretRedactor:
         leaves in tree order, so the cost is leaves x value length. Every
         contributing leaf may only use characters of the value; entries that
         do not apply outside inputs only look at input leaves. The card rule
-        checks whole numeric runs to avoid masking substrings of longer IDs.
+        scans group-aligned windows, treating node boundaries as separators.
         """
         entries = [e for e in self._entries if e.segmentable]
-        if self.mask_card_numbers:
-            entries.append(_CARD_NUMBER_ENTRY)
-        if not entries:
+        if not entries and not self.mask_card_numbers:
             return
         leaves: list = []
         _collect_leaves(root, leaves, in_input, structured)
         if len(leaves) < 2:
             return
+        if self.mask_card_numbers:
+            self._scan_card_runs(leaves)
         for entry in entries:
             restricted = not entry.applies(False, structured)
             run: list = []
@@ -453,18 +480,31 @@ class SecretRedactor:
             self._scan_run(entry, run)
 
     @staticmethod
+    def _scan_card_runs(leaves: list) -> None:
+        chunks, spans = [], []
+        offset = 0
+        for node, _ in leaves:
+            text = node["text"]
+            chunks.append(text)
+            spans.append((offset, offset + len(text)))
+            offset += len(text) + 1
+        index = 0
+        for start, end in _card_spans(" ".join(chunks)):
+            while index < len(spans) and spans[index][1] <= start:
+                index += 1
+            stop = index
+            while stop < len(spans) and spans[stop][0] < end:
+                stop += 1
+            if stop - index >= 2:
+                for node, _ in leaves[index:stop]:
+                    node["text"] = PLACEHOLDER.format("card_number")
+
+    @staticmethod
     def _scan_run(entry: _Entry, run: list) -> None:
         placeholder = PLACEHOLDER.format(entry.secret_id)
         for i in range(len(run)):
-            # The card rule must see the entire digit run: a window could
-            # mistake a suffix of an overlong number for a separate card.
-            if entry.luhn and (
-                not entry.accepts(run[i]["text"])
-                or (i and entry.accepts(run[i - 1]["text"]))
-            ):
-                continue
             window = []
-            end = len(run) if entry.luhn else min(len(run), i + entry.max_compact)
+            end = min(len(run), i + entry.max_compact)
             for index in range(i, end):
                 node = run[index]
                 if not entry.accepts(node["text"]):
@@ -478,8 +518,6 @@ class SecretRedactor:
                     spans.append((len(joined), len(joined) + len(node["text"])))
                     joined += node["text"] + separator
                 for match in entry.pattern.finditer(joined):
-                    if entry.luhn and not _luhn_valid(match.group()):
-                        continue
                     hit = [
                         node
                         for node, (start, end) in zip(window, spans, strict=True)

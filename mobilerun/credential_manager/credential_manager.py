@@ -27,6 +27,7 @@ class SecretSpec:
     # Resolve and mask before the run's first observation; typing still needs approval.
     mask_from_start: bool = False
     # Mask every Luhn-valid card number in this run, including undeclared cards.
+    # Luhn also matches IMEI and ICCID identifiers.
     mask_card_numbers: bool = False
 
 
