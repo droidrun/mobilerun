@@ -219,6 +219,21 @@ class Command(HelpLayout, click.Command):
             logger.setLevel(level)
 
 
+_RENAMED_COMMANDS = {
+    "devices": "mobilerun device list",
+    "whoami": "mobilerun auth status",
+}
+
+
+def _command_paths(command, path=("mobilerun",)):
+    """Enumerate registered command paths without invoking callbacks."""
+    yield path, command
+    if isinstance(command, click.Group):
+        for name, child in command.commands.items():
+            if not child.hidden:
+                yield from _command_paths(child, (*path, name))
+
+
 class Group(HelpLayout, click.Group):
     command_class = Command
     group_class = type
@@ -239,11 +254,28 @@ class Group(HelpLayout, click.Group):
         try:
             return super().resolve_command(ctx, args)
         except click.UsageError as exc:
-            if args and exc.message.startswith("No such command"):
-                matches = difflib.get_close_matches(args[0], self.list_commands(ctx), n=1, cutoff=0.6)
+            if not ctx.resilient_parsing and args and exc.message.startswith("No such command"):
+                matches = self.suggest_commands(ctx, args[0])
                 if matches:
-                    exc.message += f" Did you mean '{matches[0]}'?"
+                    suggestions = ", ".join(f"'{match}'" for match in matches)
+                    exc.message += f" Did you mean {suggestions}?"
             raise
+
+    def suggest_commands(self, ctx, name):
+        paths = list(_command_paths(ctx.find_root().command))
+        exact = [" ".join(path) for path, _ in paths if path[-1] == name]
+        if exact:
+            return exact
+        if name in _RENAMED_COMMANDS:
+            return [_RENAMED_COMMANDS[name]]
+        siblings = difflib.get_close_matches(name, self.list_commands(ctx), n=1, cutoff=0.6)
+        if siblings:
+            parent_path = next(path for path, command in paths if command is self)
+            return [" ".join((*parent_path, siblings[0]))]
+        closest = difflib.get_close_matches(name, [path[-1] for path, _ in paths], n=1, cutoff=0.6)
+        if closest:
+            return [next(" ".join(path) for path, _ in paths if path[-1] == closest[0])]
+        return []
 
 
 # The same declarations are reused everywhere, including groups.

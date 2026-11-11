@@ -4,6 +4,7 @@ import click
 from rich.console import Console
 
 from mobilerun.cli.auth import (
+    LOGIN_OPTIONS,
     _run_anthropic_oauth_login,
     _run_gemini_oauth_login,
     _run_grok_oauth_login,
@@ -28,8 +29,20 @@ from mobilerun.cli.options import (
 from mobilerun.cli.providers import PROVIDERS, configure_provider_option
 
 
+class ConfigureCommand(Command):
+    def parse_args(self, ctx, args):
+        try:
+            return super().parse_args(ctx, args)
+        except click.UsageError as exc:
+            for service in LOGIN_OPTIONS:
+                if exc.message == f"Got unexpected extra argument ({service})":
+                    exc.message += f". Use 'mobilerun auth login {service}' to sign in."
+                    break
+            raise
+
+
 @click.command(
-    cls=Command,
+    cls=ConfigureCommand,
     epilog=examples(
         'mobilerun configure',
         'mobilerun configure -p openai -m MODEL',

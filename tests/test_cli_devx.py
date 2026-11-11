@@ -171,7 +171,11 @@ def test_unknown_agent_is_rejected(monkeypatch):
 
 @pytest.mark.parametrize(
     "args,suggestion",
-    [(["devcie"], "device"), (["device", "lst"], "list"), (["auth", "stauts"], "status")],
+    [
+        (["devcie"], "mobilerun device"),
+        (["device", "lst"], "mobilerun device list"),
+        (["auth", "stauts"], "mobilerun auth status"),
+    ],
 )
 def test_command_typos_suggest_without_accepting(args, suggestion):
     result = CliRunner().invoke(cli, args)
@@ -857,3 +861,76 @@ def test_doctor_runner_suppresses_results_and_keeps_instructions(monkeypatch, fl
     assert result.stderr.strip() == "Please enable manually"
     assert "All checks passed" not in result.output
     assert "Mobilerun Doctor" not in result.output
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (["login"], "No such command 'login'. Did you mean 'mobilerun auth login'?"),
+        (["logout"], "No such command 'logout'. Did you mean 'mobilerun auth logout'?"),
+        (["connect", "X"], "No such command 'connect'. Did you mean 'mobilerun device connect'?"),
+        (
+            ["disconnect", "X"],
+            "No such command 'disconnect'. Did you mean 'mobilerun device disconnect'?",
+        ),
+        (["setup"], "No such command 'setup'. Did you mean 'mobilerun device setup'?"),
+        (["ping"], "No such command 'ping'. Did you mean 'mobilerun device ping'?"),
+        (["pair"], "No such command 'pair'. Did you mean 'mobilerun device pair'?"),
+        (["devices"], "No such command 'devices'. Did you mean 'mobilerun device list'?"),
+        (["whoami"], "No such command 'whoami'. Did you mean 'mobilerun auth status'?"),
+        (["lst"], "No such command 'lst'. Did you mean 'mobilerun device list'?"),
+        (["devcie"], "No such command 'devcie'. Did you mean 'mobilerun device'?"),
+        (["device", "status"], "No such command 'status'. Did you mean 'mobilerun auth status'?"),
+        (["auth", "lst"], "No such command 'lst'. Did you mean 'mobilerun device list'?"),
+        (["login", "-h"], "No such command 'login'. Did you mean 'mobilerun auth login'?"),
+        (["login", "auth"], "No such command 'login'. Did you mean 'mobilerun auth login'?"),
+        (
+            ["list"],
+            "No such command 'list'. Did you mean 'mobilerun device list', 'mobilerun macro list'?",
+        ),
+        (
+            ["configure", "openai"],
+            "Got unexpected extra argument (openai). Use 'mobilerun auth login openai' to sign in.",
+        ),
+    ],
+)
+def test_unknown_commands_suggest_paths_without_execution(monkeypatch, args, message):
+    callbacks = []
+    for _, command in commands():
+        if not isinstance(command, click.Group):
+            callback = Mock(side_effect=AssertionError("must not execute a command"))
+            monkeypatch.setattr(command, "callback", callback)
+            callbacks.append(callback)
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+    assert result.stderr.splitlines()[-1] == "Error: " + message
+    assert result.stderr.count("Did you mean") <= 1
+    for callback in callbacks:
+        callback.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "words,cword",
+    [
+        ("mobilerun login ", "2"),
+        ("mobilerun device status ", "3"),
+        ("mobilerun devices ", "2"),
+        ("mobilerun configure openai ", "3"),
+    ],
+)
+def test_completion_never_suggests_command_corrections(words, cword):
+    result = CliRunner().invoke(
+        cli,
+        [],
+        prog_name="mobilerun",
+        env={
+            "_MOBILERUN_COMPLETE": "bash_complete",
+            "COMP_WORDS": words,
+            "COMP_CWORD": cword,
+        },
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert "Did you mean" not in result.stdout
+    assert "to sign in" not in result.stdout

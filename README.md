@@ -196,8 +196,9 @@ The sign-in services are `mobilerun` (default), `openai`, `anthropic`, `gemini`,
 and `xai`. Provider sign-ins use the same auth group; the configure command
 runs the wizard. The `configure` provider choices include only supported
 providers; `run` and `macro replay` also accept `openrouter` and `deepseek`.
-Help includes examples, and command typos suggest a correction without executing
-it. The `run --agent` option appears only when an external agent is installed.
+Help includes examples. Unknown commands suggest full paths across the command
+tree, including renamed commands and spelling corrections, without executing them.
+The `run --agent` option appears only when an external agent is installed.
 See each command's help for its arguments and options.
 
 ### Shared flags
