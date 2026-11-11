@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import click
 
+from mobilerun.cli import options
 from mobilerun.cli.options import DEFAULT_API_URL
 
 
@@ -81,10 +82,12 @@ async def select_device(
                 "Cloud device required: pass -d <id>; find ids with `mobilerun device list -t cloud`."
             )
         if not discover and selected_platform != "ios":
+            options.require_adb()
             return Selection(config, None, selected_platform, "local-android-adb")
         if selected_platform == "ios":
             selected = await discover_ios_device()
         else:
+            options.require_adb()
             try:
                 selected = await resolve_android_serial()
             except AndroidDeviceSelectionError as exc:
@@ -99,6 +102,8 @@ async def select_device(
         url=url,
         backend="local-android-adb" if not url and not is_uuid(selected) else None,
     )
+    if backend == "local-android-adb":
+        options.require_adb()
     return Selection(config, selected, selected_platform, backend)
 
 
@@ -140,6 +145,7 @@ async def _native_driver(selection, config, api_url):
     elif selection.backend == "local-android-http":
         driver = create_android_portal_http_driver(selection.device, portal_token(selection))
     else:
+        options.require_adb()
         if config.device.auto_setup and config.device.portal_mode != "disabled":
             device = await adb.device(serial=selection.device)
             await ensure_portal_ready(device, debug=False, **portal_version_kwargs(ensure_portal_ready))

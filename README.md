@@ -288,13 +288,17 @@ and **130** for interruption. Read commands with JSON output return an error
 document on failure; API errors include the HTTP status and an optional code:
 
 ```json
-{"error":"Device not found","status":404,"code":null}
+{"error":"Resource not found","status":404,"code":null}
 ```
 
-`doctor -j` retains completed checks, including when it exits 1:
+401/403 API errors also include `"credential":"env"` when the environment key
+was used, or `"credential":"login"` when the saved sign-in was used.
+
+`doctor -j` retains completed checks, including when it exits 1. For example,
+without Android SDK Platform-Tools (the Config path varies by platform):
 
 ```json
-{"ok":false,"checks":[{"name":"Device","status":"fail","detail":"no device connected\nConnect a device over USB or run `mobilerun device pair`; use `-t cloud` for cloud devices."}]}
+{"ok":false,"checks":[{"name":"SDK Version","status":"warn","detail":"0.8.0 (could not check latest); GitHub API unreachable"},{"name":"Config","status":"pass","detail":"/home/user/.config/droidrun/config.yaml"},{"name":"ADB","status":"fail","detail":"adb was not found or is not running. Install Android SDK Platform-Tools (https://developer.android.com/studio/releases/platform-tools) and check `mobilerun doctor`."}]}
 ```
 
 `device list --all` lists local devices first, then cloud devices. If either

@@ -2,31 +2,35 @@
 Mobilerun - A framework for controlling Android devices through LLM agents.
 """
 
-import logging
-from importlib import import_module
-from importlib.metadata import version
-from typing import TYPE_CHECKING
+try:
+    import logging
+    from importlib import import_module
+    from importlib.metadata import version
+    from typing import TYPE_CHECKING
 
-__version__ = version("mobilerun")
+    __version__ = version("mobilerun")
 
-# Attach a default CLILogHandler so that every consumer (CLI, SDK,
-# tools-only) gets visible output without explicit setup.  CLI flows can
-# replace this with their own handler via ``configure_logging()``.
-from mobilerun.log_handlers import CLILogHandler
+    # Attach a default CLILogHandler so that every consumer (CLI, SDK,
+    # tools-only) gets visible output without explicit setup.  CLI flows can
+    # replace this with their own handler via ``configure_logging()``.
+    from mobilerun.log_handlers import CLILogHandler
 
-_logger = logging.getLogger("mobilerun")
-_logger.addHandler(CLILogHandler())
-_logger.setLevel(logging.INFO)
-_logger.propagate = False
+    _logger = logging.getLogger("mobilerun")
+    _logger.addHandler(CLILogHandler())
+    _logger.setLevel(logging.INFO)
+    _logger.propagate = False
 
-from mobilerun.agent.utils.errors import HtmlErrorPageFilter  # noqa: E402
+    from mobilerun.agent.utils.errors import HtmlErrorPageFilter  # noqa: E402
 
-# llama-index's retry warnings include provider error bodies verbatim.
-for _retry_logger in (
-    "llama_index.llms.openai.utils",
-    "llama_index.llms.google_genai.utils",
-):
-    logging.getLogger(_retry_logger).addFilter(HtmlErrorPageFilter())
+    # llama-index's retry warnings include provider error bodies verbatim.
+    for _retry_logger in (
+        "llama_index.llms.openai.utils",
+        "llama_index.llms.google_genai.utils",
+    ):
+        logging.getLogger(_retry_logger).addFilter(HtmlErrorPageFilter())
+
+except KeyboardInterrupt:
+    raise SystemExit(130) from None
 
 
 

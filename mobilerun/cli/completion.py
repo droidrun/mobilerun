@@ -3,12 +3,13 @@
 import click
 from click.shell_completion import get_completion_class
 
-from mobilerun.cli.options import Command, emit
+from mobilerun.cli.options import Command, emit, verbose_option
 
 
 @click.command(cls=Command)
 @click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
-def completion(shell):
+@verbose_option
+def completion(shell, verbose):
     """Print the completion script for bash, zsh, or fish."""
     root = click.get_current_context().find_root().command
     complete = get_completion_class(shell)(root, {}, "mobilerun", "_MOBILERUN_COMPLETE")

@@ -7,6 +7,8 @@ import difflib
 import json
 import logging
 import os
+import shutil
+import socket
 import sys
 import traceback
 import unicodedata
@@ -25,6 +27,41 @@ NO_LOCAL_DEVICES_HINT = (
 )
 
 NO_CLOUD_DEVICES_HINT = "Create or start a device in Mobilerun Cloud and check your sign-in."
+
+
+ADB_HINT = (
+    "adb was not found or is not running. Install Android SDK Platform-Tools "
+    "(https://developer.android.com/studio/releases/platform-tools) "
+    "and check `mobilerun doctor`."
+)
+
+
+def require_adb():
+    """Check local tooling without invoking the library's binary fallback."""
+    path = shutil.which("adb")
+    try:
+        if not path:
+            raise OSError("missing adb")
+        with socket.create_connection((
+            os.environ.get("ANDROID_ADB_SERVER_HOST", "127.0.0.1"),
+            int(os.environ.get("ANDROID_ADB_SERVER_PORT", "5037")),
+        ), timeout=1):
+            pass
+    except (OSError, ValueError):
+        raise click.ClickException(ADB_HINT) from None
+    return path
+
+
+def config_debug(path):
+    """Read logging policy without creating or migrating configuration."""
+    import yaml
+
+    try:
+        with path.open(encoding="utf-8") as stream:
+            data = yaml.safe_load(stream)
+        return data.get("logging", {}).get("debug") is True if isinstance(data, dict) else False
+    except (OSError, ValueError, AttributeError, yaml.YAMLError):
+        return False
 
 
 def local_device_hint(message, target="local"):
@@ -46,9 +83,16 @@ def read_secret(ctx, param, value):
         return value
     if value == "-":
         stream = click.get_text_stream("stdin")
-        value = (click.prompt(param.human_readable_name, hide_input=True, err=True,
-                              default="", show_default=False)
-                 if stream.isatty() else stream.readline()).rstrip("\r\n")
+        try:
+            value = (click.prompt(param.human_readable_name, hide_input=True, err=True,
+                                  default="", show_default=False)
+                     if stream.isatty() else stream.readline()).rstrip("\r\n")
+        except (KeyboardInterrupt, click.Abort) as exc:
+            if isinstance(exc, KeyboardInterrupt) or isinstance(
+                exc.__cause__ or exc.__context__, KeyboardInterrupt
+            ):
+                raise click.exceptions.Exit(130) from None
+            raise click.ClickException("Input closed; run the command again in a terminal.") from None
         if not value.strip():
             raise click.BadParameter("stdin is empty; provide one secret line.", ctx=ctx, param=param)
     if value:
@@ -57,7 +101,7 @@ def read_secret(ctx, param, value):
 
 
 def redact(text, secrets):
-    for secret in sorted(set(filter(None, secrets)), key=len, reverse=True):
+    for secret in sorted({value for value in secrets if value and len(value) >= 8}, key=len, reverse=True):
         text = text.replace(secret, "[redacted]")
     return text
 
@@ -163,6 +207,26 @@ class HelpLayout:
         kwargs.setdefault("context_settings", CONTEXT_SETTINGS)
         super().__init__(*args, **kwargs)
 
+    def parse_args(self, ctx, args):
+        if not ctx.resilient_parsing:
+            for arg in args:
+                if arg == "--":
+                    break
+                flag = arg.split("=", 1)[0]
+                replacement = _REMOVED_FLAGS.get(flag)
+                if flag == "--path" and self.name == "setup":
+                    replacement = "--apk"
+                if replacement:
+                    raise click.UsageError(
+                        f"Removed option: {flag}. Use {replacement} instead.", ctx
+                    )
+        try:
+            return super().parse_args(ctx, args)
+        except click.NoSuchOption as exc:
+            if self.name in {"tap", "type", "swipe", "long-press"}:
+                exc.message += " Put `--` before arguments that start with a dash."
+            raise
+
     def get_params(self, ctx):
         def rank(param):
             order = ("device", "target", "platform", "config_path", None,
@@ -193,14 +257,27 @@ class Command(HelpLayout, click.Command):
         previous = logger.handlers[:], logger.level, logger.propagate
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(SecretFormatter(ctx))
-        configure_logging(bool(ctx.params.get("verbose")), handler)
         try:
             # Libraries and OAuth flows may print progress directly.
             with redirect_stdout(sys.stderr):
-                if ctx.command.name not in {"doctor", "completion"}:
+                if ctx.command.name != "completion":
                     from mobilerun.config_manager import ConfigLoader
 
-                    ConfigLoader.resolve_path(ctx.params.get("config_path"))
+                    try:
+                        path = ConfigLoader.resolve_path(ctx.params.get("config_path"))
+                    except (OSError, ValueError):
+                        if ctx.command.name != "doctor":
+                            raise
+                        path = ConfigLoader.get_user_config_path()
+                else:
+                    from pathlib import Path
+
+                    from mobilerun.config_manager.credential_paths import USER_CONFIG_DIR
+
+                    path = Path(os.environ.get("MOBILERUN_CONFIG", USER_CONFIG_DIR / "config.yaml"))
+                if ctx.params.get("verbose") is None:
+                    ctx.params["verbose"] = config_debug(path)
+                configure_logging(bool(ctx.params.get("verbose")), handler)
                 return super().invoke(ctx)
         except (KeyboardInterrupt, asyncio.CancelledError):
             ctx.exit(130)
@@ -234,6 +311,13 @@ class Command(HelpLayout, click.Command):
             logger.handlers, level, logger.propagate = previous
             logger.setLevel(level)
 
+
+_REMOVED_FLAGS = {
+    "--base_url": "-u/--llm-url", "--api_base": "-u/--llm-url",
+    "--cloud": "-t cloud", "--ios": "-P ios", "--debug": "-v",
+    "--device-id": "-d", "--steps": "-s/--max-steps",
+    "-pv": "--portal-version", "--control-backend": "--backend",
+}
 
 _RENAMED_COMMANDS = {
     "devices": "mobilerun device list",
@@ -273,7 +357,18 @@ class Group(HelpLayout, click.Group):
             if not ctx.resilient_parsing and args and exc.message.startswith("No such command"):
                 matches = self.suggest_commands(ctx, args[0])
                 if matches:
-                    suggestions = ", ".join(f"'{match}'" for match in matches)
+                    paths = {" ".join(path): command for path, command in
+                             _command_paths(ctx.find_root().command)}
+                    suggestions = []
+                    for match in matches:
+                        command = paths.get(match)
+                        for remaining in args[1:]:
+                            if not isinstance(command, click.Group) or remaining not in command.commands:
+                                break
+                            match += " " + remaining
+                            command = command.commands[remaining]
+                        suggestions.append(f"'{match}'")
+                    suggestions = ", ".join(suggestions)
                     exc.message += f" Did you mean {suggestions}?"
             raise
 

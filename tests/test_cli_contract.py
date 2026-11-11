@@ -29,6 +29,7 @@ def commands(group=cli, path=()):
 
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
+    monkeypatch.setattr("mobilerun.cli.options.require_adb", lambda: "/fake/adb")
     monkeypatch.setattr(ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml")
     monkeypatch.setattr(credential_paths, "OAUTH_CREDENTIAL_DIR", tmp_path / "credentials")
     monkeypatch.setattr(credential_paths, "AUTH_PROFILES_PATH", tmp_path / "auth-profiles.json")

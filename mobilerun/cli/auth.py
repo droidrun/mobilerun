@@ -96,7 +96,7 @@ def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool):
     try:
         code = deviceauth.request_code(auth_url, client_id)
     except Exception as e:
-        raise click.ClickException(f"request device code: {e}") from e
+        raise click.ClickException(f"request device code: {e}\nCheck --auth-url or MOBILERUN_AUTH_URL: {auth_url}") from e
 
     console.print(f"Visit: [bold]{code.verification_uri}[/]")
     console.print(f"Code:  [bold cyan]{code.user_code}[/]")
@@ -311,6 +311,8 @@ def logout(service, verbose):
                 lambda profile: profile.pop(_OAUTH_CREDENTIAL_SLOTS[variant], None)
             )
     console.print(f"Logged out of {service}." if removed else f"Not logged in to {service}.")
+    if service == "mobilerun" and resolve_cloud_credential().source == "env":
+        console.print("MOBILERUN_CLOUD_API_KEY stays active; unset it to stop using the env key.")
 
 
 @auth_cli.command()
@@ -366,7 +368,12 @@ def status(verbose, json_output):
             email = f" ({row['email']})" if row.get("email") else ""
             cloud = ""
             if row["service"] == "mobilerun":
-                cloud = f"; cloud commands use {row['cloud_credential']}"
+                cloud = (
+                    "; cloud commands have no credential; run `mobilerun auth login` "
+                    "or set MOBILERUN_CLOUD_API_KEY"
+                    if row["cloud_credential"] == "not set"
+                    else f"; cloud commands use {row['cloud_credential']}"
+                )
                 if row["env_overrides_login"]:
                     cloud += " (overrides saved sign-in)"
             emit(f"{row['service']}: {label}{email}  {row['credential_path']}{cloud}")

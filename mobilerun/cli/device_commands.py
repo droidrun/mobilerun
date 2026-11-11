@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 import click
 
+from mobilerun.cli import options
 from mobilerun.cli.options import (
     Group,
     _ui_cell,
@@ -37,6 +38,8 @@ def device_driver(params=None, *, selection=None):
             device=params.get("device"), config_path=params.get("config_path"),
             platform=params.get("platform"), target=params.get("target", "local"),
         ))
+    if selection.backend == "local-android-adb":
+        options.require_adb()
     token = portal_token(selection)
     client = core_client(params["api_url"], cloud=selection.backend == "cloud")
     try:

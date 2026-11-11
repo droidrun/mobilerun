@@ -43,6 +43,7 @@ def commands(command=cli, path=()):
 
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
+    monkeypatch.setattr("mobilerun.cli.options.require_adb", lambda: "/fake/adb")
     monkeypatch.setattr(ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml")
     monkeypatch.setenv("MOBILERUN_TELEMETRY_ENABLED", "false")
     for name in ("MOBILERUN_CONFIG", "MOBILERUN_TARGET", "MOBILERUN_DEVICE", "MOBILERUN_DEBUG"):

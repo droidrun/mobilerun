@@ -3,7 +3,6 @@
 import asyncio
 import json
 import re
-import shutil
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -25,6 +24,7 @@ from mobilerun_core_local.transport.android.portal_client import PortalClient
 from rich.console import Console
 
 from mobilerun import __version__
+from mobilerun.cli import options
 
 console = Console(stderr=True)
 
@@ -165,16 +165,9 @@ async def check_config(debug: bool, config_path: str | None = None) -> tuple[Che
 
 async def check_adb(debug: bool) -> CheckResult:
     """Check ADB is available and list devices."""
-    adb_path = shutil.which("adb")
-    if not adb_path:
-        return CheckResult(
-            "ADB",
-            Status.FAIL,
-            "adb not found in PATH",
-            detail="Install Android SDK Platform Tools",
-        )
-
+    adb_path = ""
     try:
+        adb_path = options.require_adb()
         devices = await adb.list()
         count = len(devices)
         return CheckResult(
@@ -187,7 +180,7 @@ async def check_adb(debug: bool) -> CheckResult:
         return CheckResult(
             "ADB",
             Status.FAIL,
-            f"adb found but server error: {e}",
+            e.message if isinstance(e, options.click.ClickException) else f"adb found but server error: {e}",
             detail=adb_path,
         )
 

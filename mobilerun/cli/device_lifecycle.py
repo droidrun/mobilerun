@@ -5,6 +5,7 @@ from __future__ import annotations
 import click
 from async_adbutils import adb
 
+from mobilerun.cli import options
 from mobilerun.cli.device_commands import device_cli, probe_device
 from mobilerun.cli.device_pair import adb_connect_succeeded
 from mobilerun.cli.options import (
@@ -67,6 +68,8 @@ def list_devices(target, api_url, verbose, json_output, all_devices):
 
 
 def _list_target(api_url, scope):
+    if scope == "local":
+        options.require_adb()
     client = core_client(api_url, cloud=scope == "cloud")
     devices = []
     try:
@@ -96,6 +99,7 @@ def _list_target(api_url, scope):
 @coro
 async def connect(serial, verbose):
     """Connect to an Android device over TCP/IP."""
+    options.require_adb()
     result = await adb.connect(serial)
     if not adb_connect_succeeded(result):
         raise click.ClickException(f"Failed to connect to {serial}: {result}")
@@ -108,6 +112,7 @@ async def connect(serial, verbose):
 @coro
 async def disconnect(serial, verbose):
     """Disconnect an Android TCP/IP device."""
+    options.require_adb()
     success = await adb.disconnect(serial, raise_error=True)
     click.echo(
         f"Successfully disconnected from {serial}"

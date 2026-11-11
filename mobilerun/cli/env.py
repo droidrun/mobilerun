@@ -79,6 +79,10 @@ def resolved_environment(config_path=None):
         if (name != "MOBILERUN_CLOUD_API_KEY" and os.environ.get(name)
                 and not (name == "MOBILERUN_CONFIG" and path_source == "flag")):
             value, source = os.environ[name], "env"
+        if (name == "MOBILERUN_DEBUG" and ctx and
+                any(parent.get_parameter_source("verbose") == click.core.ParameterSource.COMMANDLINE
+                    for parent in (ctx, ctx.find_root()))):
+            value, source = ctx.params.get("verbose"), "flag"
         if name == "MOBILERUN_TELEMETRY_ENABLED":
             value = is_telemetry_enabled(config_enabled=config.telemetry.enabled)
         if name in BOOLEAN_VARIABLES and isinstance(value, str):
