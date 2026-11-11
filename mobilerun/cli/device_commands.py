@@ -8,11 +8,8 @@ import asyncio
 import json
 import logging
 import os
-import re
 import sys
 import tempfile
-from functools import wraps
-from typing import Optional
 
 import click
 from async_adbutils import adb
@@ -21,19 +18,16 @@ from mobilerun_core_local.driver.android.portal import ensure_portal_ready
 from mobilerun_core_local.driver.ios import (
     IOSPortalHttpDriver,
     create_ios_driver,
-    discover_ios_device,
-    validate_ios_portal_url,
 )
 from rich.console import Console
 
 from mobilerun.agent.utils.android_device import (
-    AndroidDeviceSelectionError,
     create_android_portal_http_driver,
     is_portal_http_url,
-    resolve_android_serial,
 )
 from mobilerun.agent.utils.portal_setup import portal_version_kwargs
-from mobilerun.config_manager import ConfigLoader
+from mobilerun.cli.options import Group, coro, device_options, emit, json_option, verbose_option
+from mobilerun.cli.selection import core_client, resolve_cloud_api_key, select_device
 from mobilerun.log_handlers import configure_logging
 from mobilerun.tools.filters import ConciseFilter
 from mobilerun.tools.formatters import IndexedFormatter
@@ -45,164 +39,91 @@ console = Console()
 DEFAULT_CLOUD_BASE_URL = "https://api.mobilerun.ai/v1"
 CLOUD_API_KEY_ENV = "MOBILERUN_CLOUD_API_KEY"
 
-# Cloud device ids are UUIDs (RFC 4122); ADB serials never are. Used to
-# auto-route `-d <id>` to the cloud driver when the user didn't pass `--cloud`.
-_CLOUD_DEVICE_ID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
 
 
-def _looks_like_cloud_device_id(value: Optional[str]) -> bool:
-    return bool(value and _CLOUD_DEVICE_ID_RE.match(value))
+class CoreDriver:
+    """Expose the core facade through the framework's async state-provider interface."""
+
+    def __init__(self, device, backend):
+        self.core = device
+        self.backend = backend
+
+    async def screenshot(self):
+        import base64
+        from pathlib import Path
+
+        value = await asyncio.to_thread(self.core.screenshot)
+        if self.backend == "cloud":
+            path = Path(value)
+            try:
+                return path.read_bytes()
+            finally:
+                path.unlink(missing_ok=True)
+        return base64.b64decode(value)
+
+    async def get_ui_tree(self, **kwargs):
+        return await asyncio.to_thread(self.core.ui)
+
+    async def tap(self, x, y):
+        await asyncio.to_thread(self.core.tap, x, y, humanize=False)
+
+    async def swipe(self, x1, y1, x2, y2, duration_ms=1000):
+        await asyncio.to_thread(self.core.swipe, x1, y1, x2, y2, ms=duration_ms, humanize=False)
+
+    async def input_text(self, text, clear=False):
+        await asyncio.to_thread(self.core.type, text, clear=clear, humanize=False)
+        return True
+
+    async def press_button(self, button):
+        await asyncio.to_thread(self.core.key, button)
+
+    async def get_apps(self, include_system=False):
+        return await asyncio.to_thread(self.core.list_apps, include_system_apps=include_system)
+
+    async def start_app(self, package):
+        await asyncio.to_thread(self.core.start_app, package)
+        return f"Started {package}"
 
 
-def resolve_cloud_api_key() -> Optional[str]:
-    """Resolve the Mobilerun cloud API key for ``--cloud`` commands.
-
-    Order: the ``MOBILERUN_CLOUD_API_KEY`` env var, then the credential persisted by
-    ``mobilerun login`` (``<config dir>/credentials/mobilerun-cloud.json``).
-    """
-    env_key = os.environ.get(CLOUD_API_KEY_ENV)
-    if env_key:
-        return env_key
-    try:
-        from mobilerun.config_manager.credential_paths import OAUTH_CREDENTIAL_DIR
-
-        cred_path = OAUTH_CREDENTIAL_DIR / "mobilerun-cloud.json"
-        if cred_path.exists():
-            data = json.loads(cred_path.read_text())
-            key = data.get("api_key") or data.get("access_token")
-            if key:
-                return key
-    except Exception:
-        pass
-    return None
-
-
-def coro(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        return asyncio.run(f(*args, **kwargs))
-
-    return wrapper
-
-
-def device_options(f):
-    """Common device options for all action commands."""
-    f = click.option(
-        "--device",
-        "-d",
-        help="Device serial/IP or Portal HTTP URL (local), or cloud device UUID "
-        "(auto-detected when authenticated)",
-        default=None,
-    )(f)
-    f = click.option(
-        "--config", "-c", "config_path", help="Path to config file", default=None
-    )(f)
-    f = click.option("--tcp/--no-tcp", default=None, help="Use TCP communication")(f)
-    f = click.option("--ios", is_flag=True, default=False, help="Target iOS device")(f)
-    f = click.option(
-        "--cloud",
-        is_flag=True,
-        default=False,
-        help="Target a Mobilerun cloud device instead of a local one",
-    )(f)
-    f = click.option(
-        "--device-id",
-        "device_id",
-        default=None,
-        help="Cloud device id (-d also works; auto-detected when value is a UUID)",
-    )(f)
-    f = click.option(
-        "--base-url",
-        "base_url",
-        default=None,
-        help=f"Cloud API base URL (default {DEFAULT_CLOUD_BASE_URL})",
-    )(f)
-    return f
-
-
-async def _create_driver(
-    device: Optional[str],
-    config_path: Optional[str],
-    tcp: Optional[bool],
-    ios: bool,
-    cloud: bool = False,
-    device_id: Optional[str] = None,
-    base_url: Optional[str] = None,
-):
-    """Create and connect a device driver based on CLI options."""
-    # Auto-route to cloud when -d/--device-id is a UUID and a credential exists.
-    # Mirrors `mobilerun devices` (which includes cloud when authenticated), so
-    # users don't have to remember `--cloud` on every per-action subcommand.
-    if not cloud and not ios:
-        candidate = device_id or device
-        if _looks_like_cloud_device_id(candidate) and resolve_cloud_api_key():
-            cloud = True
-
-    if cloud:
-        if ios:
-            raise click.ClickException("--cloud and --ios are mutually exclusive.")
-        cloud_device_id = device_id or device
-        if not cloud_device_id:
-            raise click.ClickException(
-                "Cloud device id required: pass -d <id> or --device-id <id>."
-            )
-        api_key = resolve_cloud_api_key()
-        if not api_key:
-            raise click.ClickException(
-                f"No cloud API key found. Set {CLOUD_API_KEY_ENV} or run "
-                "`mobilerun login`."
-            )
-        from mobilerun_core_local.driver.cloud import CloudDriver
-
-        driver = CloudDriver(
-            device_id=cloud_device_id,
-            api_key=api_key,
-            base_url=base_url or DEFAULT_CLOUD_BASE_URL,
+async def connect_driver(device=None, config_path=None, tcp=None, platform=None,
+                         target="local", api_url=DEFAULT_CLOUD_BASE_URL, verbose=None, framework=False):
+    _log_progress_to_stderr()
+    selection = await select_device(device, config_path, tcp, platform, target)
+    config = selection.config
+    config.device.serial = selection.device
+    config.device.platform = selection.platform
+    if selection.backend == "local-android-adb":
+        # The facade does not expose auto-setup, explicit TCP, or keyboard teardown.
+        return await _connect_local_driver(selection.device, config, tcp, False)
+    client = core_client(api_url)
+    if selection.backend == "cloud" and not resolve_cloud_api_key():
+        raise click.ClickException(
+            "No cloud API key found. Set MOBILERUN_CLOUD_API_KEY or run `mobilerun auth login`."
         )
-        await driver.connect()
-        return driver, False
+    if framework:
+        # Preserve input_text's boolean failure result and the macro engine's
+        # async driver verbs (core.type discards the underlying boolean).
+        if selection.backend == "cloud":
+            from mobilerun_core_local.driver.cloud import CloudDriver
 
-    config = ConfigLoader.load(config_path)
-
-    if device is not None:
-        config.device.serial = device
-    if tcp is not None:
-        config.device.use_tcp = tcp
-    if ios:
-        config.device.platform = "ios"
-
-    is_ios = config.device.platform.lower() == "ios"
-
-    if is_ios:
-        if config.device.serial:
-            url = validate_ios_portal_url(config.device.serial)
+            driver = CloudDriver(device_id=selection.device, api_key=resolve_cloud_api_key(), base_url=api_url)
+        elif selection.backend == "local-ios-http":
+            driver = await create_ios_driver(selection.device, token=config.device.resolve_auth_token())
         else:
-            url = await discover_ios_device()
-        driver = await create_ios_driver(url, token=config.device.resolve_auth_token())
+            driver = create_android_portal_http_driver(selection.device, config.device.resolve_auth_token())
         await driver.connect()
-        return driver, True
+        return driver, selection.platform == "ios"
+    connected = client.connect(
+        selection.device, backend=selection.backend, platform=selection.platform,
+        url=selection.device if is_portal_http_url(selection.device) else None,
+        token=config.device.resolve_auth_token(),
+    )
+    return CoreDriver(connected, selection.backend), selection.platform == "ios"
 
-    serial = config.device.serial
-    if is_portal_http_url(serial):
-        try:
-            driver = create_android_portal_http_driver(
-                serial, config.device.resolve_auth_token()
-            )
-        except ValueError as e:
-            raise click.ClickException(str(e)) from None
-        await driver.connect()
-        return driver, False
 
-    if serial is None:
-        try:
-            serial = await resolve_android_serial()
-        except AndroidDeviceSelectionError as e:
-            raise click.ClickException(str(e)) from None
-        click.echo(f"Using device: {serial}", err=True)
+async def _connect_local_driver(device, config, tcp, ios):
 
+    serial = device
     if config.device.auto_setup and config.device.portal_mode != "disabled":
         device_obj = await adb.device(serial=serial)
         await ensure_portal_ready(
@@ -252,8 +173,9 @@ async def _teardown_android(driver):
 # ---------------------------------------------------------------------------
 
 
-@click.group()
-def device_cli():
+@click.group(cls=Group)
+@verbose_option
+def device_cli(verbose):
     """Direct device actions (screenshot, tap, swipe, etc.)."""
     pass
 
@@ -264,12 +186,13 @@ def device_cli():
 
 
 @device_cli.command()
+@json_option
 @device_options
 @coro
-async def screenshot(device, config_path, tcp, ios, cloud, device_id, base_url):
+async def screenshot(device, config_path, tcp, platform, target, api_url, verbose, json_output):
     """Take a screenshot and print the saved file path to stdout."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, _ = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose
     )
     try:
         png_bytes = await driver.screenshot()
@@ -278,21 +201,30 @@ async def screenshot(device, config_path, tcp, ios, cloud, device_id, base_url):
             os.write(fd, png_bytes)
         finally:
             os.close(fd)
-        click.echo(path)
+        emit({"path": path} if json_output else path, json_output=json_output)
     finally:
         await _teardown_android(driver)
 
 
 @device_cli.command()
+@json_option
 @device_options
 @coro
-async def ui(device, config_path, tcp, ios, cloud, device_id, base_url):
+async def ui(device, config_path, tcp, platform, target, api_url, verbose, json_output):
     """Print the UI accessibility tree with element bounds for targeting."""
     _log_progress_to_stderr()
-    driver, is_ios = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, is_ios = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose
     )
     try:
+        if isinstance(driver, CoreDriver):
+            state = await driver.get_ui_tree()
+            if json_output:
+                emit(state, json_output=True)
+            else:
+                tree = state.get("a11y_tree", state)
+                emit(tree if isinstance(tree, str) else json.dumps(state, indent=2))
+            return
         if is_ios and not isinstance(driver, IOSPortalHttpDriver):
             provider = IOSStateProvider(driver)
         else:
@@ -302,9 +234,12 @@ async def ui(device, config_path, tcp, ios, cloud, device_id, base_url):
                 tree_formatter=IndexedFormatter(),
             )
         state = await provider.get_state()
-        click.echo(state.formatted_text)
-        if state.phone_state:
-            click.echo(f"\nPhone state: {state.phone_state}")
+        if json_output:
+            emit({"ui": state.formatted_text, "phone_state": state.phone_state}, json_output=True)
+        else:
+            emit(state.formatted_text)
+            if state.phone_state:
+                emit(f"\nPhone state: {state.phone_state}")
     finally:
         await _teardown_android(driver)
 
@@ -314,14 +249,14 @@ async def ui(device, config_path, tcp, ios, cloud, device_id, base_url):
 @click.argument("y", type=int)
 @device_options
 @coro
-async def tap(x, y, device, config_path, tcp, ios, cloud, device_id, base_url):
+async def tap(x, y, device, config_path, tcp, platform, target, api_url, verbose):
     """Tap at screen coordinates."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, _ = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose
     )
     try:
         await driver.tap(x, y)
-        click.echo(f"Tapped ({x}, {y})")
+        click.echo(f"Tapped ({x}, {y})", err=True)
     finally:
         await _teardown_android(driver)
 
@@ -337,15 +272,15 @@ async def tap(x, y, device, config_path, tcp, ios, cloud, device_id, base_url):
 @device_options
 @coro
 async def swipe_cmd(
-    x1, y1, x2, y2, duration, device, config_path, tcp, ios, cloud, device_id, base_url
+    x1, y1, x2, y2, duration, device, config_path, tcp, platform, target, api_url, verbose
 ):
     """Swipe from (x1, y1) to (x2, y2)."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, _ = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose
     )
     try:
         await driver.swipe(x1, y1, x2, y2, duration_ms=int(duration * 1000))
-        click.echo(f"Swiped ({x1}, {y1}) -> ({x2}, {y2})")
+        click.echo(f"Swiped ({x1}, {y1}) -> ({x2}, {y2})", err=True)
     finally:
         await _teardown_android(driver)
 
@@ -355,16 +290,18 @@ async def swipe_cmd(
 @click.argument("y", type=int)
 @device_options
 @coro
-async def long_press(x, y, device, config_path, tcp, ios, cloud, device_id, base_url):
+async def long_press(x, y, device, config_path, tcp, platform, target, api_url, verbose):
     """Long press at screen coordinates."""
-    if ios:
+    if platform == "ios":
         raise click.ClickException("long-press is not supported on iOS")
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, is_ios = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose
     )
     try:
+        if is_ios:
+            raise click.ClickException("long-press is not supported on iOS")
         await driver.swipe(x, y, x, y, 1000)
-        click.echo(f"Long pressed ({x}, {y})")
+        click.echo(f"Long pressed ({x}, {y})", err=True)
     finally:
         await _teardown_android(driver)
 
@@ -375,16 +312,16 @@ async def long_press(x, y, device, config_path, tcp, ios, cloud, device_id, base
 @device_options
 @coro
 async def type_text(
-    text, clear, device, config_path, tcp, ios, cloud, device_id, base_url
+    text, clear, device, config_path, tcp, platform, target, api_url, verbose
 ):
     """Type text into the currently focused field. Use 'tap' first to focus."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, _ = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose, framework=True
     )
     try:
         success = await driver.input_text(text, clear)
         if success:
-            click.echo(f"Typed: {text}")
+            click.echo(f"Typed: {text}", err=True)
         else:
             raise click.ClickException("Failed to type text")
     finally:
@@ -397,41 +334,47 @@ async def type_text(
 )
 @device_options
 @coro
-async def press(button, device, config_path, tcp, ios, cloud, device_id, base_url):
+async def press(button, device, config_path, tcp, platform, target, api_url, verbose):
     """Press a system button."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, _ = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose
     )
     try:
         await driver.press_button(button)
-        click.echo(f"Pressed {button}")
+        click.echo(f"Pressed {button}", err=True)
     finally:
         await _teardown_android(driver)
 
 
 @device_cli.command()
 @click.option("--system/--no-system", default=False, help="Include system apps")
+@json_option
 @device_options
 @coro
-async def apps(system, device, config_path, tcp, ios, cloud, device_id, base_url):
+async def apps(system, device, config_path, tcp, platform, target, api_url, verbose, json_output):
     """List installed apps."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, _ = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose
     )
     try:
         app_list = await driver.get_apps(include_system=system)
+        if json_output:
+            emit(app_list, json_output=True)
+            return
         for app in app_list:
             label = app.get("label") or ""
             package = (
                 app.get("package")
                 or app.get("package_name")
                 or app.get("packageName")
+                or app.get("app_id")
+                or app.get("bundle_id")
                 or ""
             )
             if label and label != package:
-                click.echo(f"{package}  ({label})")
+                emit(f"{package}  ({label})")
             else:
-                click.echo(package)
+                emit(package)
     finally:
         await _teardown_android(driver)
 
@@ -440,13 +383,14 @@ async def apps(system, device, config_path, tcp, ios, cloud, device_id, base_url
 @click.argument("package")
 @device_options
 @coro
-async def start(package, device, config_path, tcp, ios, cloud, device_id, base_url):
+async def start(package, device, config_path, tcp, platform, target, api_url, verbose):
     """Launch an app by package name."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
+    driver, _ = await connect_driver(
+        device, config_path, tcp, platform, target, api_url, verbose
     )
     try:
         result = await driver.start_app(package)
-        click.echo(result)
+        click.echo(result, err=True)
     finally:
         await _teardown_android(driver)
+

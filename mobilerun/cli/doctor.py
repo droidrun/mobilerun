@@ -26,7 +26,7 @@ from rich.console import Console
 
 from mobilerun import __version__
 
-console = Console()
+console = Console(stderr=True)
 
 PORTAL_REMOTE_PORT = 8080
 
@@ -131,17 +131,20 @@ async def check_sdk_version(debug: bool) -> CheckResult:
         return CheckResult("SDK Version", Status.PASS, f"{current} (up to date)")
 
 
-async def check_config(debug: bool) -> tuple[CheckResult, Any]:
+async def check_config(debug: bool, config_path: str | None = None) -> tuple[CheckResult, Any]:
     """Check config file exists and loads."""
+    import os
+    from pathlib import Path
+
     from mobilerun.config_manager import ConfigLoader
     from mobilerun.config_manager.loader import OutdatedConfigError
 
-    config_path = ConfigLoader.get_user_config_path()
+    config_path = Path(config_path or os.environ.get("MOBILERUN_CONFIG") or ConfigLoader.get_user_config_path())
 
     if not config_path.exists():
         # Will be created on first load
         try:
-            config = ConfigLoader.load()
+            config = ConfigLoader.load(str(config_path))
             return (
                 CheckResult(
                     "Config",
@@ -162,7 +165,7 @@ async def check_config(debug: bool) -> tuple[CheckResult, Any]:
             )
 
     try:
-        config = ConfigLoader.load()
+        config = ConfigLoader.load(str(config_path))
         return CheckResult("Config", Status.PASS, str(config_path)), config
     except OutdatedConfigError:
         return (
@@ -382,7 +385,7 @@ async def check_portal_version(
                     "Portal Version",
                     Status.WARN,
                     msg,
-                    detail="pip install --upgrade mobilerun, then mobilerun setup",
+                    detail="pip install --upgrade mobilerun, then mobilerun device setup",
                 ),
                 installed,
                 expected,
@@ -674,7 +677,8 @@ async def fix_enable_accessibility(device: AdbDevice, debug: bool) -> bool:
 async def run_doctor(
     device_serial: str | None = None,
     debug: bool = False,
-) -> None:
+    config_path: str | None = None,
+) -> list[CheckResult]:
     """Run all doctor checks and auto-fix where possible."""
     debug = debug or False
 
@@ -688,7 +692,7 @@ async def run_doctor(
     results.append(r)
 
     # 2. Config
-    r_config, config = await check_config(debug)
+    r_config, config = await check_config(debug, config_path)
     _print_result(r_config, debug)
     results.append(r_config)
 
@@ -702,7 +706,7 @@ async def run_doctor(
     results.append(r)
     if r.status == Status.FAIL:
         _print_summary(results)
-        return
+        return results
 
     # 5. Device
     r_device, device = await check_device(device_serial, debug)
@@ -711,14 +715,14 @@ async def run_doctor(
     if device is None:
         console.print("\n  [dim]Skipping device-dependent checks (no device)[/]")
         _print_summary(results)
-        return
+        return results
 
     # 6. Portal Installed
     r_portal, is_installed = await check_portal_installed(device, debug)
     _print_result(r_portal, debug)
     if not is_installed:
         # Auto-fix: run setup
-        from mobilerun.cli.main import _setup_portal
+        from mobilerun.cli.setup import _setup_portal
 
         await _setup_portal(path=None, device=device.serial, debug=debug)
         # Re-check
@@ -726,7 +730,7 @@ async def run_doctor(
         if not is_installed:
             results.append(r_portal)
             _print_summary(results)
-            return
+            return results
     results.append(r_portal)
 
     # 7. Portal Version
@@ -735,7 +739,7 @@ async def run_doctor(
     if r_version.status == Status.WARN and installed_ver:
         # Auto-fix: run setup to install compatible version
         console.print("  [blue]→ Updating portal...[/]")
-        from mobilerun.cli.main import _setup_portal
+        from mobilerun.cli.setup import _setup_portal
 
         await _setup_portal(path=None, device=device.serial, debug=debug, in_place=True)
         # Wait for portal service to initialize after install
@@ -803,6 +807,7 @@ async def run_doctor(
     results.append(r)
 
     _print_summary(results)
+    return results
 
 
 def _print_summary(results: list[CheckResult]) -> None:
