@@ -280,9 +280,8 @@ async def run_command(
         llm = None
 
         if provider or model:
-            assert (
-                provider and model
-            ), "Either both provider and model must be provided or none of them"
+            if not (provider and model):
+                raise ValueError("--provider and --model must be given together")
             llm_kwargs = {}
             if temperature is not None:
                 llm_kwargs["temperature"] = temperature
@@ -591,6 +590,9 @@ async def run(
 ):
     """Run a command on your mobile device using natural language."""
 
+    if (provider is None) != (model is None):
+        raise click.UsageError("--provider and --model must be given together")
+
     success = await run_command(
         command=command,
         config_path=config,
@@ -707,6 +709,7 @@ async def devices(cloud: bool, base_url: str | None):
         return
 
     # Local section
+    local_error = False
     try:
         local = await adb.list()
         if not local:
@@ -717,6 +720,7 @@ async def devices(cloud: bool, base_url: str | None):
                 console.print(f"  • [bold]{device.serial}[/]")
     except Exception as e:
         console.print(f"[red]Error listing local devices: {e}[/]")
+        local_error = True
 
     # Cloud section (only when authenticated — silent otherwise).
     if resolve_cloud_api_key():
@@ -726,6 +730,9 @@ async def devices(cloud: bool, base_url: str | None):
             silent_if_no_key=True,
             silent_errors=True,
         )
+
+    if local_error:
+        click.get_current_context().exit(1)
 
 
 DEFAULT_AUTH_URL = "https://cloud.mobilerun.ai/api/auth"
@@ -830,12 +837,12 @@ async def connect(serial: str):
     """Connect to a device over TCP/IP."""
     try:
         device = await adb.connect(serial)
-        if device.count("already connected"):
-            console.print(f"[green]Successfully connected to {serial}[/]")
-        else:
-            console.print(f"[red]Failed to connect to {serial}: {device}[/]")
     except Exception as e:
-        console.print(f"[red]Error connecting to device: {e}[/]")
+        raise click.ClickException(f"Error connecting to device: {e}") from e
+    if "connected to" in device:
+        console.print(f"[green]Successfully connected to {serial}[/]")
+    else:
+        raise click.ClickException(f"Failed to connect to {serial}: {device}")
 
 
 @cli.command()
@@ -850,7 +857,7 @@ async def disconnect(serial: str):
         else:
             console.print(f"[yellow]Device {serial} was not connected[/]")
     except Exception as e:
-        console.print(f"[red]Error disconnecting from device: {e}[/]")
+        raise click.ClickException(f"Error disconnecting from device: {e}") from e
 
 
 async def _wait_for_portal_service(
@@ -1071,8 +1078,7 @@ async def ping(device: str | None, tcp: bool | None, debug: bool | None):
 
         device_obj = await adb.device(device)
         if not device_obj:
-            console.print(f"[bold red]Error:[/] Could not find device {device}")
-            return
+            raise click.ClickException(f"Could not find device {device}")
 
         await ping_portal(device_obj, debug_mode)
 
@@ -1084,12 +1090,14 @@ async def ping(device: str | None, tcp: bool | None, debug: bool | None):
         console.print(
             "[bold green]Portal is installed and accessible. You're good to go![/]"
         )
+    except click.ClickException:
+        raise
     except Exception as e:
-        console.print(f"[bold red]Error:[/] {e}")
         if debug_mode:
             import traceback
 
             traceback.print_exc()
+        raise click.ClickException(str(e)) from e
 
 
 # Add macro commands as a subgroup
@@ -1382,149 +1390,3 @@ def configure_xai(
         open_browser=open_browser,
         device_code=device_code,
     )
-
-
-async def test(
-    command: str,
-    config_path: str | None = None,
-    device: str | None = None,
-    steps: int | None = None,
-    vision: bool | None = None,
-    reasoning: bool | None = None,
-    tracing: bool | None = None,
-    debug: bool | None = None,
-    use_tcp: bool | None = None,
-    save_trajectory: str | None = None,
-    temperature: float | None = None,
-    ios: bool = False,
-):
-    config = ConfigLoader.load(config_path)
-
-    # Initialize logging
-    debug_mode = debug if debug is not None else config.logging.debug
-    _setup_cli_logging(debug_mode)
-    logger = logging.getLogger("mobilerun")
-
-    try:
-        logger.info(f"🚀 Starting: {command}")
-        print_telemetry_message(config_enabled=config.telemetry.enabled)
-
-        # ================================================================
-        # STEP 1: Apply CLI overrides via direct mutation
-        # ================================================================
-
-        # Vision overrides
-        if vision is not None:
-            # --vision flag overrides all agents
-            config.agent.manager.vision = vision
-            config.agent.executor.vision = vision
-            config.agent.fast_agent.vision = vision
-            logger.debug(f"CLI override: vision={vision} (all agents)")
-
-        # Agent overrides
-        if steps is not None:
-            config.agent.max_steps = steps
-        if reasoning is not None:
-            config.agent.reasoning = reasoning
-
-        # Device overrides
-        if device is not None:
-            config.device.serial = device
-        if use_tcp is not None:
-            config.device.use_tcp = use_tcp
-
-        # Logging overrides
-        if debug is not None:
-            config.logging.debug = debug
-        if save_trajectory is not None:
-            config.logging.save_trajectory = save_trajectory
-
-        # Tracing overrides
-        if tracing is not None:
-            config.tracing.enabled = tracing
-
-        # Platform overrides
-        if ios:
-            config.device.platform = "ios"
-
-        # ================================================================
-        # STEP 2: Initialize MobileAgent with config
-        # ================================================================
-
-        mode = (
-            "planning with reasoning" if config.agent.reasoning else "direct execution"
-        )
-        logger.info(f"🤖 Agent mode: {mode}")
-        logger.info(
-            f"👁️  Vision settings: Manager={config.agent.manager.vision}, "
-            f"Executor={config.agent.executor.vision}, FastAgent={config.agent.fast_agent.vision}"
-        )
-
-        if config.tracing.enabled:
-            logger.info("🔍 Tracing enabled")
-
-        # Build MobileAgent kwargs for LLM loading
-        droid_agent_kwargs = {}
-        if temperature is not None:
-            droid_agent_kwargs["temperature"] = temperature
-
-        droid_agent = MobileAgent(
-            goal=command,
-            config=config,
-            timeout=1000,
-            **droid_agent_kwargs,
-        )
-
-        # ================================================================
-        # STEP 3: Run agent
-        # ================================================================
-
-        logger.debug("▶️  Starting agent execution...")
-        logger.debug("Press Ctrl+C to stop")
-
-        event_handler = EventHandler()
-
-        try:
-            handler = droid_agent.run()
-
-            async for event in handler.stream_events():
-                event_handler.handle(event)
-            result = await handler  # noqa: F841
-
-        except KeyboardInterrupt:
-            logger.info("⏹️ Stopped by user")
-
-        except Exception as e:
-            logger.error(f"💥 Error: {describe_error(e)}")
-            if config.logging.debug:
-                import traceback
-
-                logger.debug(traceback.format_exc())
-
-    except Exception as e:
-        logger.error(f"💥 Setup error: {e}")
-        if debug_mode:
-            import traceback
-
-            logger.debug(traceback.format_exc())
-
-
-if __name__ == "__main__":
-    command = "open youtube and play a song by shakira"
-    command = "use open_app to open the settings and search for the battery and enter the first result"
-    device = None
-    provider = "OpenAIResponses"
-    model = "gpt-6-astra"
-    temperature = 1
-    api_key = os.getenv("OPENAI_API_KEY")
-    steps = 15
-    vision = True
-    reasoning = False
-    tracing = True
-    debug = True
-    use_tcp = False
-    base_url = None
-    api_base = None
-    ios = False
-    save_trajectory = "none"
-    asyncio.run(run_command(command, device="emulator-5556", reasoning=False))
