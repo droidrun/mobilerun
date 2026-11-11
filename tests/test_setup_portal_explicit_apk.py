@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from mobilerun.cli import main
+import mobilerun.cli.setup as main
 
 A11Y_SERVICE = (
     "com.mobilerun.portal/com.mobilerun.portal.service.MobilerunAccessibilityService"
@@ -138,7 +138,7 @@ def test_dropped_service_is_enabled_again(run_setup, apk, capsys):
 
     assert device.enable_writes == 2
     assert device.service_enabled
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Accessibility service enabled successfully!" in out
     assert "Setup complete!" in out
     assert "ACCESSIBILITY_SETTINGS" not in " ".join(device.shell_calls)
@@ -151,7 +151,7 @@ def test_ready_service_is_not_enabled_again(run_setup, apk, capsys):
 
     assert device.enable_writes == 1
     assert len(device.provider_queries()) == 1
-    assert "Setup complete!" in capsys.readouterr().out
+    assert "Setup complete!" in capsys.readouterr().err
 
 
 def test_starting_service_is_not_enabled_again(run_setup, apk, capsys):
@@ -161,7 +161,7 @@ def test_starting_service_is_not_enabled_again(run_setup, apk, capsys):
 
     assert device.enable_writes == 1
     assert len(device.provider_queries()) == 3
-    assert "Setup complete!" in capsys.readouterr().out
+    assert "Setup complete!" in capsys.readouterr().err
 
 
 def test_service_without_active_window_is_ready(run_setup, apk, capsys):
@@ -169,7 +169,7 @@ def test_service_without_active_window_is_ready(run_setup, apk, capsys):
 
     run_setup(device, path=apk)
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Setup complete!" in out
     assert "ACCESSIBILITY_SETTINGS" not in " ".join(device.shell_calls)
 
@@ -179,7 +179,7 @@ def test_unresponsive_service_falls_back_to_manual_setup(run_setup, apk, capsys)
 
     run_setup(device, path=apk)
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert device.provider_queries()
     assert "Setup complete!" not in out
     assert "Accessibility service enabled successfully!" not in out

@@ -130,7 +130,7 @@ def test_device_commands_ui_pairs_portal_http_driver_with_android_provider(monke
     async def fake_create_driver(*args, **kwargs):
         return driver, True
 
-    monkeypatch.setattr(device_commands, "_create_driver", fake_create_driver)
+    monkeypatch.setattr(device_commands, "connect_driver", fake_create_driver)
 
     result = CliRunner().invoke(device_commands.device_cli, ["ui"])
 
@@ -138,81 +138,43 @@ def test_device_commands_ui_pairs_portal_http_driver_with_android_provider(monke
     assert "Privacy & Security" in result.output
 
 
-def test_device_commands_route_ios_through_factory(tmp_path, monkeypatch):
+def test_device_commands_route_ios_through_facade(tmp_path, monkeypatch):
+    from mobilerun_core import Mobilerun
+
     from mobilerun.cli import device_commands
 
     created = {}
-
-    class FakeDriver:
-        platform = "iOS"
-
-        async def connect(self):
-            created["connected"] = True
-
-    async def fake_create_ios_driver(url, *, token=None, transport=None):
-        created["url"] = url
-        created["token"] = token
-        return FakeDriver()
-
-    monkeypatch.setattr(device_commands, "create_ios_driver", fake_create_ios_driver)
+    def connect(self, device_id, **kwargs):
+        created.update(kwargs)
+        return object()
+    monkeypatch.setattr(Mobilerun, "connect", connect)
     monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
-
     cfg = tmp_path / "config.yaml"
     cfg.write_text("_version: 7\ndevice:\n  platform: ios\n")
-
-    driver, is_ios = run(
-        device_commands._create_driver(
-            device="http://127.0.0.1:8080",
-            config_path=str(cfg),
-            tcp=None,
-            ios=True,
-        )
-    )
-
+    driver, is_ios = run(device_commands.connect_driver(
+        device="http://127.0.0.1:8080", config_path=str(cfg), platform="ios"))
     assert is_ios is True
-    assert created == {
-        "url": "http://127.0.0.1:8080",
-        "token": "sekret",
-        "connected": True,
-    }
+    assert created["url"] == "http://127.0.0.1:8080"
+    assert created["token"] == "sekret"
+    assert created["backend"] == "local-ios-http"
 
 
 def test_device_commands_discover_when_no_device(tmp_path, monkeypatch):
-    from mobilerun.cli import device_commands
+    from mobilerun_core import Mobilerun
+
+    from mobilerun.cli import device_commands, selection
 
     created = {}
-
-    class FakeDriver:
-        platform = "iOS"
-
-        async def connect(self):
-            pass
-
-    async def fake_discover_ios_device():
+    async def discover():
         return "http://127.0.0.1:8081"
-
-    async def fake_create_ios_driver(url, *, token=None, transport=None):
-        created["url"] = url
-        return FakeDriver()
-
-    monkeypatch.setattr(
-        device_commands, "discover_ios_device", fake_discover_ios_device
-    )
-    monkeypatch.setattr(device_commands, "create_ios_driver", fake_create_ios_driver)
-    monkeypatch.delenv("MOBILERUN_DEVICE_TOKEN", raising=False)
-
+    def connect(self, device_id, **kwargs):
+        created.update(kwargs)
+        return object()
+    monkeypatch.setattr(selection, "discover_ios_device", discover)
+    monkeypatch.setattr(Mobilerun, "connect", connect)
     cfg = tmp_path / "config.yaml"
     cfg.write_text("_version: 7\ndevice:\n  platform: ios\n")
-
-    driver, is_ios = run(
-        device_commands._create_driver(
-            device=None,
-            config_path=str(cfg),
-            tcp=None,
-            ios=True,
-        )
-    )
-
+    driver, is_ios = run(device_commands.connect_driver(config_path=str(cfg), platform="ios"))
     assert is_ios is True
     assert created["url"] == "http://127.0.0.1:8081"
 

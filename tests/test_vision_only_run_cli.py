@@ -14,28 +14,28 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         async_run_command = AsyncMock(return_value=True)
         runner = CliRunner()
 
-        with patch("mobilerun.cli.main.run_command", async_run_command):
+        with patch("mobilerun.cli.run.run_command", async_run_command):
             result = runner.invoke(
                 cli,
                 [
                     "run",
                     "Check Wi-Fi",
                     "--vision-only",
-                    "--ios",
-                    "--control-backend",
+                    "--platform", "ios",
+                    "--backend",
                     "visual-remote",
                     "--device",
                     "http://localhost:8090",
-                    "--device-id",
+                    "--backend-device",
                     "phone-1",
                     "--provider",
-                    "OpenAIResponses",
+                    "openai",
                     "--model",
                     "gpt-5.1",
-                    "--steps",
+                    "--max-steps",
                     "8",
                     "--no-stream",
-                    "--debug",
+                    "--verbose",
                 ],
             )
 
@@ -59,8 +59,8 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         runner = CliRunner()
 
         with (
-            patch("mobilerun.cli.main.run_command", async_run_command),
-            patch("mobilerun.cli.main.adb.device", AsyncMock(return_value=None)),
+            patch("mobilerun.cli.run.run_command", async_run_command),
+            patch("mobilerun.cli.run.adb.device", AsyncMock(return_value=None)),
         ):
             result = runner.invoke(cli, ["run", "Check Wi-Fi", "--vision-only"])
 
@@ -75,7 +75,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("--vision-only", result.output)
-        self.assertIn("--control-backend", result.output)
+        self.assertIn("--backend", result.output)
         self.assertIn("visual-remote", result.output)
         self.assertNotIn("--" + "connection", result.output)
 
@@ -102,12 +102,11 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         with (
             patch(
-                "mobilerun.cli.main.ConfigLoader.load",
+                "mobilerun.cli.run.ConfigLoader.load",
                 return_value=MobileConfig(),
             ),
-            patch("mobilerun.cli.main.MobileAgent", FakeAgent),
-            patch("mobilerun.cli.main.discover_ios_device", AsyncMock()) as discover,
-            patch("mobilerun.cli.main.validate_ios_portal_url") as validate,
+            patch("mobilerun.cli.run.MobileAgent", FakeAgent),
+            patch("mobilerun.cli.selection.discover_ios_device", AsyncMock()) as discover,
         ):
             success = asyncio.run(
                 run_command(
@@ -123,7 +122,6 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         self.assertTrue(success)
         discover.assert_not_called()
-        validate.assert_not_called()
         config = created_agents[0]["config"]
         self.assertEqual(config.device.platform, "ios")
         self.assertEqual(config.device.control_backend, "visual-remote")
@@ -157,10 +155,10 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         with (
             patch(
-                "mobilerun.cli.main.ConfigLoader.load",
+                "mobilerun.cli.run.ConfigLoader.load",
                 return_value=MobileConfig(),
             ),
-            patch("mobilerun.cli.main.MobileAgent", FakeAgent),
+            patch("mobilerun.cli.run.MobileAgent", FakeAgent),
         ):
             success = asyncio.run(
                 run_command(
@@ -212,9 +210,9 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         )
 
         with (
-            patch("mobilerun.cli.main.ConfigLoader.load", return_value=config),
-            patch("mobilerun.cli.main.MobileAgent", FakeAgent),
-            patch("mobilerun.cli.main.adb.device", AsyncMock()) as adb_device,
+            patch("mobilerun.cli.run.ConfigLoader.load", return_value=config),
+            patch("mobilerun.cli.run.MobileAgent", FakeAgent),
+            patch("mobilerun.cli.run.adb.device", AsyncMock()) as adb_device,
         ):
             success = asyncio.run(run_command("Check Wi-Fi", debug=False))
 

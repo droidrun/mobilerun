@@ -1,15 +1,25 @@
+import importlib
 from unittest.mock import AsyncMock
 
+import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import main
+from mobilerun.cli import device_lifecycle, main, selection
+from mobilerun.config_manager import MobileConfig
+
+run_module = importlib.import_module("mobilerun.cli.run")
+
+
+@pytest.fixture(autouse=True)
+def config(monkeypatch):
+    monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
 
 
 def test_connect_fresh_success(monkeypatch):
     connect = AsyncMock(return_value="connected to 127.0.0.1:5555")
-    monkeypatch.setattr(main.adb, "connect", connect)
+    monkeypatch.setattr(device_lifecycle.adb, "connect", connect)
 
-    result = CliRunner().invoke(main.cli, ["connect", "127.0.0.1:5555"])
+    result = CliRunner().invoke(main.cli, ["device", "connect", "127.0.0.1:5555"])
 
     assert result.exit_code == 0, result.output
     assert "Successfully connected to 127.0.0.1:5555" in result.output
@@ -18,10 +28,10 @@ def test_connect_fresh_success(monkeypatch):
 
 def test_connect_already_connected(monkeypatch):
     monkeypatch.setattr(
-        main.adb, "connect", AsyncMock(return_value="already connected to device")
+        device_lifecycle.adb, "connect", AsyncMock(return_value="already connected to device")
     )
 
-    result = CliRunner().invoke(main.cli, ["connect", "device"])
+    result = CliRunner().invoke(main.cli, ["device", "connect", "device"])
 
     assert result.exit_code == 0, result.output
     assert "Successfully connected to device" in result.output
@@ -29,10 +39,10 @@ def test_connect_already_connected(monkeypatch):
 
 def test_connect_failure_string(monkeypatch):
     monkeypatch.setattr(
-        main.adb, "connect", AsyncMock(return_value="connection refused")
+        device_lifecycle.adb, "connect", AsyncMock(return_value="connection refused")
     )
 
-    result = CliRunner().invoke(main.cli, ["connect", "device"])
+    result = CliRunner().invoke(main.cli, ["device", "connect", "device"])
 
     assert result.exit_code == 1
     assert "Error: Failed to connect to device: connection refused" in result.output
@@ -40,77 +50,70 @@ def test_connect_failure_string(monkeypatch):
 
 def test_connect_exception(monkeypatch):
     monkeypatch.setattr(
-        main.adb, "connect", AsyncMock(side_effect=RuntimeError("connection broke"))
+        device_lifecycle.adb, "connect", AsyncMock(side_effect=RuntimeError("connection broke"))
     )
 
-    result = CliRunner().invoke(main.cli, ["connect", "device"])
+    result = CliRunner().invoke(main.cli, ["device", "connect", "device"])
 
     assert result.exit_code == 1
-    assert "Error: Error connecting to device: connection broke" in result.output
+    assert "Error: connection broke" in result.output
 
 
 def test_disconnect_exception(monkeypatch):
     disconnect = AsyncMock(side_effect=RuntimeError("connection broke"))
-    monkeypatch.setattr(main.adb, "disconnect", disconnect)
+    monkeypatch.setattr(device_lifecycle.adb, "disconnect", disconnect)
 
-    result = CliRunner().invoke(main.cli, ["disconnect", "device"])
+    result = CliRunner().invoke(main.cli, ["device", "disconnect", "device"])
 
     assert result.exit_code == 1
-    assert "Error: Error disconnecting from device: connection broke" in result.output
+    assert "Error: connection broke" in result.output
     disconnect.assert_awaited_once_with("device", raise_error=True)
 
 
 def test_disconnect_not_connected_is_success(monkeypatch):
-    monkeypatch.setattr(main.adb, "disconnect", AsyncMock(return_value=False))
+    monkeypatch.setattr(device_lifecycle.adb, "disconnect", AsyncMock(return_value=False))
 
-    result = CliRunner().invoke(main.cli, ["disconnect", "device"])
+    result = CliRunner().invoke(main.cli, ["device", "disconnect", "device"])
 
     assert result.exit_code == 0, result.output
     assert "Device device was not connected" in result.output
 
 
 def test_ping_unknown_device(monkeypatch):
-    monkeypatch.setattr(main.adb, "device", AsyncMock(return_value=None))
+    monkeypatch.setattr(device_lifecycle.adb, "device", AsyncMock(return_value=None))
 
-    result = CliRunner().invoke(main.cli, ["ping", "-d", "no-such-device"])
+    result = CliRunner().invoke(main.cli, ["device", "ping", "-d", "no-such-device"])
 
     assert result.exit_code == 1
     assert "Error: Could not find device no-such-device" in result.output
 
 
 def test_ping_driver_error(monkeypatch):
-    monkeypatch.setattr(main.adb, "device", AsyncMock(return_value=object()))
+    monkeypatch.setattr(device_lifecycle.adb, "device", AsyncMock(return_value=object()))
     monkeypatch.setattr(
-        main, "ping_portal", AsyncMock(side_effect=RuntimeError("portal broke"))
+        device_lifecycle, "ping_portal", AsyncMock(side_effect=RuntimeError("portal broke"))
     )
 
-    result = CliRunner().invoke(main.cli, ["ping", "-d", "device", "--debug"])
+    result = CliRunner().invoke(main.cli, ["device", "ping", "-d", "device", "--verbose"])
 
     assert result.exit_code == 1
     assert "Error: portal broke" in result.output
-    assert "Traceback (most recent call last):" in result.output
 
 
-def test_devices_local_error_still_lists_cloud(monkeypatch):
-    monkeypatch.setattr(
-        main.adb, "list", AsyncMock(side_effect=RuntimeError("adb broke"))
-    )
-    monkeypatch.setattr(main, "resolve_cloud_api_key", lambda: "test-token")
-    cloud_listing = AsyncMock(return_value=0)
-    monkeypatch.setattr(main, "_list_cloud_devices", cloud_listing)
+def test_device_list_core_error_is_failure(monkeypatch):
+    class FakeCore:
+        def list_devices(self, **kwargs):
+            raise RuntimeError("adb broke")
 
-    result = CliRunner().invoke(main.cli, ["devices"])
-
+    monkeypatch.setattr(device_lifecycle, "core_client", lambda *_: FakeCore())
+    result = CliRunner().invoke(main.cli, ["device", "list"])
     assert result.exit_code == 1
-    assert "Error listing local devices: adb broke" in result.output
-    cloud_listing.assert_awaited_once_with(
-        None, silent_if_no_key=True, silent_errors=True
-    )
+    assert "adb broke" in result.output
 
 
 def test_run_provider_without_model(monkeypatch):
     run_command = AsyncMock()
-    monkeypatch.setattr(main, "run_command", run_command)
+    monkeypatch.setattr(run_module, "run_command", run_command)
 
     result = CliRunner().invoke(main.cli, ["run", "x", "--provider", "OpenAI"])
 
@@ -121,7 +124,7 @@ def test_run_provider_without_model(monkeypatch):
 
 def test_run_model_without_provider(monkeypatch):
     run_command = AsyncMock()
-    monkeypatch.setattr(main, "run_command", run_command)
+    monkeypatch.setattr(run_module, "run_command", run_command)
 
     result = CliRunner().invoke(main.cli, ["run", "x", "--model", "example"])
 

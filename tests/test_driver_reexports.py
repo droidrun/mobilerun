@@ -14,8 +14,8 @@ import mobilerun_core_local.driver.base
 import mobilerun_core_local.driver.cloud
 import mobilerun_core_local.driver.ios
 import mobilerun_core_local.driver.recording
-import mobilerun_core_local.driver.stealth
 import mobilerun_core_local.driver.visual_remote
+from mobilerun_core_local.driver.stealth import StealthDriver as CoreStealthDriver
 
 import mobilerun.tools
 from mobilerun.tools.driver import (
@@ -66,7 +66,7 @@ class DriverCompatIdentityTest(unittest.TestCase):
     def test_stealth_driver_is_core_local_implementation(self):
         self.assertIs(
             StealthDriver,
-            mobilerun_core_local.driver.stealth.StealthDriver,
+            CoreStealthDriver,
         )
 
     def test_visual_remote_driver_is_core_local_implementation(self):

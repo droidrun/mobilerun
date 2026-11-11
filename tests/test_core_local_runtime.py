@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from mobilerun.cli import device_commands
+from mobilerun.cli import device_commands, selection
 from mobilerun.config_manager.config_manager import DeviceConfig
 
 
@@ -34,7 +34,7 @@ def test_create_driver_passes_portal_mode(monkeypatch):
             pass
 
     monkeypatch.setattr(
-        device_commands.ConfigLoader,
+        selection.ConfigLoader,
         "load",
         lambda _path: SimpleNamespace(
             device=SimpleNamespace(
@@ -49,7 +49,7 @@ def test_create_driver_passes_portal_mode(monkeypatch):
     monkeypatch.setattr(device_commands, "AndroidDriver", FakeAndroidDriver)
 
     driver, is_ios = asyncio.run(
-        device_commands._create_driver(None, None, None, False)
+        device_commands.connect_driver(None, None, None, None)
     )
 
     assert isinstance(driver, FakeAndroidDriver)
@@ -77,7 +77,7 @@ def test_create_driver_disabled_portal_mode_skips_auto_setup(monkeypatch):
         setup_calls.append((args, kwargs))
 
     monkeypatch.setattr(
-        device_commands.ConfigLoader,
+        selection.ConfigLoader,
         "load",
         lambda _path: SimpleNamespace(
             device=SimpleNamespace(
@@ -94,6 +94,6 @@ def test_create_driver_disabled_portal_mode_skips_auto_setup(monkeypatch):
         device_commands, "ensure_portal_ready", fake_ensure_portal_ready
     )
 
-    asyncio.run(device_commands._create_driver(None, None, None, False))
+    asyncio.run(device_commands.connect_driver(None, None, None, None))
 
     assert setup_calls == []

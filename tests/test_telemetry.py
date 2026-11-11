@@ -58,11 +58,11 @@ def test_config_false_wins_when_environment_is_true(monkeypatch) -> None:
         ("false", "true", False),
         ("true", "false", True),
         ("", "true", False),
-        (None, "false", False),
+        (None, "false", True),
         (None, "yes", True),
     ],
 )
-def test_primary_environment_variable_takes_precedence_over_legacy(
+def test_primary_environment_variable_is_used_and_legacy_ignored(
     monkeypatch, primary: str | None, legacy: str, expected: bool
 ) -> None:
     if primary is None:
@@ -337,8 +337,8 @@ def test_print_telemetry_message_respects_config_false(monkeypatch) -> None:
     assert messages == [tracker.TELEMETRY_DISABLED_MESSAGE]
 
 
-def test_cli_run_and_test_forward_loaded_telemetry_config(monkeypatch) -> None:
-    from mobilerun.cli import main as cli_main
+def test_cli_run_forwards_loaded_telemetry_config(monkeypatch) -> None:
+    import mobilerun.cli.run as cli_main
     from mobilerun.config_manager.config_manager import MobileConfig, TelemetryConfig
 
     class StopAfterTelemetryMessage(Exception):
@@ -361,5 +361,4 @@ def test_cli_run_and_test_forward_loaded_telemetry_config(monkeypatch) -> None:
     monkeypatch.setattr(cli_main.console, "print", lambda *args, **kwargs: None)
 
     assert asyncio.run(cli_main.run_command("Check telemetry", debug=False)) is False
-    assert asyncio.run(cli_main.test("Check telemetry", debug=False)) is None
-    assert forwarded == [False, False]
+    assert forwarded == [False]

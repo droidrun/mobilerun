@@ -43,135 +43,68 @@ def test_resolve_cloud_api_key_reads_saved_credential(monkeypatch, tmp_path):
     assert device_commands.resolve_cloud_api_key() == "saved-token"
 
 
-def test_cloud_uuid_auto_routes_only_with_cloud_credential(monkeypatch):
-    uuid = "123e4567-e89b-12d3-a456-426614174000"
-    cloud_calls = []
-    android_calls = []
+def test_cloud_uuid_requires_credential_without_falling_back_to_adb(monkeypatch):
+    import click
+    import pytest
 
-    class FakeCloudDriver:
-        def __init__(self, **kwargs):
-            cloud_calls.append(kwargs)
+    from mobilerun.cli import selection
+    from mobilerun.config_manager import MobileConfig
 
-        async def connect(self):
-            pass
-
-    class FakeAndroidDriver:
-        def __init__(self, serial, use_tcp, portal_mode="auto"):
-            android_calls.append((serial, use_tcp, portal_mode))
-
-        async def connect(self):
-            pass
-
-    monkeypatch.setattr(device_commands, "resolve_cloud_api_key", lambda: "cloud-token")
-    monkeypatch.setattr(
-        "mobilerun_core_local.driver.cloud.CloudDriver",
-        FakeCloudDriver,
-    )
-    driver, is_ios = asyncio.run(
-        device_commands._create_driver(uuid, None, None, False)
-    )
-
-    assert isinstance(driver, FakeCloudDriver)
-    assert is_ios is False
-    assert cloud_calls[0]["device_id"] == uuid
-    assert cloud_calls[0]["api_key"] == "cloud-token"
-
-    cloud_calls.clear()
+    monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
     monkeypatch.setattr(device_commands, "resolve_cloud_api_key", lambda: None)
-    monkeypatch.setattr(
-        device_commands.ConfigLoader,
-        "load",
-        lambda _path: SimpleNamespace(
-            device=SimpleNamespace(
-                serial="local-serial",
-                use_tcp=False,
-                platform="android",
-                auto_setup=False,
-                portal_mode="auto",
-            )
-        ),
-    )
-    monkeypatch.setattr(device_commands, "AndroidDriver", FakeAndroidDriver)
-    driver, is_ios = asyncio.run(
-        device_commands._create_driver(uuid, None, None, False)
-    )
-
-    assert isinstance(driver, FakeAndroidDriver)
-    assert is_ios is False
-    assert cloud_calls == []
-    assert android_calls[-1] == (uuid, False, "auto")
+    with pytest.raises(click.ClickException, match="No cloud API key"):
+        asyncio.run(device_commands.connect_driver("123e4567-e89b-12d3-a456-426614174000"))
 
 
-def test_devices_cloud_missing_key_exits_nonzero(monkeypatch):
-    monkeypatch.setattr("mobilerun.cli.main.resolve_cloud_api_key", lambda: None)
+def test_cloud_facade_receives_url_key_and_id(monkeypatch):
+    from mobilerun.cli import selection
+    from mobilerun.config_manager import MobileConfig
 
-    result = CliRunner().invoke(cli, ["devices", "--cloud"])
+    calls = []
+    class FakeCore:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+        def connect(self, device_id, **kwargs):
+            calls.append({"device_id": device_id, **kwargs})
+            return object()
 
-    assert result.exit_code != 0
-    assert "MOBILERUN_CLOUD_API_KEY" in result.output
-
-
-def test_devices_cloud_sdk_error_exits_nonzero(monkeypatch):
-    class FakeDevices:
-        async def list(self):
-            raise RuntimeError("boom")
-
-    class FakeClient:
-        def __init__(self, **_kwargs):
-            self.devices = FakeDevices()
-
-    monkeypatch.setattr("mobilerun.cli.main.resolve_cloud_api_key", lambda: "token")
-    monkeypatch.setattr("mobilerun_sdk.AsyncMobilerun", FakeClient)
-
-    result = CliRunner().invoke(cli, ["devices", "--cloud"])
-
-    assert result.exit_code != 0
-    assert "Error listing cloud devices" in result.output
-    assert "boom" in result.output
+    monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
+    monkeypatch.setattr(selection, "Mobilerun", FakeCore)
+    monkeypatch.setattr(selection, "resolve_cloud_api_key", lambda: "test-key")
+    monkeypatch.setattr(device_commands, "resolve_cloud_api_key", lambda: "test-key")
+    device_id = "123e4567-e89b-12d3-a456-426614174000"
+    driver, _ = asyncio.run(device_commands.connect_driver(device_id, api_url="https://example.test/v1"))
+    assert isinstance(driver, device_commands.CoreDriver)
+    assert calls[0] == {"bearer": "test-key", "base_url": "https://example.test/v1"}
+    assert calls[1]["device_id"] == device_id
+    assert calls[1]["backend"] == "cloud"
 
 
-def test_devices_cloud_empty_list_is_success(monkeypatch):
-    class FakeResponse:
-        items = []
+def test_cloud_listing_errors_are_failures(monkeypatch):
+    from mobilerun.cli import device_lifecycle
 
-    class FakeDevices:
-        async def list(self):
-            return FakeResponse()
-
-    class FakeClient:
-        def __init__(self, **_kwargs):
-            self.devices = FakeDevices()
-
-    monkeypatch.setattr("mobilerun.cli.main.resolve_cloud_api_key", lambda: "token")
-    monkeypatch.setattr("mobilerun_sdk.AsyncMobilerun", FakeClient)
-
-    result = CliRunner().invoke(cli, ["devices", "--cloud"])
-
-    assert result.exit_code == 0
-    assert "No cloud devices found" in result.output
-
-
-def test_devices_plain_keeps_local_listing_when_cloud_errors(monkeypatch):
-    class FakeAdbDevice:
-        serial = "emulator-5554"
-
-    class FakeDevices:
-        async def list(self):
+    class FakeCore:
+        def list_devices(self, **kwargs):
+            assert kwargs["scope"] in {"cloud", "all"}
             raise RuntimeError("cloud broke")
 
-    class FakeClient:
-        def __init__(self, **_kwargs):
-            self.devices = FakeDevices()
+    monkeypatch.setattr(device_lifecycle, "resolve_cloud_api_key", lambda: "test-key")
+    monkeypatch.setattr(device_lifecycle, "core_client", lambda *_: FakeCore())
+    for flags in (["-t", "cloud"], ["--all"]):
+        result = CliRunner().invoke(cli, ["device", "list", *flags])
+        assert result.exit_code == 1
+        assert "cloud broke" in result.output
 
-    async def fake_adb_list():
-        return [FakeAdbDevice()]
 
-    monkeypatch.setattr("mobilerun.cli.main.resolve_cloud_api_key", lambda: "token")
-    monkeypatch.setattr("mobilerun.cli.main.adb.list", fake_adb_list)
-    monkeypatch.setattr("mobilerun_sdk.AsyncMobilerun", FakeClient)
+def test_local_listing_uses_local_scope(monkeypatch):
+    from mobilerun.cli import device_lifecycle
 
-    result = CliRunner().invoke(cli, ["devices"])
+    class FakeCore:
+        def list_devices(self, **kwargs):
+            assert kwargs["scope"] == "local"
+            return [SimpleNamespace(device_id="serial", capabilities={})]
 
-    assert result.exit_code == 0, result.output
-    assert "emulator-5554" in result.output
-    assert "cloud broke" not in result.output
+    monkeypatch.setattr(device_lifecycle, "core_client", lambda *_: FakeCore())
+    result = CliRunner().invoke(cli, ["device", "list", "-j"])
+    assert result.exit_code == 0
+    assert '"device_id": "serial"' in result.stdout

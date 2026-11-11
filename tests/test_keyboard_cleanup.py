@@ -7,7 +7,7 @@ from mobilerun_core_local.driver.android.portal import (
     portal_ime_id,
 )
 
-from mobilerun.cli import main as cli_main
+import mobilerun.cli.run as cli_main
 from mobilerun.config_manager.config_manager import (
     DeviceConfig,
     MobileConfig,
