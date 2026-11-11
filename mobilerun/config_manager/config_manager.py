@@ -26,11 +26,6 @@ PORTAL_TOKEN_ENV_VARS = {
 }
 
 
-def resolve_portal_token(platform: str, configured: str | None = None) -> str | None:
-    """Resolve a platform's Portal token from the environment, then config."""
-    return os.environ.get(PORTAL_TOKEN_ENV_VARS[platform.lower()]) or configured
-
-
 # ---------- Config Schema ----------
 @dataclass
 class LLMProfile:
@@ -195,7 +190,13 @@ class DeviceConfig:
     auth_token: Optional[str] = None
 
     def resolve_auth_token(self, platform: str | None = None) -> Optional[str]:
-        return resolve_portal_token(platform or self.platform, self.auth_token)
+        """Use the requested platform's env token, or its own config token."""
+        requested = self.platform if platform is None else platform
+        name = PORTAL_TOKEN_ENV_VARS.get((requested or "").lower())
+        if name is None:
+            return None
+        configured = self.auth_token if requested.lower() == (self.platform or "").lower() else None
+        return os.environ.get(name) or configured
 
 
 @dataclass
