@@ -27,6 +27,7 @@ def cli(verbose):
 
 
 from mobilerun.cli.auth import auth_cli  # noqa: E402
+from mobilerun.cli.completion import completion  # noqa: E402
 from mobilerun.cli.configure import configure  # noqa: E402
 from mobilerun.cli.device_lifecycle import device_cli  # noqa: E402
 from mobilerun.cli.doctor_command import doctor  # noqa: E402
@@ -40,3 +41,5 @@ cli.add_command(configure)
 cli.add_command(macro_cli, "macro")
 cli.add_command(doctor)
 cli.add_command(env)
+
+cli.add_command(completion)

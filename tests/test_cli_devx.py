@@ -61,7 +61,7 @@ def test_root_command_order_and_agent_discovery(monkeypatch):
     monkeypatch.setattr(run_module, "list_agents", Mock(side_effect=AssertionError("root must not scan")))
     result = CliRunner().invoke(cli, ["--help"])
     assert result.exit_code == 0, result.output
-    names = ["run", "device", "configure", "auth", "doctor", "env", "macro"]
+    names = ["run", "device", "configure", "auth", "doctor", "env", "macro", "completion"]
     assert [result.stdout.index(f"  {name} ") for name in names] == sorted(
         result.stdout.index(f"  {name} ") for name in names
     )
@@ -512,3 +512,30 @@ def test_manual_login_detection_reuses_provider_flow_selection(monkeypatch):
     monkeypatch.delenv("MOBILERUN_OAUTH_MANUAL")
     monkeypatch.setattr(oauth_actions, "gemini_headless", lambda: True)
     assert oauth_actions.login_requires_input("gemini")
+
+
+@pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
+def test_completion_is_click_source_without_installing(shell, tmp_path, monkeypatch):
+    from click.shell_completion import BashComplete, get_completion_class
+
+    monkeypatch.setattr(BashComplete, "_check_version", staticmethod(lambda: None))
+    monkeypatch.setenv("MOBILERUN_CONFIG", str(tmp_path / "missing.yaml"))
+    result = CliRunner().invoke(cli, ["completion", shell])
+    assert result.exit_code == 0, result.output
+    expected = get_completion_class(shell)(cli, {}, "mobilerun", "_MOBILERUN_COMPLETE").source()
+    assert result.stdout == expected + "\n"
+    assert result.stderr == ""
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_completion_suggests_device_subcommands():
+    result = CliRunner().invoke(cli, [], prog_name="mobilerun", env={
+        "_MOBILERUN_COMPLETE": "bash_complete", "COMP_WORDS": "mobilerun device l", "COMP_CWORD": "2",
+    })
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == ["plain,list", "plain,long-press"]
+
+
+def test_completion_rejects_unknown_shell():
+    result = CliRunner().invoke(cli, ["completion", "unknown"])
+    assert result.exit_code == 2, result.output

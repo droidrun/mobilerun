@@ -166,8 +166,8 @@ mobilerun
 ├── device
 │   ├── list
 │   ├── pair
-│   ├── connect SERIAL
-│   ├── disconnect SERIAL
+│   ├── connect HOST:PORT
+│   ├── disconnect HOST:PORT
 │   ├── setup
 │   ├── ping
 │   ├── tap X Y
@@ -179,22 +179,26 @@ mobilerun
 │   ├── ui
 │   ├── apps
 │   └── start PACKAGE
+├── configure
 ├── auth
 │   ├── login [SERVICE]
 │   ├── logout [SERVICE]
 │   └── status
-├── configure
+├── doctor
+├── env
 ├── macro
 │   ├── replay PATH
 │   └── list [DIRECTORY]
-├── doctor
-└── env
+└── completion SHELL
 ```
 
 The sign-in services are `mobilerun` (default), `openai`, `anthropic`, `gemini`,
 and `xai`. Provider sign-ins use the same auth group; the configure command
-runs the wizard. The provider choices in help include `openrouter` and
-`deepseek` for `run` only. See each command's help for its arguments and options.
+runs the wizard. The `configure` provider choices include only supported
+providers; `run` and `macro replay` also accept `openrouter` and `deepseek`.
+Help includes examples, and command typos suggest a correction without executing
+it. The `run --agent` option appears only when an external agent is installed.
+See each command's help for its arguments and options.
 
 ### Shared flags
 
@@ -226,13 +230,15 @@ screenshot, ui, apps, start, and ping.
 | — | `--auth-url` | Mobilerun login: sign-in endpoint. |
 | — | `--tcp` / `--no-tcp` | Run and macro replay: local Android TCP mode. |
 | — | `--no-qr` | Mobilerun login: suppress the QR code. |
+| — | `--no-input` | Configure and auth login: never prompt for input. |
 
 ### Environment
 
 For CLI options, flags override environment values, then config values and defaults.
 Inspect resolved values and sources with `mobilerun env`; it shows secrets only
 as `set` or `not set`. Provider authentication follows the selected provider's
-configuration and credential store.
+configuration and credential store. `auth status` always checks the service
+that issued the saved session, even when `MOBILERUN_AUTH_URL` has changed.
 
 | Variable | Meaning | Default / fallback |
 | --- | --- | --- |
@@ -249,7 +255,7 @@ configuration and credential store.
 | `MOBILERUN_STREAM_SCREENSHOTS` | Stream agent screenshots | Off |
 | `MOBILERUN_OAUTH_MANUAL` | Use manual provider sign-in | Off; headless sessions may select a device flow |
 | `ANDROID_SERIAL` | Local ADB selection fallback | No value |
-| `NO_COLOR` | Disable terminal styling where supported | No value |
+| `NO_COLOR` | Disable colour; bold may remain | No value |
 | `PHOENIX_URL` | Phoenix trace endpoint | `http://0.0.0.0:6006` |
 | `PHOENIX_PROJECT_NAME` | Phoenix project | Empty |
 | `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `MINIMAX_API_KEY`, `ZAI_API_KEY` | LLM provider credentials | Selected provider configuration / saved credentials |
@@ -258,6 +264,10 @@ configuration and credential store.
 ### Scripting
 
 Stdout contains data. Progress and error messages go to stderr.
+`device list`, `device apps`, and `macro list` print tab-separated rows;
+a header row appears only when stdout is a terminal. Use `-j` for the stable
+machine-readable form. `mobilerun env` prints `NAME=value  (source)`, with empty
+unset values, lowercase booleans, and secrets shown only as `set` or `not set`.
 The text UI output has one tab-separated row per element: index, class, text,
 resource id, bounds, and flags. Filter it with standard tools:
 
@@ -279,10 +289,68 @@ document on failure; API errors include the HTTP status and an optional code:
 {"error":"Device not found","status":404,"code":null}
 ```
 
+`doctor -j` always retains its checks, including when it exits 1:
+
+```json
+{"ok":false,"checks":[{"name":"Device","status":"fail","detail":"No device connected"}]}
+```
+
+`device list --all` lists local devices first, then cloud devices. If either
+listing fails, the other result is kept and a warning goes to stderr. It exits
+1 only when both listings fail; a successful empty listing still counts as
+success. With `-j`, it returns `{"devices":[...],"errors":[{"target":"cloud","error":"..."}]}`.
+Listing a single target keeps the plain JSON list on success and fails normally
+when that target is unavailable.
+
 Other errors contain only `error`. Usage errors and interruptions may leave
 stdout empty. The run command emits `success`, `reason`, and `steps` after a
 task, including a failed task; errors before execution use the error document.
 Check the command's exit status as well as its JSON.
+
+### Non-interactive use and secrets
+
+`configure` and `auth login` never prompt when stdin is not a terminal or
+`--no-input` is supplied. Missing configuration options fail with exit 2 and
+name the option to provide. For example, supply `-p`, `-m`, and a provider key
+through its environment variable or stdin. An OAuth configuration needs an
+existing sign-in when input is disabled. Prompt EOF exits 1; Ctrl-C exits 130.
+
+Use `-k -` or `--token -` to read one secret line from stdin. The trailing newline
+is stripped, and empty input fails with exit 2. A literal flag value still works,
+but it remains in shell history; prefer stdin or the provider's environment
+variable. These examples use shell variables that are already set:
+
+```bash
+printf '%s\n' "$OPENAI_API_KEY" | mobilerun configure -p openai -m MODEL -k - --no-input
+printf '%s\n' "$ANTHROPIC_SETUP_TOKEN" | mobilerun auth login anthropic --token - --no-input
+```
+
+Device-code and browser-callback login flows can proceed without terminal input.
+If a provider flow needs a pasted code, it fails before starting when input is
+disabled. For Anthropic, supply `--token -`; for Gemini, run the login in a
+terminal without `--no-input`. Tokens and keys are never included in CLI errors
+or verbose logs.
+
+### Shell completion
+
+Print a completion script with `mobilerun completion bash|zsh|fish`. The command
+writes only the script; it does not install anything. Add the matching line to
+your shell configuration (Bash 4.4 or later is required for Bash completion):
+
+```bash
+# ~/.bashrc
+eval "$(mobilerun completion bash)"
+```
+
+```zsh
+# ~/.zshrc (after compinit)
+eval "$(mobilerun completion zsh)"
+```
+
+```fish
+# ~/.config/fish/config.fish
+mobilerun completion fish | source
+```
 
 ### Upgrading from 0.7
 

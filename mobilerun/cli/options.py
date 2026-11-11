@@ -169,7 +169,7 @@ class Command(HelpLayout, click.Command):
             with redirect_stdout(sys.stderr):
                 from mobilerun.config_manager import ConfigLoader
 
-                if ctx.command.name != "doctor":
+                if ctx.command.name not in {"doctor", "completion"}:
                     ConfigLoader.resolve_path(ctx.params.get("config_path"))
                 return super().invoke(ctx)
         except (KeyboardInterrupt, asyncio.CancelledError):
