@@ -17,6 +17,7 @@ from mobilerun.cli.options import (
 )
 from mobilerun.cli.selection import resolve_cloud_api_key
 from mobilerun.config_manager import ConfigLoader, MobileConfig
+from mobilerun.config_manager.config_manager import PORTAL_TOKEN_ENV_VARS, resolve_portal_token
 from mobilerun.config_manager.env_keys import API_KEY_ENV_VARS, load_env_key_sources
 from mobilerun.telemetry.tracker import is_telemetry_enabled
 
@@ -49,7 +50,6 @@ def resolved_environment(config_path=None):
             False,
         ),
         "MOBILERUN_CONFIG": (str(path), path_source, False),
-        "MOBILERUN_DEVICE_TOKEN": (config.device.auth_token, config_source if config.device.auth_token else "not set", True),
         "MOBILERUN_DEBUG": (config.logging.debug, config_source, False),
         "MOBILERUN_TELEMETRY_ENABLED": (config.telemetry.enabled, config_source, False),
         "MOBILERUN_STREAM_SCREENSHOTS": (False, "default", False),
@@ -59,6 +59,10 @@ def resolved_environment(config_path=None):
         "PHOENIX_PROJECT_NAME": ("", "default", False),
         "NO_COLOR": (None, "default", False),
     }
+    for platform, name in PORTAL_TOKEN_ENV_VARS.items():
+        configured = config.device.auth_token if config.device.platform == platform else None
+        value = resolve_portal_token(platform, configured)
+        values[name] = (value, "env" if os.environ.get(name) else config_source if configured else "not set", True)
     sources = load_env_key_sources()
     for slot, name in API_KEY_ENV_VARS.items():
         source = sources[slot]

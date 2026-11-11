@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Literal, Optional
 
 import yaml
+from mobilerun_core.mobilerun import ANDROID_PORTAL_TOKEN_ENV_VAR, IOS_PORTAL_TOKEN_ENV_VAR
 
 from mobilerun.agent.providers.minimax import warn_if_legacy_minimax_endpoint
 from mobilerun.agent.providers.registry import (
@@ -17,6 +18,17 @@ from mobilerun.mcp.config import MCPConfig, MCPServerConfig
 
 DEFAULT_MANAGER_SYSTEM_PROMPT = "config/prompts/manager/system.jinja2"
 DEFAULT_STATELESS_MANAGER_SYSTEM_PROMPT = "config/prompts/manager/stateless.jinja2"
+
+
+PORTAL_TOKEN_ENV_VARS = {
+    "android": ANDROID_PORTAL_TOKEN_ENV_VAR,
+    "ios": IOS_PORTAL_TOKEN_ENV_VAR,
+}
+
+
+def resolve_portal_token(platform: str, configured: str | None = None) -> str | None:
+    """Resolve a platform's Portal token from the environment, then config."""
+    return os.environ.get(PORTAL_TOKEN_ENV_VARS[platform.lower()]) or configured
 
 
 # ---------- Config Schema ----------
@@ -178,12 +190,12 @@ class DeviceConfig:
     auto_setup: bool = True  # auto-install/fix portal before each run
     # Bearer token for portal-HTTP device URLs: the Android Portal app's token
     # (always required) or a mobilerun-ios --local server's --local-token
-    # (loopback servers need none). The MOBILERUN_DEVICE_TOKEN env var
-    # overrides this value.
+    # (loopback servers need none). The platform's MOBILERUN_ANDROID_PORTAL_TOKEN
+    # or MOBILERUN_IOS_PORTAL_TOKEN env var overrides this value.
     auth_token: Optional[str] = None
 
-    def resolve_auth_token(self) -> Optional[str]:
-        return os.environ.get("MOBILERUN_DEVICE_TOKEN") or self.auth_token
+    def resolve_auth_token(self, platform: str | None = None) -> Optional[str]:
+        return resolve_portal_token(platform or self.platform, self.auth_token)
 
 
 @dataclass

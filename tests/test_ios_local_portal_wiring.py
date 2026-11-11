@@ -10,22 +10,22 @@ def run(coro):
 def test_auth_token_defaults_to_none(monkeypatch):
     from mobilerun.config_manager.config_manager import DeviceConfig
 
-    monkeypatch.delenv("MOBILERUN_DEVICE_TOKEN", raising=False)
-    assert DeviceConfig().resolve_auth_token() is None
+    monkeypatch.delenv("MOBILERUN_IOS_PORTAL_TOKEN", raising=False)
+    assert DeviceConfig(platform="ios").resolve_auth_token() is None
 
 
 def test_auth_token_reads_config_value(monkeypatch):
     from mobilerun.config_manager.config_manager import DeviceConfig
 
-    monkeypatch.delenv("MOBILERUN_DEVICE_TOKEN", raising=False)
-    assert DeviceConfig(auth_token="from-config").resolve_auth_token() == "from-config"
+    monkeypatch.delenv("MOBILERUN_IOS_PORTAL_TOKEN", raising=False)
+    assert DeviceConfig(platform="ios", auth_token="from-config").resolve_auth_token() == "from-config"
 
 
 def test_auth_token_env_overrides_config(monkeypatch):
     from mobilerun.config_manager.config_manager import DeviceConfig
 
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "from-env")
-    assert DeviceConfig(auth_token="from-config").resolve_auth_token() == "from-env"
+    monkeypatch.setenv("MOBILERUN_IOS_PORTAL_TOKEN", "from-env")
+    assert DeviceConfig(platform="ios", auth_token="from-config").resolve_auth_token() == "from-env"
 
 
 LOCAL_PORTAL_STATE = {
@@ -134,7 +134,7 @@ def test_device_commands_route_ios_through_facade(tmp_path, monkeypatch):
         created.update(kwargs)
         return object()
     monkeypatch.setattr(Mobilerun, "connect", connect)
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
+    monkeypatch.setenv("MOBILERUN_IOS_PORTAL_TOKEN", "sekret")
     cfg = tmp_path / "config.yaml"
     cfg.write_text("_version: 7\ndevice:\n  platform: ios\n")
     with device_commands.device_driver({"device": "http://127.0.0.1:8080", "config_path": str(cfg),

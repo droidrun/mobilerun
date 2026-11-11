@@ -122,7 +122,7 @@ def test_auth_url_env_and_flag_precedence(monkeypatch):
 @pytest.mark.parametrize("args", [["env", "-j"], ["auth", "status", "-j"]])
 def test_secrets_are_never_printed(monkeypatch, args):
     secret = "contract-secret-marker"
-    for name in ("MOBILERUN_CLOUD_API_KEY", "MOBILERUN_DEVICE_TOKEN", "OPENAI_API_KEY"):
+    for name in ("MOBILERUN_CLOUD_API_KEY", "MOBILERUN_ANDROID_PORTAL_TOKEN", "OPENAI_API_KEY"):
         monkeypatch.setenv(name, secret)
     monkeypatch.setattr(deviceauth, "load_credentials", lambda: {"access_token": secret})
     monkeypatch.setattr(deviceauth, "fetch_session", lambda *_: {"user": {"email": "example@example.test"}})
@@ -140,7 +140,7 @@ def test_env_sources_and_secret_config(monkeypatch, tmp_path):
     result = CliRunner().invoke(cli, ["env", "-j"])
     values = {row["variable"]: row for row in json.loads(result.stdout)}
     assert values["MOBILERUN_DEVICE"] == {"variable": "MOBILERUN_DEVICE", "value": "from-config", "source": "config"}
-    assert values["MOBILERUN_DEVICE_TOKEN"]["value"] == "set"
+    assert values["MOBILERUN_ANDROID_PORTAL_TOKEN"]["value"] == "set"
     assert "never-print-this-token" not in result.output
     monkeypatch.setenv("MOBILERUN_DEVICE", "from-env")
     values = {row["variable"]: row for row in json.loads(CliRunner().invoke(cli, ["env", "-j"]).stdout)}
@@ -478,12 +478,10 @@ def test_missing_portal_token_is_cli_error_before_core(monkeypatch):
     import mobilerun_core
     connect = Mock()
     monkeypatch.setattr(mobilerun_core.Mobilerun, "connect", connect)
-    monkeypatch.delenv("MOBILERUN_DEVICE_TOKEN", raising=False)
-    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "unrelated-token")
+    monkeypatch.delenv("MOBILERUN_ANDROID_PORTAL_TOKEN", raising=False)
     result = CliRunner().invoke(cli, ["device", "tap", "1", "2", "-d", "http://127.0.0.1:9"])
     assert result.exit_code == 1
-    assert "MOBILERUN_DEVICE_TOKEN" in result.stderr
-    assert "MOBILERUN_ANDROID_PORTAL_TOKEN" not in result.stderr
+    assert "MOBILERUN_ANDROID_PORTAL_TOKEN" in result.stderr
     connect.assert_not_called()
 
 
@@ -498,7 +496,7 @@ def test_env_path_and_unset_sources_and_effective_telemetry(monkeypatch, tmp_pat
     rows = {row["variable"]: row for row in json.loads(result.stdout)}
     assert rows["MOBILERUN_CONFIG"]["source"] == "env"
     assert rows["MOBILERUN_DEVICE"]["source"] == "not set"
-    assert rows["MOBILERUN_DEVICE_TOKEN"]["source"] == "not set"
+    assert rows["MOBILERUN_ANDROID_PORTAL_TOKEN"]["source"] == "not set"
     assert rows["MOBILERUN_TELEMETRY_ENABLED"]["value"] is False
     other = tmp_path / "other.yaml"
     ConfigLoader.save(config, path=other)

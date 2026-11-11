@@ -36,7 +36,7 @@ def test_is_portal_http_url(device, expected):
 
 
 def test_portal_http_driver_requires_token():
-    with pytest.raises(ValueError, match="MOBILERUN_DEVICE_TOKEN"):
+    with pytest.raises(ValueError, match="MOBILERUN_ANDROID_PORTAL_TOKEN"):
         create_android_portal_http_driver(PORTAL_URL, None)
 
 
@@ -107,7 +107,7 @@ def test_device_commands_route_url_to_portal_http(tmp_path, monkeypatch, no_adb)
         return object()
 
     monkeypatch.setattr(Mobilerun, "connect", connect)
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
     with device_commands.device_driver({"device": PORTAL_URL, "config_path": _config_file(tmp_path),
                                         "platform": "android", "api_url": "https://example.test/v1"}):
         pass
@@ -121,7 +121,7 @@ def test_device_commands_url_without_token_fails_cleanly(tmp_path, monkeypatch, 
 
     from mobilerun.cli.main import cli
 
-    monkeypatch.delenv("MOBILERUN_DEVICE_TOKEN", raising=False)
+    monkeypatch.delenv("MOBILERUN_ANDROID_PORTAL_TOKEN", raising=False)
     result = CliRunner().invoke(cli, ["device", "ui", "-d", PORTAL_URL, "-c", _config_file(tmp_path)])
     assert result.exit_code == 1
     assert "token" in result.output
@@ -142,7 +142,7 @@ def test_ping_checks_portal_http_without_adb(monkeypatch, no_adb):
         return Core()
 
     monkeypatch.setattr(Mobilerun, "connect", connect)
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
     result = CliRunner().invoke(cli, ["device", "ping", "--device", PORTAL_URL])
     assert result.exit_code == 0, result.output
     assert "reachable" in result.output
@@ -200,7 +200,7 @@ def test_agent_routes_url_to_portal_http_driver(monkeypatch, no_adb):
     created = _record_factory(
         monkeypatch, agent_module, FakePortalHttpDriver(ConnectFailed())
     )
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
 
     config = MobileConfig(
         device=DeviceConfig(serial=PORTAL_URL),
@@ -252,7 +252,7 @@ def test_agent_treats_device_date_as_optional(monkeypatch, no_adb):
             raise NotImplementedError
 
     _record_factory(monkeypatch, agent_module, NoDateDriver())
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
 
     config = MobileConfig(
         device=DeviceConfig(serial=PORTAL_URL),

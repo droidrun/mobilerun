@@ -14,6 +14,7 @@ from mobilerun.agent.utils.android_device import (
 )
 from mobilerun.cli.options import DEFAULT_API_URL
 from mobilerun.config_manager import ConfigLoader, MobileConfig
+from mobilerun.config_manager.config_manager import PORTAL_TOKEN_ENV_VARS
 
 
 def resolve_cloud_api_key():
@@ -95,9 +96,11 @@ def require_cloud_api_key():
 
 
 def portal_token(selection):
-    token = selection.config.device.resolve_auth_token()
+    token = selection.config.device.resolve_auth_token(selection.platform)
     if selection.backend == "local-android-http" and not token:
-        raise click.ClickException("Portal URL requires MOBILERUN_DEVICE_TOKEN or device.auth_token in config")
+        raise click.ClickException(
+            f"Portal URL requires {PORTAL_TOKEN_ENV_VARS[selection.platform]} or device.auth_token in config"
+        )
     return token
 
 
