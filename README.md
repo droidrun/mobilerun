@@ -141,9 +141,13 @@ mobilerun auth login
 mobilerun device list -t cloud
 ```
 
-Sign-in prints a link, a user code, and a QR code when stderr is a terminal.
-Scan the QR or use the link and code to approve access. This cloud sign-in is
-separate from the LLM provider configured above.
+Sign-in prints a QR code on terminal stderr, then a complete sign-in link,
+then the short link and user code for manual entry. Scan the QR or click the
+complete link to approve access. The browser stays closed unless you pass
+`mobilerun auth login --browser`. `--no-browser` is accepted for Mobilerun
+but is unnecessary; it still controls provider sign-ins. Terminal links use
+clickable hyperlinks; redirected output and `NO_COLOR` contain no escape
+sequences. This cloud sign-in is separate from the LLM provider configured above.
 
 Set the target and default device, replacing the placeholder with the listed id:
 
@@ -230,6 +234,8 @@ screenshot, ui, apps, start, and ping.
 | — | `--api-url` | Device actions, list, run, doctor, macro replay: cloud API endpoint. |
 | — | `--auth-url` | Mobilerun login: sign-in endpoint. |
 | — | `--tcp` / `--no-tcp` | Run and macro replay: local Android TCP mode. |
+| — | `--browser` | Mobilerun login: open the sign-in link in the browser (off by default). |
+| — | `--no-browser` | Provider logins: keep the browser closed; unnecessary for Mobilerun login. |
 | — | `--no-qr` | Mobilerun login: suppress the QR code. |
 | — | `--no-input` | Configure and auth login: never prompt for input. |
 

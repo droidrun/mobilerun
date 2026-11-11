@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import os
+import sys
 from pathlib import Path
 
 import click
@@ -89,7 +91,7 @@ def _run_grok_oauth_login(credential_path: str, model: str | None = None, **kwar
 DEFAULT_DEVICE_CLIENT_ID = "mobilerun-cli"
 
 
-def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool):
+def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool, browser: bool = False):
     """Authenticate via OAuth 2.0 device authorization and save the session token."""
     import webbrowser
 
@@ -98,14 +100,19 @@ def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool):
     except Exception as e:
         raise click.ClickException(f"request device code: {e}\nCheck --auth-url or MOBILERUN_AUTH_URL: {auth_url}") from e
 
-    console.print(f"Visit: [bold]{code.verification_uri}[/]")
-    console.print(f"Code:  [bold cyan]{code.user_code}[/]")
-    if code.verification_uri_complete:
-        if not no_qr:
-            print_qr(code.verification_uri_complete)
-        console.print(f"[dim](Opening {code.verification_uri_complete} ...)[/]")
+    link = code.verification_uri_complete
+    terminal = sys.stderr.isatty()
+    if link:
+        if terminal and not no_qr:
+            print_qr(link, color="NO_COLOR" not in os.environ)
+        hyperlink = terminal and "NO_COLOR" not in os.environ
+        display = f"\033]8;;{link}\033\\{link}\033]8;;\033\\" if hyperlink else link
+        click.echo(display, err=True, color=hyperlink)
+    click.echo(f"Visit: {code.verification_uri}", err=True)
+    click.echo(f"Code:  {code.user_code}", err=True)
+    if browser and link:
         try:
-            webbrowser.open(code.verification_uri_complete)
+            webbrowser.open(link)
         except Exception:
             pass
     console.print(f"[dim]Waiting for authorization (expires in {code.expires_in}s)...[/]")
@@ -134,7 +141,7 @@ SERVICES = {
     "xai": (GROK_OAUTH_CREDENTIAL_PATH, "xai_oauth"),
 }
 LOGIN_OPTIONS = {
-    "mobilerun": {"auth_url", "client_id", "no_qr"},
+    "mobilerun": {"auth_url", "client_id", "no_qr", "browser", "no_browser"},
     "openai": {
         "credential_path",
         "timeout",
@@ -179,6 +186,7 @@ def auth_cli(verbose):
 @auth_cli.command(
     epilog=examples(
         'mobilerun auth login',
+        'mobilerun auth login --browser',
         'mobilerun auth login openai --no-browser',
     ),
 )
@@ -200,8 +208,10 @@ def auth_cli(verbose):
 )
 @click.option(
     "--no-browser", is_flag=True,
-    help="Do not open a provider login browser (openai, anthropic, gemini, xai).",
+    help="Do not open a provider login browser (openai, anthropic, gemini, xai); "
+         "unnecessary for mobilerun, which does not open one by default.",
 )
+@click.option("--browser", is_flag=True, help="Open the Mobilerun sign-in link in the browser.")
 @click.option("--no-qr", is_flag=True, help="Do not display the Mobilerun sign-in QR code.")
 @click.option("--callback-host", help="OAuth callback host (openai, anthropic, gemini).")
 @click.option(
@@ -227,6 +237,7 @@ def login(
     credential_path,
     timeout,
     no_browser,
+    browser,
     no_qr,
     callback_host,
     callback_port,
@@ -256,7 +267,7 @@ def login(
             )
     if service == "mobilerun":
         _login_mobilerun(
-            auth_url, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr
+            auth_url, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr, browser
         )
         if resolve_cloud_credential().source == "env":
             click.echo(

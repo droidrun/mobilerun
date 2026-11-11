@@ -77,6 +77,8 @@ def test_print_qr_write_failure_returns_false(monkeypatch, error):
 def login(monkeypatch, tmp_path):
     import webbrowser
 
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
     link = "https://example.test/verify?user_code=ABCD-EFGH"
     code = deviceauth.CodeResponse("device-code", "ABCD-EFGH", "https://example.test/verify",
                                    link, 120, 5)
@@ -100,20 +102,20 @@ def test_login_prints_complete_link_qr_and_preserves_flow(login):
     assert result.exit_code == 0, result.output
     assert result.stdout == ""
     assert "ABCD-EFGH" in result.stderr and "Visit:" in result.stderr
-    login.printed.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
+    login.printed.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH", color=True)
     assert "\x1b[97;40m" in result.stderr
-    login.browser.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
+    login.browser.assert_not_called()
     login.request.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID)
     login.poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, login.code)
     login.save.assert_called_once_with("test-session", auth.DEFAULT_AUTH_URL)
 
 
-def test_login_no_qr_preserves_browser_and_polling(login):
+def test_login_no_qr_preserves_links_and_polling(login):
     result = TerminalRunner().invoke(cli, ["auth", "login", "--no-qr"])
     assert result.exit_code == 0, result.output
     assert result.stdout == ""
     login.printed.assert_not_called()
-    login.browser.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
+    login.browser.assert_not_called()
     login.poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, login.code)
 
 
@@ -133,7 +135,7 @@ def test_login_continues_after_qr_render_failure(monkeypatch, login):
     assert result.exit_code == 0, result.output
     assert result.stdout == ""
     assert "Visit:" in result.stderr and "ABCD-EFGH" in result.stderr
-    login.browser.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
+    login.browser.assert_not_called()
     login.poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, login.code)
     login.save.assert_called_once_with("test-session", auth.DEFAULT_AUTH_URL)
 
@@ -481,3 +483,82 @@ def test_adb_wrapper_passes_password_only_on_stdin(monkeypatch):
         ["adb", "pair", "192.0.2.1:32001"], input="test-password\n", capture_output=True,
         text=True, timeout=3, check=False,
     )
+
+
+@pytest.mark.parametrize("args,browser", [([], False), (["--browser"], True),
+                                          (["--no-browser"], False)])
+def test_mobilerun_browser_is_opt_in(login, args, browser, monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    result = TerminalRunner().invoke(cli, ["auth", "login", *args])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == ""
+    link = login.code.verification_uri_complete
+    hyperlink = f"\x1b]8;;{link}\x1b\\{link}\x1b]8;;\x1b\\\n"
+    assert hyperlink in result.stderr
+    qr_end = result.stderr.rindex("\x1b[0m")
+    link_position = result.stderr.index(hyperlink)
+    manual_position = result.stderr.index("Visit: https://example.test/verify\n")
+    code_position = result.stderr.index("Code:  ABCD-EFGH\n")
+    waiting_position = result.stderr.index("Waiting for authorization (expires in 120s)")
+    assert qr_end < link_position < manual_position < code_position < waiting_position
+    if browser:
+        login.browser.assert_called_once_with(link)
+    else:
+        login.browser.assert_not_called()
+    login.poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, login.code)
+    login.save.assert_called_once_with("test-session", auth.DEFAULT_AUTH_URL)
+
+
+@pytest.mark.parametrize("terminal,no_color,no_qr", [
+    (False, False, False), (False, True, False), (True, True, False),
+    (True, False, True), (True, True, True),
+])
+def test_mobilerun_plain_output_and_no_qr(login, monkeypatch, terminal, no_color, no_qr):
+    if no_color:
+        monkeypatch.setenv("NO_COLOR", "1")
+    else:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+    runner = TerminalRunner() if terminal else CliRunner()
+    result = runner.invoke(cli, ["auth", "login", *(["--no-qr"] if no_qr else [])])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == ""
+    link = login.code.verification_uri_complete
+    assert link in result.stderr
+    assert result.stderr.index(link) < result.stderr.index("Code:  ABCD-EFGH")
+    if not terminal or no_color:
+        assert "\x1b" not in result.stderr
+        assert link + "\n" in result.stderr
+    if not terminal or no_qr:
+        login.printed.assert_not_called()
+    else:
+        login.printed.assert_called_once_with(link, color=not no_color)
+    login.browser.assert_not_called()
+
+
+def test_complete_login_link_is_not_wrapped_or_markup(login):
+    link = "https://example.test/verify?user_code=ABCD-EFGH&redirect=" + "a" * 180
+    login.code.verification_uri_complete = link
+    result = CliRunner().invoke(cli, ["auth", "login"])
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr.splitlines()[0] == link
+    assert result.stderr.splitlines()[1:3] == ["Visit: https://example.test/verify", "Code:  ABCD-EFGH"]
+    login.browser.assert_not_called()
+
+
+@pytest.mark.parametrize("service", ["openai", "anthropic", "gemini", "xai"])
+def test_browser_flag_is_mobilerun_only(service, login):
+    result = CliRunner().invoke(cli, ["auth", "login", service, "--browser"])
+    assert result.exit_code == 2
+    assert f"--browser is not supported for {service}" in result.stderr
+    login.browser.assert_not_called()
+    login.request.assert_not_called()
+
+
+@pytest.mark.parametrize("no_browser", [False, True])
+def test_provider_browser_behavior_unchanged(monkeypatch, no_browser):
+    callback = Mock()
+    monkeypatch.setattr(auth, "_run_openai_oauth_login", callback)
+    result = CliRunner().invoke(cli, ["auth", "login", "openai", *(["--no-browser"] if no_browser else [])])
+    assert result.exit_code == 0, result.output
+    assert callback.call_args.kwargs["open_browser"] is (not no_browser)
