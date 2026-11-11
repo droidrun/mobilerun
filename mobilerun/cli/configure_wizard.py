@@ -684,8 +684,9 @@ def run_configure_wizard(
     model: str | None,
     api_key: str | None,
     base_url: str | None,
+    config_path: str | None = None,
 ) -> None:
-    config = ConfigLoader.load()
+    config = ConfigLoader.load(config_path) if config_path else ConfigLoader.load()
     _print_configure_intro(console)
 
     families = family_choices()
@@ -729,7 +730,7 @@ def run_configure_wizard(
             base_url=base_url,
         )
         if provider_configured:
-            ConfigLoader.save(config)
+            _save_config(config, config_path)
             _print_configure_summary(
                 console,
                 family_id=state.family_id or "",
@@ -785,7 +786,7 @@ def run_configure_wizard(
             _configure_advanced_settings(console, config)
 
         elif action == "finish":
-            ConfigLoader.save(config)
+            _save_config(config, config_path)
             if provider_configured and state.family_id:
                 _print_configure_summary(
                     console,
@@ -799,3 +800,13 @@ def run_configure_wizard(
             else:
                 console.print("[green]Configuration saved.[/]")
             return
+
+
+def _save_config(config, config_path):
+    if config_path is None:
+        return ConfigLoader.save(config)
+    from mobilerun.config_manager.migrations import CURRENT_VERSION
+
+    data = config.to_dict()
+    data["_version"] = CURRENT_VERSION
+    return ConfigLoader._save_dict(data, Path(config_path))
