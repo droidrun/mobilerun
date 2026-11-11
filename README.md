@@ -165,7 +165,7 @@ and interruption exits 130.
 
 Device commands, `run`, `doctor`, and macro replay share `-d`/`--device`,
 `-t`/`--target local|cloud`, `-P`/`--platform android|ios`, `-c`/`--config`,
-`-v`/`--verbose`, `--api-url`, and `--tcp`/`--no-tcp`. An explicit device
+`-v`/`--verbose`, `--api-url`. `run` and macro replay also accept `--tcp`/`--no-tcp`. An explicit device
 selects its backend: an ADB serial, a Portal HTTP URL, or a cloud device id.
 Without a device, local commands auto-select; cloud commands require an id.
 
