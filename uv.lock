@@ -10,14 +10,6 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'win32'",
 ]
 
-[options]
-exclude-newer = "2026-11-04T16:27:30Z"
-
-[options.exclude-newer-package]
-mobilerun-core = "2026-11-11T16:27:30Z"
-mobilerun-core-local = "2026-11-11T16:27:30Z"
-mobilerun-sdk = "2026-11-11T16:27:30Z"
-
 [manifest]
 overrides = [{ name = "filelock", specifier = ">=4.2.1" }]
 
