@@ -59,7 +59,7 @@ class FakeHandler:
 
     def __await__(self):
         async def done():
-            return SimpleNamespace(success=True)
+            return SimpleNamespace(success=True, reason="done", steps=1)
 
         return done().__await__()
 

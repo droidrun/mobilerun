@@ -108,10 +108,9 @@ def test_device_commands_route_url_to_portal_http(tmp_path, monkeypatch, no_adb)
 
     monkeypatch.setattr(Mobilerun, "connect", connect)
     monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
-    driver, is_ios = run(device_commands.connect_driver(
-        device=PORTAL_URL, config_path=_config_file(tmp_path), platform="android"))
-    assert isinstance(driver, device_commands.CoreDriver)
-    assert is_ios is False
+    with device_commands.device_driver({"device": PORTAL_URL, "config_path": _config_file(tmp_path),
+                                        "platform": "android", "api_url": "https://example.test/v1"}):
+        pass
     assert created["url"] == PORTAL_URL
     assert created["token"] == "sekret"
     assert created["backend"] == "local-android-http"

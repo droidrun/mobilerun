@@ -114,7 +114,7 @@ def test_gemini_oauth_picker_saves_canonical_id_but_summarizes_display_name(
     monkeypatch.setattr(
         configure_wizard.ConfigLoader,
         "save",
-        lambda saved: saved_configs.append(saved),
+        lambda saved, path=None: saved_configs.append(saved),
     )
     monkeypatch.setattr(
         configure_wizard,

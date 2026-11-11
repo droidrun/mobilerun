@@ -2,15 +2,17 @@
 
 import importlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import click
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import auth, device_commands, device_lifecycle, deviceauth, selection
+from mobilerun.cli import auth, device_lifecycle, deviceauth, selection
 from mobilerun.cli.main import cli
 from mobilerun.cli.providers import PROVIDERS, llm_url_kwargs
 from mobilerun.config_manager import ConfigLoader, MobileConfig, credential_paths
@@ -56,14 +58,12 @@ def test_tree_and_short_options():
     expected = {"-d": "--device", "-t": "--target", "-P": "--platform", "-c": "--config",
                 "-v": "--verbose", "-j": "--json", "-p": "--provider", "-m": "--model",
                 "-u": "--llm-url", "-T": "--temperature", "-s": "--max-steps",
-                "-r": "--reasoning", "-n": "--dry-run", "-k": "--api-key", "-V": "--version"}
+                "-a": "--agent", "-r": "--reasoning", "-n": "--dry-run", "-k": "--api-key", "-V": "--version"}
     for path, command in commands():
         for param in command.params:
             if isinstance(param, click.Option):
                 for short in (opt for opt in param.opts if opt.startswith("-") and not opt.startswith("--")):
-                    # The frozen command-specific contract explicitly assigns -a twice.
-                    long = "--all" if path == ("device", "list") else "--agent"
-                    assert (expected.get(short, long)) in param.opts, (path, param.opts)
+                    assert expected[short] in param.opts, (path, param.opts)
 
 
 @pytest.mark.parametrize("args", [
@@ -89,9 +89,13 @@ def test_old_commands_and_flags_are_usage_errors(args):
     ("MOBILERUN_CONFIG", "--config", "a.yaml", "b.yaml", "config_path"),
     ("MOBILERUN_DEBUG", "--verbose", "false", None, "debug"),
 ])
-def test_env_binding_and_flag_precedence(monkeypatch, envvar, flag, value, override, keyword):
-    callback = AsyncMock(return_value=True)
-    monkeypatch.setattr(run_module, "run_command", callback)
+def test_env_binding_and_flag_precedence(monkeypatch, tmp_path, envvar, flag, value, override, keyword):
+    if keyword == "config_path":
+        value, override = str(tmp_path / value), str(tmp_path / override)
+        Path(value).write_text("_version: 7\n")
+        Path(override).write_text("_version: 7\n")
+    callback = AsyncMock(return_value=(True, "done", 1))
+    monkeypatch.setattr(run_module, "_run_task", callback)
     monkeypatch.setenv(envvar, value)
     result = CliRunner().invoke(cli, ["run", "task"])
     assert result.exit_code == 0, result.output
@@ -156,13 +160,14 @@ def test_cloud_target_without_device_does_not_touch_adb(monkeypatch):
 def test_read_commands_emit_one_document(monkeypatch, args):
     import mobilerun_core
 
-    core = SimpleNamespace(device_id="id", capabilities={})
+    core = SimpleNamespace(device_id="id", capabilities={"backend": "local-android-adb"}, _conn=object())
     monkeypatch.setattr(mobilerun_core.Mobilerun, "list_devices", lambda *a, **kw: [core])
-    driver = SimpleNamespace(screenshot=AsyncMock(return_value=b"png"),
-                             get_apps=AsyncMock(return_value=[{"package": "example"}]))
-    monkeypatch.setattr(device_commands, "connect_driver", AsyncMock(return_value=(driver, False)))
-    provider = SimpleNamespace(get_state=AsyncMock(return_value=SimpleNamespace(formatted_text="tree", phone_state={})))
-    monkeypatch.setattr(device_commands, "AndroidStateProvider", lambda *a, **kw: provider)
+    driver = Mock()
+    driver.screenshot.return_value = "cG5n"
+    driver.list_apps.return_value = [{"package": "example"}]
+    driver.ui_json.return_value = '{"a11y_tree": {}}'
+    monkeypatch.setattr(mobilerun_core.Mobilerun, "connect", lambda *a, **kw: driver)
+    args = [*args, "-d", "serial"] if "list" not in args else args
     result = CliRunner().invoke(cli, args)
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
@@ -179,10 +184,11 @@ def test_macro_list_json(tmp_path):
 
 def test_doctor_failure_json(monkeypatch):
     doctor = importlib.import_module("mobilerun.cli.doctor_command")
-    monkeypatch.setattr(doctor, "select_device", AsyncMock(side_effect=RuntimeError("missing device")))
+    from mobilerun.cli.doctor import CheckResult, Status
+    monkeypatch.setattr(doctor, "run_doctor", AsyncMock(return_value=[CheckResult("Device", Status.FAIL, "missing device")]))
     result = CliRunner().invoke(cli, ["doctor", "-j"])
     assert result.exit_code == 1
-    assert json.loads(result.stdout)[0]["status"] == "fail"
+    assert json.loads(result.stdout) == {"error": "Health checks failed"}
 
 
 @pytest.mark.parametrize("service,option", [("mobilerun", "--model"), ("xai", "--callback-host"),
@@ -197,7 +203,8 @@ def test_provider_table_matches_wizard_and_loaders():
     from mobilerun.agent.providers.registry import resolve_provider_variant
 
     for provider in PROVIDERS.values():
-        assert resolve_provider_variant(provider.family, provider.auth_mode).id == provider.runtime
+        if provider.family:
+            assert resolve_provider_variant(provider.family, provider.auth_mode).id == provider.runtime
     assert llm_url_kwargs("Ollama", "http://x") == {"base_url": "http://x"}
     assert llm_url_kwargs("OpenAIResponses", "http://x") == {"api_base": "http://x"}
     assert llm_url_kwargs("GoogleGenAI", "http://x") == {"http_options": {"base_url": "http://x"}}
@@ -209,41 +216,44 @@ def test_interrupt_exits_130(monkeypatch):
     assert result.exit_code == 130
 
 
-def test_import_has_no_cli_global_side_effects(monkeypatch):
-    import warnings
+def test_import_has_no_cli_global_side_effects():
+    script = """
+import os
+import warnings
+os.environ.pop("TOKENIZERS_PARALLELISM", None)
+os.environ.pop("GRPC_ENABLE_FORK_SUPPORT", None)
+original = dict(os.environ)
+import mobilerun.cli.main
+assert dict(os.environ) == original
+assert not any(action == 'ignore' and message is None and category is Warning
+               and module is None for action, message, category, module, *_ in warnings.filters)
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
-    import mobilerun.cli.main as main
 
-    monkeypatch.delenv("TOKENIZERS_PARALLELISM", raising=False)
-    monkeypatch.delenv("GRPC_ENABLE_FORK_SUPPORT", raising=False)
-    original = list(warnings.filters)
-    importlib.reload(main)
-    import os
-    assert "TOKENIZERS_PARALLELISM" not in os.environ
-    assert "GRPC_ENABLE_FORK_SUPPORT" not in os.environ
-    assert warnings.filters == original
-
-
-@pytest.mark.parametrize("success", [True, False])
-def test_run_json_is_built_from_result_event(monkeypatch, success):
+def fake_agent(result, calls=None):
     class Handler:
         async def stream_events(self):
             print("progress on stderr")
             if False:
                 yield None
-
         def __await__(self):
             async def done():
-                return SimpleNamespace(success=success, reason="observed result", steps=4)
+                return result
             return done().__await__()
-
     class Agent:
         def __init__(self, **kwargs):
-            pass
+            if calls is not None:
+                calls.append(kwargs)
         def run(self):
             return Handler()
+    return Agent
 
-    monkeypatch.setattr(run_module, "MobileAgent", Agent)
+
+@pytest.mark.parametrize("success", [True, False])
+def test_run_json_is_built_from_result_event(monkeypatch, success):
+    monkeypatch.setattr(run_module, "MobileAgent", fake_agent(SimpleNamespace(success=success, reason="observed result", steps=4)))
     result = CliRunner().invoke(cli, ["run", "task", "-j"])
     assert result.exit_code == (0 if success else 1), result.output
     assert json.loads(result.stdout) == {"success": success, "reason": "observed result", "steps": 4}
@@ -260,21 +270,8 @@ def test_run_injects_cloud_driver_without_agent_changes(monkeypatch):
             calls.append(kwargs)
         async def connect(self):
             pass
-    class Agent:
-        def __init__(self, **kwargs):
-            calls.append(kwargs)
-        def run(self):
-            class Handler:
-                async def stream_events(self):
-                    if False:
-                        yield None
-                def __await__(self):
-                    async def done():
-                        return SimpleNamespace(success=True, reason="done", steps=1)
-                    return done().__await__()
-            return Handler()
     monkeypatch.setattr(cloud, "CloudDriver", Driver)
-    monkeypatch.setattr(run_module, "MobileAgent", Agent)
+    monkeypatch.setattr(run_module, "MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1), calls))
     monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "fake-key")
     device_id = "123e4567-e89b-12d3-a456-426614174000"
     result = CliRunner().invoke(cli, ["run", "task", "-d", device_id, "-j", "--api-url", "https://example.test/v1"])
@@ -309,7 +306,7 @@ def test_auth_status_session_error_prints_json_without_token(monkeypatch):
     monkeypatch.setattr(deviceauth, "fetch_session", fail)
     result = CliRunner().invoke(cli, ["auth", "status", "-j"])
     assert result.exit_code == 1
-    assert json.loads(result.stdout)[0]["error"] == "session check failed"
+    assert "session check failed" in json.loads(result.stdout)["error"]
     assert "fake-secret" not in result.output
 
 
@@ -327,8 +324,260 @@ def test_failed_macro_replay_exits_nonzero(monkeypatch, tmp_path):
             return False
 
     monkeypatch.setattr(macro, "MacroPlayer", Player)
-    monkeypatch.setattr(macro, "select_device", AsyncMock(return_value=SimpleNamespace(device="serial")))
-    monkeypatch.setattr(device_commands, "connect_driver", AsyncMock(return_value=(object(), False)))
+    monkeypatch.setattr(macro, "select_device", AsyncMock(return_value=SimpleNamespace(device="serial", config=MobileConfig())))
+    monkeypatch.setattr(macro, "_native_driver", AsyncMock(return_value=object()))
     result = CliRunner().invoke(cli, ["macro", "replay", str(path)])
     assert result.exit_code == 1
     assert "Macro replay failed" in result.output
+
+
+@pytest.mark.parametrize("stored_url", ["https://issuer.test/api/auth", None])
+def test_status_uses_only_credential_issuer(monkeypatch, stored_url):
+    monkeypatch.setenv("MOBILERUN_AUTH_URL", "http://other.test/api/auth")
+    monkeypatch.setattr(deviceauth, "load_credentials", lambda: {"access_token": "marker-token", "auth_url": stored_url})
+    fetch = Mock(return_value={"user": {"email": "user@example.test"}})
+    monkeypatch.setattr(deviceauth, "fetch_session", fetch)
+    result = CliRunner().invoke(cli, ["auth", "status", "-j"])
+    assert result.exit_code == 0, result.output
+    fetch.assert_called_once_with(stored_url or auth.DEFAULT_AUTH_URL, "marker-token")
+    assert CliRunner().invoke(cli, ["auth", "status", "--auth-url", "http://other.test"]).exit_code == 2
+
+
+@pytest.mark.parametrize("verb", ["connect", "disconnect"])
+def test_connection_requires_positional_and_ignores_device_env(monkeypatch, verb):
+    monkeypatch.setenv("MOBILERUN_DEVICE", "wrong-device")
+    monkeypatch.setenv("MOBILERUN_TARGET", "cloud")
+    call = AsyncMock(return_value="connected to correct-device" if verb == "connect" else True)
+    monkeypatch.setattr(device_lifecycle.adb, verb, call)
+    runner = CliRunner()
+    assert runner.invoke(cli, ["device", verb]).exit_code == 2
+    result = runner.invoke(cli, ["device", verb, "correct-device"])
+    assert result.exit_code == 0, result.output
+    assert call.await_args.args == ("correct-device",)
+    for option in ("--device", "--target", "--platform", "--config", "--api-url", "--tcp"):
+        assert runner.invoke(cli, ["device", verb, "serial", option, "x"]).exit_code == 2
+
+
+@pytest.mark.parametrize("scope", ["cloud", "all"])
+def test_cloud_list_includes_every_state_and_metadata(monkeypatch, scope):
+    import mobilerun_core
+
+    monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "fake-key")
+    rows = [SimpleNamespace(device_id=f"id-{state}", _conn=SimpleNamespace(
+        _device_cache=SimpleNamespace(name=f"device-{state}", state=state, type="android")))
+        for state in ("ready", "stopped", "provisioning")]
+    list_call = Mock(return_value=rows)
+    monkeypatch.setattr(mobilerun_core.Mobilerun, "list_devices", list_call)
+    flags = ["--all"] if scope == "all" else ["-t", "cloud"]
+    result = CliRunner().invoke(cli, ["device", "list", *flags, "-j"])
+    assert result.exit_code == 0, result.output
+    assert list_call.call_args.kwargs == {"filters": {"state": None}, "scope": scope}
+    data = json.loads(result.stdout)
+    assert {row["state"] for row in data} == {"ready", "stopped", "provisioning"}
+    assert all(set(row) == {"device_id", "name", "state", "type"} for row in data)
+    text = CliRunner().invoke(cli, ["device", "list", *flags])
+    assert all(f"id-{state}  device-{state}  {state}  android" in text.stdout for state in ("ready", "stopped", "provisioning"))
+
+
+@pytest.mark.parametrize("runtime,expected", [("DeepSeek", {"base_url": "http://x"}),
+                                              ("xai_oauth", None), ("CustomProvider", None)])
+def test_config_provider_url_never_crashes_with_stop_iteration(monkeypatch, runtime, expected):
+    config = MobileConfig()
+    for profile in config.llm_profiles.values():
+        profile.provider = runtime
+    monkeypatch.setattr(run_module.ConfigLoader, "load", lambda _: config)
+    monkeypatch.setattr(run_module, "MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1)))
+    result = CliRunner().invoke(cli, ["run", "task", "-u", "http://x", "-j"])
+    assert "StopIteration" not in result.output
+    if expected:
+        assert result.exit_code == 0, result.output
+        assert all(profile.kwargs["base_url"] == "http://x" for profile in config.llm_profiles.values())
+    else:
+        assert result.exit_code == 2, result.output
+        assert result.stdout == ""
+        assert "not supported for provider" in result.stderr
+
+
+@pytest.mark.parametrize("provider", ["openrouter", "deepseek"])
+def test_run_only_providers_work_and_configure_rejects_them(monkeypatch, provider):
+    llm = object()
+    load = Mock(return_value=llm)
+    monkeypatch.setattr(run_module, "load_llm", load)
+    monkeypatch.setattr(run_module, "MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1)))
+    result = CliRunner().invoke(cli, ["run", "task", "-p", provider, "-m", "test-model", "-j"])
+    assert result.exit_code == 0, result.output
+    assert load.call_args.args == (PROVIDERS[provider].runtime,)
+    result = CliRunner().invoke(cli, ["configure", "-p", provider])
+    assert result.exit_code == 2
+    assert "run only" in result.output
+
+
+@pytest.mark.parametrize("args,verb,expected_args,expected_kwargs", [
+    (["tap", "10", "20"], "tap", (10, 20), {"humanize": False}),
+    (["swipe", "1", "2", "3", "4", "--duration", "0.4"], "swipe", (1, 2, 3, 4), {"ms": 400, "humanize": False}),
+    (["long-press", "10", "20"], "swipe", (10, 20, 10, 20), {"ms": 1000, "humanize": False}),
+    (["type", "hello", "--clear"], "type", ("hello",), {"clear": True, "humanize": False}),
+    (["press", "home"], "key", ("home",), {}),
+    (["start", "example.app"], "start_app", ("example.app",), {}),
+    (["apps", "--system", "-j"], "list_apps", (), {"include_system_apps": True}),
+    (["screenshot", "-j"], "screenshot", (), {}),
+    (["ui", "-j"], "ui_json", (), {}),
+    (["ping"], "ui", (), {}),
+])
+def test_device_verbs_call_core_directly(monkeypatch, args, verb, expected_args, expected_kwargs):
+    import mobilerun_core
+
+    driver = Mock()
+    driver.list_apps.return_value = [{"package": "example"}]
+    driver.screenshot.return_value = "cG5n"
+    driver.ui_json.return_value = '{"a11y_tree": {"text": "Hello"}}'
+    core = Mock()
+    core.connect.return_value = driver
+    factory = Mock(return_value=core)
+    monkeypatch.setattr(mobilerun_core, "Mobilerun", factory)
+    result = CliRunner().invoke(cli, ["device", *args, "-d", "serial"])
+    assert result.exit_code == 0, result.output
+    getattr(driver, verb).assert_called_once_with(*expected_args, **expected_kwargs)
+    assert core.connect.call_args.args == ("serial",)
+    assert core.connect.call_args.kwargs["backend"] == "local-android-adb"
+    assert factory.call_args.kwargs["base_url"] == "https://api.mobilerun.ai/v1"
+    driver.close.assert_called_once()
+    core.close.assert_called_once()
+    if args[0] == "screenshot":
+        Path(json.loads(result.stdout)["path"]).unlink()
+    if args[0] in {"ui", "apps"}:
+        assert json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("args", [["device", "ui", "-t", "cloud"], ["device", "list", "-t", "cloud"],
+                                  ["device", "apps", "-t", "cloud"], ["device", "screenshot", "-t", "cloud"],
+                                  ["env"], ["run", "task"]])
+def test_json_failures_emit_exactly_one_error(monkeypatch, args, tmp_path):
+    if args[0] in {"env", "run"}:
+        monkeypatch.setenv("MOBILERUN_CONFIG", str(tmp_path / "missing.yaml"))
+    result = CliRunner().invoke(cli, [*args, "-j"])
+    assert result.exit_code == 1, result.output
+    document = json.loads(result.stdout)
+    assert set(document) == {"error"}
+    assert document["error"]
+
+
+def test_unsupported_core_operation_includes_alternative(monkeypatch):
+    import mobilerun_core
+    from mobilerun_core.connection._unsupported import UnsupportedOperation
+
+    driver = Mock()
+    driver.start_app.side_effect = UnsupportedOperation(verb="start_app", backend="local-ios-http", reason="unavailable", alternative="open_deep_link")
+    monkeypatch.setattr(mobilerun_core.Mobilerun, "connect", lambda *a, **kw: driver)
+    result = CliRunner().invoke(cli, ["device", "start", "example", "-d", "serial"])
+    assert result.exit_code == 1
+    assert "unavailable" in result.stderr and "open_deep_link" in result.stderr
+
+
+def test_missing_portal_token_is_cli_error_before_core(monkeypatch):
+    import mobilerun_core
+    connect = Mock()
+    monkeypatch.setattr(mobilerun_core.Mobilerun, "connect", connect)
+    monkeypatch.delenv("MOBILERUN_DEVICE_TOKEN", raising=False)
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "unrelated-token")
+    result = CliRunner().invoke(cli, ["device", "tap", "1", "2", "-d", "http://127.0.0.1:9"])
+    assert result.exit_code == 1
+    assert "MOBILERUN_DEVICE_TOKEN" in result.stderr
+    assert "MOBILERUN_ANDROID_PORTAL_TOKEN" not in result.stderr
+    connect.assert_not_called()
+
+
+def test_env_path_and_unset_sources_and_effective_telemetry(monkeypatch, tmp_path):
+    config = MobileConfig()
+    config.telemetry.enabled = False
+    cfg = tmp_path / "custom.yaml"
+    ConfigLoader.save(config, path=cfg)
+    monkeypatch.setenv("MOBILERUN_TELEMETRY_ENABLED", "true")
+    monkeypatch.setenv("MOBILERUN_CONFIG", str(cfg))
+    result = CliRunner().invoke(cli, ["env", "-j"])
+    rows = {row["variable"]: row for row in json.loads(result.stdout)}
+    assert rows["MOBILERUN_CONFIG"]["source"] == "env"
+    assert rows["MOBILERUN_DEVICE"]["source"] == "not set"
+    assert rows["MOBILERUN_DEVICE_TOKEN"]["source"] == "not set"
+    assert rows["MOBILERUN_TELEMETRY_ENABLED"]["value"] is False
+    other = tmp_path / "other.yaml"
+    ConfigLoader.save(config, path=other)
+    result = CliRunner().invoke(cli, ["env", "-j", "-c", str(other)])
+    row = next(row for row in json.loads(result.stdout) if row["variable"] == "MOBILERUN_CONFIG")
+    assert row["value"] == str(other) and row["source"] == "flag"
+
+
+@pytest.mark.parametrize("args", [["env"], ["run", "task"], ["device", "ui"], ["device", "list"], ["auth", "status"], ["doctor"]])
+def test_missing_env_config_is_an_error(monkeypatch, tmp_path, args):
+    from mobilerun.cli import doctor
+    from mobilerun.cli.doctor import CheckResult, Status
+    monkeypatch.setenv("MOBILERUN_CONFIG", str(tmp_path / "missing.yaml"))
+    monkeypatch.setattr(doctor, "check_sdk_version", AsyncMock(return_value=CheckResult("SDK", Status.PASS, "ok")))
+    monkeypatch.setattr(doctor, "check_adb", AsyncMock(return_value=CheckResult("ADB", Status.FAIL, "not installed")))
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 1, result.output
+    assert "Config" in result.output or "config" in result.output
+
+
+def test_doctor_checks_system_before_ambiguous_device(monkeypatch):
+    from mobilerun.cli import doctor
+    from mobilerun.cli.doctor import CheckResult, Status
+    order = []
+    async def sdk(debug):
+        order.append("sdk")
+        return CheckResult("SDK", Status.PASS, "ok")
+    async def adb_check(debug):
+        order.append("adb")
+        return CheckResult("ADB", Status.PASS, "ok")
+    async def device_check(serial, debug):
+        order.append("device")
+        return CheckResult("Device", Status.FAIL, "multiple devices"), None
+    monkeypatch.setattr(doctor, "check_sdk_version", sdk)
+    monkeypatch.setattr(doctor, "check_adb", adb_check)
+    monkeypatch.setattr(doctor, "check_device", device_check)
+    result = CliRunner().invoke(cli, ["doctor"])
+    assert result.exit_code == 1, result.output
+    assert order == ["sdk", "adb", "device"]
+    assert all(name in result.stdout for name in ("SDK", "Config", "ADB", "Device"))
+
+
+def test_configure_api_provider_preselects_api_key_and_validates_auth_mode(monkeypatch):
+    configure = importlib.import_module("mobilerun.cli.configure")
+    wizard = Mock()
+    monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    result = CliRunner().invoke(cli, ["configure", "-p", "openai"])
+    assert result.exit_code == 0, result.output
+    assert wizard.call_args.kwargs["auth_mode"] == "api_key"
+    assert CliRunner().invoke(cli, ["configure", "--auth-mode", "invalid"]).exit_code == 2
+
+
+def test_run_help_task_and_agent_validation():
+    result = CliRunner().invoke(cli, ["run", "-h"])
+    assert "TASK" in result.stdout
+    assert CliRunner().invoke(cli, ["run", "task", "-a", "no-such-agent"]).exit_code == 2
+
+
+def test_macro_replay_unexpected_error_printed_once_with_traceback(monkeypatch, tmp_path):
+    macro = importlib.import_module("mobilerun.macro.cli")
+    class Player:
+        def __init__(self, **kwargs):
+            pass
+        def load_macro_from_file(self, path):
+            raise RuntimeError("unique macro failure")
+    path = tmp_path / "macro.json"
+    path.write_text("{}")
+    monkeypatch.setattr(macro, "MacroPlayer", Player)
+    result = CliRunner().invoke(cli, ["macro", "replay", str(path), "-n"])
+    assert result.exit_code == 1
+    assert result.stderr.count("unique macro failure") == 1
+    verbose = CliRunner().invoke(cli, ["macro", "replay", str(path), "-n", "-v"])
+    assert verbose.exit_code == 1
+    assert "Traceback" in verbose.stderr
+
+
+def test_device_commands_do_not_accept_tcp_or_unused_list_flags():
+    runner = CliRunner()
+    for path, command in commands(cli.commands["device"], ("device",)):
+        assert all("--tcp" not in getattr(param, "opts", ()) for param in command.params), path
+    for flag in ("-a", "-d", "-P", "-c"):
+        assert runner.invoke(cli, ["device", "list", flag, "x"]).exit_code == 2

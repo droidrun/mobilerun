@@ -11,10 +11,10 @@ from mobilerun.config_manager.config_manager import MobileConfig
 
 class RunCliVisionOnlyTest(unittest.TestCase):
     def test_vision_only_forwards_normal_run_options(self):
-        async_run_command = AsyncMock(return_value=True)
+        async_run_command = AsyncMock(return_value=(True, "done", 1))
         runner = CliRunner()
 
-        with patch("mobilerun.cli.run.run_command", async_run_command):
+        with patch("mobilerun.cli.run._run_task", async_run_command):
             result = runner.invoke(
                 cli,
                 [
@@ -44,7 +44,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         kwargs = async_run_command.await_args.kwargs
         self.assertEqual(kwargs["command"], "Check Wi-Fi")
         self.assertTrue(kwargs["vision_only"])
-        self.assertTrue(kwargs["ios"])
+        self.assertTrue(kwargs["platform"] == "ios")
         self.assertEqual(kwargs["control_backend"], "visual-remote")
         self.assertEqual(kwargs["device"], "http://localhost:8090")
         self.assertEqual(kwargs["device_id"], "phone-1")
@@ -55,11 +55,11 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         self.assertTrue(kwargs["debug"])
 
     def test_omitted_control_backend_preserves_default_backend_behavior(self):
-        async_run_command = AsyncMock(return_value=True)
+        async_run_command = AsyncMock(return_value=(True, "done", 1))
         runner = CliRunner()
 
         with (
-            patch("mobilerun.cli.run.run_command", async_run_command),
+            patch("mobilerun.cli.run._run_task", async_run_command),
             patch("mobilerun.cli.run.adb.device", AsyncMock(return_value=None)),
         ):
             result = runner.invoke(cli, ["run", "Check Wi-Fi", "--vision-only"])
@@ -89,7 +89,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
             def __await__(self):
                 async def done():
-                    return SimpleNamespace(success=True)
+                    return SimpleNamespace(success=True, reason="done", steps=1)
 
                 return done().__await__()
 
@@ -111,7 +111,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
             success = asyncio.run(
                 run_command(
                     "Check Wi-Fi",
-                    ios=True,
+                    platform="ios",
                     vision_only=True,
                     control_backend="visual-remote",
                     device="http://localhost:8090",
@@ -142,7 +142,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
             def __await__(self):
                 async def done():
-                    return SimpleNamespace(success=True)
+                    return SimpleNamespace(success=True, reason="done", steps=1)
 
                 return done().__await__()
 
@@ -188,7 +188,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
             def __await__(self):
                 async def done():
-                    return SimpleNamespace(success=True)
+                    return SimpleNamespace(success=True, reason="done", steps=1)
 
                 return done().__await__()
 

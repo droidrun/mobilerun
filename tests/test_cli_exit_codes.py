@@ -80,24 +80,18 @@ def test_disconnect_not_connected_is_success(monkeypatch):
 
 
 def test_ping_unknown_device(monkeypatch):
-    monkeypatch.setattr(device_lifecycle.adb, "device", AsyncMock(return_value=None))
-
+    monkeypatch.setattr(device_lifecycle, "probe_device", lambda *_: (_ for _ in ()).throw(RuntimeError("unknown device")))
     result = CliRunner().invoke(main.cli, ["device", "ping", "-d", "no-such-device"])
-
     assert result.exit_code == 1
-    assert "Error: Could not find device no-such-device" in result.output
+    assert "Error: unknown device" in result.output
 
 
 def test_ping_driver_error(monkeypatch):
-    monkeypatch.setattr(device_lifecycle.adb, "device", AsyncMock(return_value=object()))
-    monkeypatch.setattr(
-        device_lifecycle, "ping_portal", AsyncMock(side_effect=RuntimeError("portal broke"))
-    )
-
+    monkeypatch.setattr(device_lifecycle, "probe_device", lambda *_: (_ for _ in ()).throw(RuntimeError("portal broke")))
     result = CliRunner().invoke(main.cli, ["device", "ping", "-d", "device", "--verbose"])
-
     assert result.exit_code == 1
     assert "Error: portal broke" in result.output
+    assert "Traceback" in result.stderr
 
 
 def test_device_list_core_error_is_failure(monkeypatch):
@@ -105,7 +99,7 @@ def test_device_list_core_error_is_failure(monkeypatch):
         def list_devices(self, **kwargs):
             raise RuntimeError("adb broke")
 
-    monkeypatch.setattr(device_lifecycle, "core_client", lambda *_: FakeCore())
+    monkeypatch.setattr(device_lifecycle, "core_client", lambda *_, **kw: FakeCore())
     result = CliRunner().invoke(main.cli, ["device", "list"])
     assert result.exit_code == 1
     assert "adb broke" in result.output

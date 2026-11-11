@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from mobilerun.cli import device_commands, selection
+from mobilerun.cli import selection
 from mobilerun.config_manager.config_manager import DeviceConfig
 
 
@@ -46,14 +46,15 @@ def test_create_driver_passes_portal_mode(monkeypatch):
             )
         ),
     )
-    monkeypatch.setattr(device_commands, "AndroidDriver", FakeAndroidDriver)
+    from mobilerun_core_local.driver import android
+    monkeypatch.setattr(android, "AndroidDriver", FakeAndroidDriver)
 
-    driver, is_ios = asyncio.run(
-        device_commands.connect_driver(None, None, None, None)
-    )
+    async def connect():
+        selected = await selection.select_device()
+        return await selection._native_driver(selected, selected.config, "https://example.test/v1")
+    driver = asyncio.run(connect())
 
     assert isinstance(driver, FakeAndroidDriver)
-    assert is_ios is False
     assert android_calls == [
         {
             "serial": "emulator-5556",
@@ -89,11 +90,15 @@ def test_create_driver_disabled_portal_mode_skips_auto_setup(monkeypatch):
             )
         ),
     )
-    monkeypatch.setattr(device_commands, "AndroidDriver", FakeAndroidDriver)
+    from mobilerun_core_local.driver import android
+    monkeypatch.setattr(android, "AndroidDriver", FakeAndroidDriver)
     monkeypatch.setattr(
-        device_commands, "ensure_portal_ready", fake_ensure_portal_ready
+        android.portal, "ensure_portal_ready", fake_ensure_portal_ready
     )
 
-    asyncio.run(device_commands.connect_driver(None, None, None, None))
+    async def connect():
+        selected = await selection.select_device()
+        return await selection._native_driver(selected, selected.config, "https://example.test/v1")
+    asyncio.run(connect())
 
     assert setup_calls == []

@@ -164,54 +164,28 @@ def test_setup_uses_android_serial(adb_devices, monkeypatch):
     assert device_calls == ["emulator-5556"]
 
 
-def _device_command_config(monkeypatch):
-    from mobilerun.cli import device_commands, selection
-
-    monkeypatch.setattr(
-        selection.ConfigLoader,
-        "load",
-        lambda _path: SimpleNamespace(
-            device=SimpleNamespace(
-                serial=None,
-                use_tcp=False,
-                platform="android",
-                auto_setup=False,
-                portal_mode="auto",
-            )
-        ),
-    )
-    serials = []
-
-    class FakeAndroidDriver:
-        def __init__(self, serial, use_tcp, portal_mode):
-            serials.append(serial)
-
-        async def connect(self):
-            pass
-
-    monkeypatch.setattr(device_commands, "AndroidDriver", FakeAndroidDriver)
-    return device_commands, serials
-
-
-def test_device_command_with_multiple_devices_raises_click_error(
-    adb_devices, monkeypatch
-):
-    device_commands, serials = _device_command_config(monkeypatch)
+def test_device_command_with_multiple_devices_raises_click_error(adb_devices):
+    from mobilerun.cli.device_commands import device_driver
+    from mobilerun.cli.options import DEFAULT_API_URL
     _set(adb_devices, ("emulator-5554", "device"), ("emulator-5556", "device"))
-
-    with pytest.raises(click.ClickException) as exc:
-        asyncio.run(device_commands.connect_driver(None, None, None, None))
-
-    assert "emulator-5554, emulator-5556" in exc.value.message
-    assert serials == []
+    with pytest.raises(click.ClickException, match="emulator-5554, emulator-5556"):
+        with device_driver({"api_url": DEFAULT_API_URL}):
+            pytest.fail("must not connect")
 
 
 def test_device_command_uses_single_online_device(adb_devices, monkeypatch):
-    device_commands, serials = _device_command_config(monkeypatch)
+    import mobilerun_core
+
+    from mobilerun.cli.device_commands import device_driver
+    from mobilerun.cli.options import DEFAULT_API_URL
     _set(adb_devices, ("emulator-5556", "unauthorized"), ("emulator-5554", "device"))
-
-    asyncio.run(device_commands.connect_driver(None, None, None, None))
-
+    serials = []
+    def connect(self, serial, **kwargs):
+        serials.append(serial)
+        return object()
+    monkeypatch.setattr(mobilerun_core.Mobilerun, "connect", connect)
+    with device_driver({"api_url": DEFAULT_API_URL}):
+        pass
     assert serials == ["emulator-5554"]
 
 

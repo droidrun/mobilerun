@@ -214,22 +214,19 @@ def test_cancelling_the_caller_cancels_the_fetch(monkeypatch):
     assert cancelled == [True]
 
 
-def test_device_ui_shows_info_progress_on_stderr(capsys):
-    from mobilerun.cli import device_commands
+def test_device_ui_shows_info_progress_on_stderr(monkeypatch):
+    from click.testing import CliRunner
+    from mobilerun_core import Mobilerun
 
-    logger = logging.getLogger("mobilerun")
-    saved = (logger.handlers[:], logger.level, logger.propagate)
-    logger.handlers = []
-    try:
-        device_commands._log_progress_to_stderr()
-        logger.info("Waiting for the UI state from the device...")
-        out, err = capsys.readouterr()
-        assert out == ""
-        assert err == "Waiting for the UI state from the device...\n"
+    from mobilerun.cli.main import cli
 
-        # An already-configured logger (SDK / agent CLI) is left alone.
-        handlers = logger.handlers[:]
-        device_commands._log_progress_to_stderr()
-        assert logger.handlers == handlers
-    finally:
-        logger.handlers, logger.level, logger.propagate = saved
+    class Device:
+        def ui_json(self):
+            logging.getLogger("mobilerun").info("Waiting for the UI state from the device...")
+            return '{"a11y_tree": {}}'
+
+    monkeypatch.setattr(Mobilerun, "connect", lambda *a, **kw: Device())
+    result = CliRunner().invoke(cli, ["device", "ui", "-d", "serial", "-j"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == '{"a11y_tree": {}}\n'
+    assert result.stderr == "Waiting for the UI state from the device...\n"

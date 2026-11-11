@@ -242,7 +242,7 @@ def test_exact_xai_configure_forms_keep_provider_and_auth_fixed(
     monkeypatch.setattr(
         configure_wizard.ConfigLoader,
         "save",
-        lambda saved: saved_configs.append(saved),
+        lambda saved, path=None: saved_configs.append(saved),
     )
 
     def choose_model(  # type: ignore[no-untyped-def]
@@ -307,7 +307,7 @@ def test_provider_only_flag_does_not_auto_enter_model_flow(monkeypatch) -> None:
     monkeypatch.setattr(
         configure_wizard.ConfigLoader,
         "save",
-        lambda saved: saved_configs.append(saved),
+        lambda saved, path=None: saved_configs.append(saved),
     )
     monkeypatch.setattr(
         configure_wizard,
@@ -353,7 +353,7 @@ def test_fixed_provider_and_auth_model_back_returns_to_top_level_once(
     monkeypatch.setattr(
         configure_wizard.ConfigLoader,
         "save",
-        lambda saved: saved_configs.append(saved),
+        lambda saved, path=None: saved_configs.append(saved),
     )
 
     def choose_model(  # type: ignore[no-untyped-def]
