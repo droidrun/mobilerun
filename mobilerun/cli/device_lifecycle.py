@@ -6,11 +6,14 @@ from async_adbutils import adb
 from mobilerun.cli.device_commands import device_cli, probe_device
 from mobilerun.cli.device_pair import adb_connect_succeeded
 from mobilerun.cli.options import (
+    NO_LOCAL_DEVICES_HINT,
     api_url_option,
     config_option,
+    convert_api_error,
     coro,
     device_option,
     emit,
+    emit_rows,
     json_option,
     platform_option,
     target_option,
@@ -30,8 +33,31 @@ from mobilerun.cli.setup import _setup_portal
 @click.option("--all", "all_devices", is_flag=True, help="List local and cloud devices.")
 def list_devices(target, api_url, verbose, json_output, all_devices):
     """List devices in the selected target."""
-    scope = "all" if all_devices else target
-    client = core_client(api_url, cloud=scope in {"cloud", "all"})
+    rows, errors = [], []
+    for scope in (["local", "cloud"] if all_devices else [target]):
+        try:
+            rows.extend(_list_target(api_url, scope))
+        except Exception as exc:
+            if not all_devices:
+                raise
+            converted = convert_api_error(exc)
+            message = converted[0] if converted else str(exc)
+            errors.append({"target": scope, "error": message})
+            click.echo(f"Warning: {scope}: {' '.join(message.split())}", err=True)
+    if json_output:
+        emit({"devices": rows, "errors": errors} if all_devices else rows, json_output=True)
+    elif rows:
+        emit_rows(("DEVICE_ID", "NAME", "STATE", "TYPE"), (
+            (row["device_id"], row["name"] or "-", row["state"], row["type"]) for row in rows
+        ))
+    else:
+        click.echo("No devices found. " + NO_LOCAL_DEVICES_HINT, err=True)
+    if len(errors) == 2:
+        click.get_current_context().exit(1)
+
+
+def _list_target(api_url, scope):
+    client = core_client(api_url, cloud=scope == "cloud")
     devices = []
     try:
         devices = client.list_devices(filters={"state": None}, scope=scope)
@@ -46,13 +72,7 @@ def list_devices(target, api_url, verbose, json_output, all_devices):
                 "state": metadata.state if metadata else "connected",
                 "type": metadata.type if metadata else device.capabilities["backend"],
             })
-        if json_output:
-            emit(rows, json_output=True)
-        elif rows:
-            for row in rows:
-                emit(f"{row['device_id']}  {row['name'] or '-'}  {row['state']}  {row['type']}")
-        else:
-            click.echo("No devices found.", err=True)
+        return rows
     finally:
         for resource in [*devices, client]:
             close = getattr(resource, "close", None)

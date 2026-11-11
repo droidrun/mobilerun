@@ -15,6 +15,7 @@ from mobilerun.cli.options import (
     coro,
     device_options,
     emit,
+    emit_rows,
     json_option,
     max_steps_option,
     model_option,
@@ -320,20 +321,7 @@ def list(directory: str, verbose: bool, json_output: bool):
 
         logger.info(f"🎯 Found {len(folders)} trajectory(s):")
 
-        table = Table(title=f"Available Trajectories in {directory}")
-        table.add_column("Folder", style="cyan")
-        table.add_column("Description", style="white")
-        table.add_column("Actions", style="green")
-
-        for folder, description, actions in sorted(folders):
-            table.add_row(
-                folder,
-                description[:80] + "..." if len(description) > 80 else description,
-                str(actions),
-            )
-
-        # Still use console for table display as it's structured data
-        emit(console_render(table))
+        emit_rows(("FOLDER", "DESCRIPTION", "ACTIONS"), sorted(folders))
         logger.info(
             f"💡 Use 'mobilerun macro replay {resolved_dir}/<folder>' to replay a trajectory"
         )

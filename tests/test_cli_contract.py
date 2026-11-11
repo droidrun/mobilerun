@@ -192,7 +192,9 @@ def test_doctor_failure_json(monkeypatch):
     monkeypatch.setattr(doctor, "run_doctor", AsyncMock(return_value=[CheckResult("Device", Status.FAIL, "missing device")]))
     result = CliRunner().invoke(cli, ["doctor", "-j"])
     assert result.exit_code == 1
-    assert json.loads(result.stdout) == {"error": "Health checks failed"}
+    assert json.loads(result.stdout) == {
+        "ok": False, "checks": [{"name": "Device", "status": "fail", "detail": "missing device"}],
+    }
 
 
 @pytest.mark.parametrize("service,option", [("mobilerun", "--model"), ("xai", "--callback-host"),
@@ -370,17 +372,23 @@ def test_cloud_list_includes_every_state_and_metadata(monkeypatch, scope):
     rows = [SimpleNamespace(device_id=f"id-{state}", _conn=SimpleNamespace(
         _device_cache=SimpleNamespace(name=f"device-{state}", state=state, type="android")))
         for state in ("ready", "stopped", "provisioning")]
-    list_call = Mock(return_value=rows)
+    list_call = Mock(side_effect=lambda *a, **kw: rows if kw["scope"] == "cloud" else [])
     monkeypatch.setattr(mobilerun_core.Mobilerun, "list_devices", list_call)
     flags = ["--all"] if scope == "all" else ["-t", "cloud"]
     result = CliRunner().invoke(cli, ["device", "list", *flags, "-j"])
     assert result.exit_code == 0, result.output
-    assert list_call.call_args.kwargs == {"filters": {"state": None}, "scope": scope}
+    assert [call.kwargs for call in list_call.call_args_list] == [
+        {"filters": {"state": None}, "scope": target}
+        for target in (["local", "cloud"] if scope == "all" else ["cloud"])
+    ]
     data = json.loads(result.stdout)
+    if scope == "all":
+        assert data["errors"] == []
+        data = data["devices"]
     assert {row["state"] for row in data} == {"ready", "stopped", "provisioning"}
     assert all(set(row) == {"device_id", "name", "state", "type"} for row in data)
     text = CliRunner().invoke(cli, ["device", "list", *flags])
-    assert all(f"id-{state}  device-{state}  {state}  android" in text.stdout for state in ("ready", "stopped", "provisioning"))
+    assert all(f"id-{state}\tdevice-{state}\t{state}\tandroid" in text.stdout for state in ("ready", "stopped", "provisioning"))
 
 
 @pytest.mark.parametrize("runtime,expected", [("DeepSeek", {"base_url": "http://x"}),

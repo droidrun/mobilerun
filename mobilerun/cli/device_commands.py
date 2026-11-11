@@ -11,7 +11,14 @@ from contextlib import contextmanager
 import click
 
 from mobilerun.agent.utils.android_device import is_portal_http_url
-from mobilerun.cli.options import Group, device_options, emit, json_option, verbose_option
+from mobilerun.cli.options import (
+    Group,
+    device_options,
+    emit,
+    emit_rows,
+    json_option,
+    verbose_option,
+)
 from mobilerun.cli.selection import core_client, portal_token, select_device
 
 UI_FLAGS = ("clickable", "checkable", "checked", "editable", "focused", "scrollable", "selected")
@@ -222,7 +229,14 @@ def apps(system, json_output, **params):
     """List installed apps."""
     with device_driver(params) as device:
         result = device.list_apps(include_system_apps=system)
-        emit(result if json_output else json.dumps(result, indent=2), json_output=json_output)
+        if json_output:
+            emit(result, json_output=True)
+        else:
+            emit_rows(("APP_ID", "LABEL", "VERSION", "VERSION_CODE", "SYSTEM"), (
+                (_field(app, "app_id", "package_name", "bundle_id", "package"), app.get("label", ""), app.get("version_name", ""),
+                 app.get("version_code", ""), str(app.get("is_system_app", False)).lower())
+                for app in result
+            ))
 
 
 @device_cli.command()

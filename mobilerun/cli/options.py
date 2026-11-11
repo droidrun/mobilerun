@@ -14,6 +14,22 @@ from mobilerun_sdk import APIConnectionError, APIStatusError, APITimeoutError
 
 DEFAULT_API_URL = "https://api.mobilerun.ai/v1"
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+NO_LOCAL_DEVICES_HINT = (
+    "Connect a device over USB or run `mobilerun device pair`; "
+    "use `-t cloud` for cloud devices."
+)
+
+
+def local_device_hint(message):
+    """Add the recovery step for known local discovery errors."""
+    lowered = message.lower()
+    if any(text in lowered for text in (
+        "no connected android devices", "no devices", "no device connected",
+    )):
+        return message + "\n" + NO_LOCAL_DEVICES_HINT
+    if "unknown device" in lowered or ("device" in lowered and "not found" in lowered):
+        return message + "\nFind connected devices with `mobilerun device list`."
+    return message
 
 
 def _sdk_error(exc):
@@ -65,7 +81,13 @@ def convert_api_error(exc):
     elif status == 404 and "devices" in request.url.path.split("/"):
         hint = "Find device ids with `mobilerun device list -t cloud`."
     elif status is None:
-        hint = f"Check the API URL: {clean(request.url.scheme + '://' + request.url.host)}"
+        host = request.url.host
+        if ":" in host:
+            host = f"[{host}]"
+        origin = f"{request.url.scheme}://{host}"
+        if request.url.port is not None:
+            origin += f":{request.url.port}"
+        hint = f"Check the API URL from --api-url or MOBILERUN_API_BASE_URL: {clean(origin)}."
     if hint:
         text += f"\n{hint}"
     diagnostic = f"{request.method} {clean(request.url.path)}"
@@ -122,6 +144,8 @@ class Command(HelpLayout, click.Command):
                 return super().invoke(ctx)
         except (KeyboardInterrupt, asyncio.CancelledError, click.Abort):
             ctx.exit(130)
+        except click.exceptions.Exit:
+            raise
         except Exception as exc:
             converted = convert_api_error(exc)
             if converted:
@@ -134,6 +158,7 @@ class Command(HelpLayout, click.Command):
                     if ctx.params.get("verbose"):
                         traceback.print_exc(file=sys.stderr)
                     exc = click.ClickException(str(exc) or type(exc).__name__)
+                exc.message = local_device_hint(exc.message)
                 document = {"error": exc.message}
             if (not isinstance(exc, click.UsageError) and ctx.params.get("json_output")
                     and not ctx.obj["emitted"]):
@@ -270,3 +295,18 @@ def emit(value, *, json_output=False):
     click.echo(json.dumps(value, default=str) if json_output else value, file=output)
     if ctx and ctx.obj is not None and json_output:
         ctx.obj["emitted"] = True
+
+
+def emit_rows(headers, rows):
+    """Print tab-separated data, adding a header only on terminal stdout."""
+    ctx = click.get_current_context(silent=True)
+    output = ctx.obj.get("stdout") if ctx and ctx.obj else sys.stdout
+
+    def line(values):
+        return "\t".join(str(value if value is not None else "").replace("\t", " ")
+                         .replace("\r", " ").replace("\n", " ") for value in values)
+
+    if output.isatty():
+        emit(line(headers))
+    for row in rows:
+        emit(line(row))

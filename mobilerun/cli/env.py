@@ -96,4 +96,14 @@ def env(config_path, verbose, json_output):
         emit(rows, json_output=True)
     else:
         for row in rows:
-            emit(f"{row['variable']}={row['value']}  ({row['source']})")
+            value = row["value"]
+            if isinstance(value, str) and row["variable"] in {
+                "MOBILERUN_STREAM_SCREENSHOTS", "MOBILERUN_OAUTH_MANUAL",
+            }:
+                value = value.lower() in {"1", "true", "yes", "on"}
+            if isinstance(value, bool):
+                value = str(value).lower()
+            elif value is None:
+                value = ""
+            source = f"  ({row['source']})" if row["source"] != value else ""
+            emit(f"{row['variable']}={value}{source}")
