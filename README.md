@@ -72,144 +72,243 @@ Use the framework when you want to run the agent on your machine. Use [Mobilerun
 
 ## 📦 Installation
 
-> **Note:** Python 3.14 is not currently supported. Please use Python `>=3.11,<3.14`.
-
-Install Mobilerun with [`uv`](https://docs.astral.sh/uv/):
+Use Python 3.11–3.13. Python 3.14 is not supported.
+Install the CLI with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-# CLI usage
-uv tool install mobilerun
+uv tool install --python 3.13 mobilerun
 ```
 
+For Anthropic models, include the optional extra:
+
 ```bash
-# CLI + Python integration
+uv tool install --force --python 3.13 "mobilerun[anthropic]"
+```
+
+For Python integration, install into a virtual environment instead:
+
+```bash
+uv venv --python 3.13
 uv pip install mobilerun
 ```
 
-Most LLM providers are included by default. For Anthropic support, install the optional extra:
+## 🚀 Quickstart: local Android
+
+Install [Android SDK Platform-Tools](https://developer.android.com/studio/releases/platform-tools)
+so `adb` is on your PATH. Connect one device using either QR pairing or USB.
+
+**QR pairing:** on Android 11 or later, put the device and computer on the same Wi-Fi.
+Open Developer options → Wireless debugging → "Pair device with QR code", then scan:
 
 ```bash
-uv tool install "mobilerun[anthropic]"
+mobilerun device pair
 ```
 
-## 🚀 Quickstart
+Keep this command in a terminal. It prints the ready device serial after adb
+connects. The timeout is 120 seconds; `--timeout SECONDS` changes it.
+
+**USB:** enable Developer options and USB debugging, connect the device, and approve
+its debugging prompt. Check the connection:
 
 ```bash
-uv tool install mobilerun
+mobilerun device list
+```
+
+Install the Portal, check device access, configure an LLM provider, and run a task:
+
+```bash
 mobilerun device setup
-mobilerun configure
-mobilerun run "Open settings and turn on dark mode"
-```
-
-Before starting, make sure you have [ADB](https://developer.android.com/studio/releases/platform-tools) installed and an Android device with Developer options and USB debugging enabled. For iOS, set up [`mobilerun-ios`](https://docs.mobilerun.ai/framework/guides/device-setup) for an iPhone or the [iOS Portal](https://github.com/droidrun/ios-portal) app for the simulator.
-
-### 1. Install the Portal on your device
-
-```bash
-mobilerun device setup
-```
-
-This installs the Mobilerun Portal app, enables its accessibility service, and prepares the device for local control.
-
-### 2. Verify the connection
-
-```bash
 mobilerun device ping
-```
-
-You should see confirmation that the Portal is installed and accessible.
-
-### 3. Configure your LLM provider
-
-```bash
 mobilerun configure
+mobilerun run "Open Settings and report the Android version"
 ```
 
-The wizard walks you through choosing a provider, auth method, and model. You can also use provider environment variables such as `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, or `MINIMAX_API_KEY`.
+The setup command installs the Portal and enables its accessibility service.
+The configure wizard selects a provider, authentication method, and model.
+If more than one device is connected, pass `-d DEVICE_SERIAL` to each command
+that selects a device. Replace uppercase placeholders with your own values.
 
-### 4. Run your first command
+For iOS, follow the [device setup guide](https://docs.mobilerun.ai/framework/guides/device-setup)
+for `mobilerun-ios` over USB or the iOS Portal for the simulator.
 
-```bash
-mobilerun run "Open the settings app and tell me the Android version"
-```
+### Quickstart: cloud
 
-Useful run options:
-
-```bash
-mobilerun run "Open settings and turn on dark mode"
-mobilerun run "What app is currently open?" --vision
-mobilerun run "Find a contact named John and send him an email" --reasoning
-mobilerun run "Take a screenshot" --platform ios
-mobilerun run "Open Settings" --max-steps 30 --verbose
-```
-
-### CLI commands and environment
-
-```text
-mobilerun run "TASK"
-mobilerun device list|connect|disconnect|setup|ping
-mobilerun device tap|swipe|long-press|type|press|screenshot|ui|apps|start
-mobilerun auth login [SERVICE]
-mobilerun auth logout [SERVICE]
-mobilerun auth status
-mobilerun configure
-mobilerun macro replay|list
-mobilerun doctor
-mobilerun env
-```
-
-`mobilerun auth login` shows a sign-in QR code in the terminal; `--no-qr` suppresses it.
-`mobilerun device pair` pairs and connects an Android device by scanning its QR code under Developer options → Wireless debugging → "Pair device with QR code" on the same Wi-Fi, then prints the device serial.
-
-Use `-h` or `--help` on any command, and `-V` or `--version` for the version.
-Read commands and `run` accept `-j`/`--json`; stdout contains one JSON document,
-while progress and errors go to stderr. Failures exit 1, invalid usage exits 2,
-and interruption exits 130.
-
-Device commands, `run`, `doctor`, and macro replay share `-d`/`--device`,
-`-t`/`--target local|cloud`, `-P`/`--platform android|ios`, `-c`/`--config`,
-`-v`/`--verbose`, `--api-url`. `run` and macro replay also accept `--tcp`/`--no-tcp`. An explicit device
-selects its backend: an ADB serial, a Portal HTTP URL, or a cloud device id.
-Without a device, local commands auto-select; cloud commands require an id.
+Use an existing device in [Mobilerun Cloud](https://cloud.mobilerun.ai).
+Sign in and copy its id from the listing:
 
 ```bash
 mobilerun auth login
-mobilerun auth status -j
-mobilerun device list -t cloud -j
-mobilerun device ui -d "$DEVICE_ID" -j
-mobilerun run "Report the current app" -d "$DEVICE_ID" -j
-mobilerun auth login openai --no-browser
-mobilerun configure -p openai -m gpt-6.1-sol
-mobilerun run "Open settings" -p ollama -m llama3.2 -u http://localhost:11434 -s 20
-mobilerun macro replay trajectories/example -s 5 -n
-mobilerun env -j
+mobilerun device list -t cloud
 ```
 
-`auth login` and `auth logout` default to `mobilerun`; provider services are
-`openai`, `anthropic`, `gemini`, and `xai`. The configure wizard and `run -p`
-share these provider names: `openai`, `openai-oauth`, `anthropic`,
-`anthropic-oauth`, `gemini`, `gemini-oauth`, `xai`, `ollama`, `openai-like`,
-`minimax`, and `zai` (case-insensitive). `-u`/`--llm-url` sets the LLM endpoint;
-`--api-url` sets the cloud device API endpoint.
+Sign-in prints a link, a user code, and a QR code when stderr is a terminal.
+Scan the QR or use the link and code to approve access. This cloud sign-in is
+separate from the LLM provider configured above.
 
-| Variable | Meaning | Default / flag |
+Set the target and default device, replacing the placeholder with the listed id:
+
+```bash
+export MOBILERUN_TARGET=cloud
+export MOBILERUN_DEVICE="CLOUD_DEVICE_ID"
+mobilerun run "Open Settings and report the Android version" -d "$MOBILERUN_DEVICE"
+```
+
+The environment values also apply to later commands, so you can omit the device
+flag after setting the default. An explicit device selects its backend: a cloud
+id, an ADB serial, or a Portal HTTP URL. Without a device, the local target
+selects an attached device; the cloud target requires an id.
+
+### Command tree
+
+```text
+mobilerun
+├── run TASK
+├── device
+│   ├── list
+│   ├── pair
+│   ├── connect SERIAL
+│   ├── disconnect SERIAL
+│   ├── setup
+│   ├── ping
+│   ├── tap X Y
+│   ├── swipe X1 Y1 X2 Y2
+│   ├── long-press X Y
+│   ├── type TEXT
+│   ├── press BUTTON
+│   ├── screenshot
+│   ├── ui
+│   ├── apps
+│   └── start PACKAGE
+├── auth
+│   ├── login [SERVICE]
+│   ├── logout [SERVICE]
+│   └── status
+├── configure
+├── macro
+│   ├── replay PATH
+│   └── list [DIRECTORY]
+├── doctor
+└── env
+```
+
+The sign-in services are `mobilerun` (default), `openai`, `anthropic`, `gemini`,
+and `xai`. Provider sign-ins use the same auth group; the configure command
+runs the wizard. The provider choices in help include `openrouter` and
+`deepseek` for `run` only. See each command's help for its arguments and options.
+
+### Shared flags
+
+A short letter has one meaning. Options apply only to commands that list them
+in help; local pairing and TCP connect/disconnect do not accept device-selection
+flags. In the table, **device actions** means tap, swipe, long-press, type, press,
+screenshot, ui, apps, start, and ping.
+
+| Short | Long | Commands / meaning |
 | --- | --- | --- |
-| `MOBILERUN_TARGET` | Where to discover devices | `local`; `-t`/`--target` |
-| `MOBILERUN_DEVICE` | Serial, Portal URL, or cloud device id | Auto-select; `-d`/`--device` |
-| `MOBILERUN_CLOUD_API_KEY` | Cloud credential | Saved `auth login` credential |
-| `MOBILERUN_API_BASE_URL` | Cloud API URL | `https://api.mobilerun.ai/v1`; `--api-url` |
-| `MOBILERUN_AUTH_URL` | Sign-in URL | `https://cloud.mobilerun.ai/api/auth`; `--auth-url` |
-| `MOBILERUN_CONFIG` | Config file | User config directory; `-c`/`--config` |
-| `MOBILERUN_ANDROID_PORTAL_TOKEN` | Android Portal HTTP token | Configured token, if any |
-| `MOBILERUN_IOS_PORTAL_TOKEN` | iOS Portal HTTP token | Configured token, if any |
-| `MOBILERUN_DEBUG` | Verbose logs | Off; `-v`/`--verbose` |
-| `MOBILERUN_TELEMETRY_ENABLED` | Anonymous telemetry | `true`, subject to config policy |
+| `-h` | `--help` | Every command: show usage. |
+| `-V` | `--version` | Root: show the version. |
+| `-v` | `--verbose` | Every command: enable logs; off unless enabled in config or environment. |
+| `-d` | `--device` | Device actions, setup, run, doctor, macro replay: device serial, Portal URL, or cloud id. |
+| `-t` | `--target` | Device actions, list, run, doctor, macro replay: `local` (default) or `cloud`. |
+| `-P` | `--platform` | Device actions, run, doctor, macro replay: `android` or `ios`; otherwise use config. |
+| `-c` | `--config` | Device actions, setup, run, doctor, configure, env, macro replay: config file. |
+| `-j` | `--json` | Device list/ui/apps/screenshot, auth status, doctor, env, macro list, run: one JSON document. |
+| `-p` | `--provider` | Run, configure, macro replay: LLM provider. |
+| `-m` | `--model` | Run, configure, macro replay, supported provider logins: LLM model. |
+| `-u` | `--llm-url` | Run and configure: LLM endpoint, when supported by the provider. |
+| `-s` | `--max-steps` | Run and macro replay: step limit. |
+| `-T` | `--temperature` | Run: sampling temperature. |
+| `-a` | `--agent` | Run: installed external agent. |
+| `-r` | `--reasoning` / `--no-reasoning` | Run: enable or disable reasoning. |
+| `-n` | `--dry-run` | Macro replay: show actions without executing them. |
+| `-k` | `--api-key` | Configure: key for the selected LLM provider. |
+| — | `--api-url` | Device actions, list, run, doctor, macro replay: cloud API endpoint. |
+| — | `--auth-url` | Mobilerun login: sign-in endpoint. |
+| — | `--tcp` / `--no-tcp` | Run and macro replay: local Android TCP mode. |
+| — | `--no-qr` | Mobilerun login: suppress the QR code. |
 
-Flags override environment values, then config values and defaults. `mobilerun env`
-shows resolved values and their sources; secret values appear only as `set` or
-`not set`. Standard provider keys, `ANDROID_SERIAL`, `NO_COLOR`, `PHOENIX_URL`,
-and `PHOENIX_PROJECT_NAME` remain supported. `MOBILERUN_STREAM_SCREENSHOTS` and
-`MOBILERUN_OAUTH_MANUAL` control screenshot streaming and manual sign-in.
+### Environment
+
+For CLI options, flags override environment values, then config values and defaults.
+Inspect resolved values and sources with `mobilerun env`; it shows secrets only
+as `set` or `not set`. Provider authentication follows the selected provider's
+configuration and credential store.
+
+| Variable | Meaning | Default / fallback |
+| --- | --- | --- |
+| `MOBILERUN_TARGET` | Default target | `local` |
+| `MOBILERUN_DEVICE` | Default device serial, Portal URL, or cloud id | Configured serial, then local selection |
+| `MOBILERUN_CLOUD_API_KEY` | Cloud authentication | Saved Mobilerun sign-in credential |
+| `MOBILERUN_API_BASE_URL` | Cloud API endpoint | `https://api.mobilerun.ai/v1` |
+| `MOBILERUN_AUTH_URL` | Mobilerun login endpoint | `https://cloud.mobilerun.ai/api/auth` |
+| `MOBILERUN_CONFIG` | Config file | Platform user config directory |
+| `MOBILERUN_ANDROID_PORTAL_TOKEN` | Android Portal HTTP token | Config token only when its platform is Android |
+| `MOBILERUN_IOS_PORTAL_TOKEN` | iOS Portal HTTP token | Config token only when its platform is iOS |
+| `MOBILERUN_DEBUG` | Verbose logs | Config, otherwise off |
+| `MOBILERUN_TELEMETRY_ENABLED` | Anonymous telemetry | Enabled unless config or environment disables it |
+| `MOBILERUN_STREAM_SCREENSHOTS` | Stream agent screenshots | Off |
+| `MOBILERUN_OAUTH_MANUAL` | Use manual provider sign-in | Off; headless sessions may select a device flow |
+| `ANDROID_SERIAL` | Local ADB selection fallback | No value |
+| `NO_COLOR` | Disable terminal styling where supported | No value |
+| `PHOENIX_URL` | Phoenix trace endpoint | `http://0.0.0.0:6006` |
+| `PHOENIX_PROJECT_NAME` | Phoenix project | Empty |
+| `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `MINIMAX_API_KEY`, `ZAI_API_KEY` | LLM provider credentials | Selected provider configuration / saved credentials |
+| `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY` | Credentials for run-only providers | Provider defaults |
+
+### Scripting
+
+Stdout contains data. Progress and error messages go to stderr.
+The text UI output has one tab-separated row per element: index, class, text,
+resource id, bounds, and flags. Filter it with standard tools:
+
+```bash
+mobilerun device ui | grep -i 'settings'
+mobilerun device ui -j | jq '.a11y_tree'
+mobilerun device list -t cloud -j | jq '.[].device_id'
+```
+
+Install `jq` to use the JSON examples. UI text uses the filtered tree;
+`device ui --all` also includes empty layout containers. That option cannot
+be combined with JSON output.
+
+Exit codes are **0** for success, **1** for failure, **2** for invalid usage,
+and **130** for interruption. Read commands with JSON output return an error
+document on failure; API errors include the HTTP status and an optional code:
+
+```json
+{"error":"Device not found","status":404,"code":null}
+```
+
+Other errors contain only `error`. Usage errors and interruptions may leave
+stdout empty. The run command emits `success`, `reason`, and `steps` after a
+task, including a failed task; errors before execution use the error document.
+Check the command's exit status as well as its JSON.
+
+### Upgrading from 0.7
+
+The old spellings are removed; there are no aliases. Replace them as follows:
+
+| Before | After |
+| --- | --- |
+| `mobilerun devices` | `mobilerun device list` |
+| `mobilerun connect SERIAL`, `mobilerun disconnect SERIAL` | `mobilerun device connect SERIAL`, `mobilerun device disconnect SERIAL` |
+| `mobilerun setup`, `mobilerun ping` | `mobilerun device setup`, `mobilerun device ping` |
+| `mobilerun login`, `mobilerun logout`, `mobilerun whoami` | `mobilerun auth login`, `mobilerun auth logout`, `mobilerun auth status` |
+| `mobilerun configure openai`, `mobilerun configure anthropic`, `mobilerun configure gemini`, `mobilerun configure xai` | `mobilerun auth login SERVICE`; use `mobilerun configure -p PROVIDER` for the wizard |
+| Device selection `--device-id` | `-d` / `--device` |
+| Cloud `--base-url` | `--api-url` |
+| `--cloud`, `--ios` | `-t cloud`, `-P ios` |
+| `--debug` / `--no-debug` | `-v` / `--verbose`; omit to use config/default |
+| Run `--base_url`, `--api_base` | `-u` / `--llm-url` |
+| Run `--steps` | `-s` / `--max-steps` |
+| Run `--control-backend`, `--device-id` | `--backend`, `--backend-device` for visual remote control |
+| Run `--no-vision-only` | Omit `--vision-only` |
+| Setup `--path`, `-pv` | `--apk`, `--portal-version` |
+| Macro replay `-m` (step limit), `-t` (delay), `-s` (start step) | `-s` / `--max-steps`, `--delay`, `--start-from`; `-m` now selects a model |
+| `DROIDRUN_CONFIG`, `DROIDRUN_TELEMETRY_ENABLED` | `MOBILERUN_CONFIG`, `MOBILERUN_TELEMETRY_ENABLED` |
+| `DROIDRUN_STREAM_SCREENSHOTS`, `DROIDRUN_OAUTH_MANUAL` | `MOBILERUN_STREAM_SCREENSHOTS`, `MOBILERUN_OAUTH_MANUAL` |
+| `MOBILERUN_DEVICE_TOKEN` | Platform-specific Portal token variables in the environment table |
+| `phoenix_url`, `phoenix_project_name` | `PHOENIX_URL`, `PHOENIX_PROJECT_NAME` |
 
 Read the full [framework documentation](https://docs.mobilerun.ai/framework/quickstart).
 
