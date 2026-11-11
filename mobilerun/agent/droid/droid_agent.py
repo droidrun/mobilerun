@@ -115,10 +115,7 @@ from mobilerun.tools.filters import ConciseFilter, DetailedFilter
 from mobilerun.tools.formatters import IndexedFormatter
 from mobilerun.tools.ui.ios_provider import IOSStateProvider
 from mobilerun.tools.ui.provider import AndroidStateProvider
-from mobilerun.tools.ui.screenshot_provider import (
-    DECISION_GRID_CELLS,
-    ScreenshotOnlyStateProvider,
-)
+from mobilerun.tools.ui.screenshot_provider import ScreenshotOnlyStateProvider
 
 if TYPE_CHECKING:
     from mobilerun_core_local.driver.base import DeviceDriver
@@ -850,9 +847,6 @@ class MobileAgent(Workflow):
                 vision_resize_policy=vision_resize_policy,
                 use_normalized=use_normalized,
             )
-            if action_selector.requires_action_candidates:
-                # Decision models choose labelled grid cells instead of elements.
-                self.state_provider.action_grid_cells = DECISION_GRID_CELLS
         elif is_ios_portal_http:
             # The --local portal serves the Android-shaped state (a11y_tree
             # node JSON + point-space screen_bounds), so it pairs with the

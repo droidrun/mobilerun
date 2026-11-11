@@ -20,8 +20,6 @@ from mobilerun_core_local.driver.base import DeviceDisconnectedError
 from mobilerun.tools.helpers.coordinate import NORMALIZED_STATE_NOTE
 from mobilerun.tools.helpers.images import (
     fit_dimensions_to_max_side,
-    grid_cell_center,
-    grid_cell_label,
     resize_image_to_dimensions_with_grid,
     resize_image_to_max_side_with_grid,
 )
@@ -289,7 +287,7 @@ class StateProvider:
 
         options = list(self.get_action_candidates(ctx.ui)) if ctx.ui is not None else []
         if "click_at" in tools:
-            options.extend(self._grid_candidates(ctx.ui))
+            options.extend(self._tap_candidates(ctx.ui))
         if not include_device_actions:
             return tuple(options)
 
@@ -365,30 +363,20 @@ class StateProvider:
             return None
         return width, height
 
-    def _grid_candidates(self, state: UIState | None) -> list[ActionCandidate]:
+    def _tap_candidates(self, state: UIState | None) -> list[ActionCandidate]:
+        """Screenshot-only screens have no elements; the model locates the tap."""
         from mobilerun.agent.fast_agent.xml_parser import ToolCall
         from mobilerun.agent.selectors.base import ActionCandidate
 
-        cells = getattr(self, "model_screenshot_cells", None)
         space = self._action_space(state)
-        if not cells or space is None:
+        if not getattr(self, "requires_coordinate_tools", False) or space is None:
             return []
-        columns, rows = cells
         return [
             ActionCandidate(
-                ToolCall(
-                    "click_at",
-                    dict(
-                        zip(
-                            ("x", "y"),
-                            grid_cell_center(column, row, columns, rows, *space),
-                        )
-                    ),
-                ),
-                f"Tap grid cell {grid_cell_label(column, row)}",
+                ToolCall("click_at"),
+                "Tap an element on the screen (located on the screenshot)",
+                point_space=space,
             )
-            for row in range(rows)
-            for column in range(columns)
         ]
 
     def _swipe_candidates(self, state: UIState | None) -> list[ActionCandidate]:
@@ -525,10 +513,9 @@ def resize_model_screenshot_with_grid(state_provider: Any, screenshot: bytes) ->
     height = getattr(state_provider, "model_screenshot_height", None)
     # A pixel grid contradicts a normalized coordinate contract.
     divisions = 10 if getattr(state_provider, "model_screenshot_grid", True) else 0
-    cells = getattr(state_provider, "model_screenshot_cells", None)
     if width and height:
         return resize_image_to_dimensions_with_grid(
-            screenshot, width, height, divisions=divisions, cells=cells
+            screenshot, width, height, divisions=divisions
         )
     return resize_image_to_max_side_with_grid(screenshot, divisions=divisions)
 
@@ -546,7 +533,6 @@ async def resize_model_screenshot_async(
             state_provider, "model_screenshot_height", None
         ),
         model_screenshot_grid=getattr(state_provider, "model_screenshot_grid", True),
-        model_screenshot_cells=getattr(state_provider, "model_screenshot_cells", None),
     )
     return await asyncio.to_thread(
         resize_model_screenshot_with_grid, geometry, screenshot

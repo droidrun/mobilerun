@@ -22,12 +22,8 @@ from mobilerun.agent.selectors import (
     SelectionRequest,
 )
 from mobilerun.agent.utils.signatures import build_tool_registry
-from mobilerun.tools.helpers.images import grid_shape, image_dimensions
-from mobilerun.tools.ui.provider import StateProvider, resize_model_screenshot_async
-from mobilerun.tools.ui.screenshot_provider import (
-    DECISION_GRID_CELLS,
-    ScreenshotOnlyStateProvider,
-)
+from mobilerun.tools.ui.provider import StateProvider
+from mobilerun.tools.ui.screenshot_provider import ScreenshotOnlyStateProvider
 from mobilerun.tools.ui.state import UIState
 
 
@@ -416,26 +412,19 @@ def _png(size=(1080, 2400)):
     return output.getvalue()
 
 
-@pytest.mark.parametrize(
-    "size,cells",
-    [((1080, 2400), (8, 20)), ((2400, 1080), (18, 8)), ((1000, 1000), (12, 13))],
-)
-def test_grid_shape_uses_near_square_cells_within_budget(size, cells):
-    assert grid_shape(*size, 160) == cells
-    columns, rows = cells
-    assert columns * rows <= 160
-    assert 0.6 < (size[0] / columns) / (size[1] / rows) < 1.6
+def _screenshot_driver():
+    driver = SimpleNamespace(
+        supported=set(), supported_buttons=set(), screenshot=AsyncMock()
+    )
+    driver.screenshot.return_value = _png()
+    return driver
 
 
 @pytest.mark.parametrize("use_normalized", [False, True])
-def test_screenshot_only_grid_cells_become_click_at_choices(use_normalized):
+def test_screenshot_only_offers_one_located_tap(use_normalized):
     async def run():
-        driver = SimpleNamespace(
-            supported=set(), supported_buttons=set(), screenshot=AsyncMock()
-        )
-        driver.screenshot.return_value = _png()
+        driver = _screenshot_driver()
         provider = ScreenshotOnlyStateProvider(driver, use_normalized=use_normalized)
-        provider.action_grid_cells = 160
         state = await provider.get_state()
         ctx = ActionContext(driver, state, MobileAgentState(), provider)
 
@@ -443,56 +432,32 @@ def test_screenshot_only_grid_cells_become_click_at_choices(use_normalized):
             ctx, {"click_at": {}}, include_device_actions=True
         )
 
-        assert provider.model_screenshot_cells == (8, 20)
-        assert "8x20 labelled cells" in state.formatted_text
-        assert "not grid-cell numbers" not in state.formatted_text
-        assert ("0-1000 normalized" in state.formatted_text) is use_normalized
-        assert ("x=/y= labels" in state.formatted_text) is not use_normalized
-        assert len(options) == 160
-        assert options[0].description == "Tap grid cell A1"
-        assert options[-1].description == "Tap grid cell H20"
         space = (
             (1000, 1000)
             if use_normalized
             else (state.screen_width, state.screen_height)
         )
-        assert options[0].action == ToolCall(
-            "click_at", {"x": space[0] // 16, "y": space[1] // 40}
-        )
-        for option in options:
-            assert 0 <= option.action.parameters["x"] < space[0]
-            assert 0 <= option.action.parameters["y"] < space[1]
-
-        drawn = await resize_model_screenshot_async(provider, _png())
-        provider.model_screenshot_cells = None
-        plain = await resize_model_screenshot_async(provider, _png())
-        assert image_dimensions(drawn) == image_dimensions(plain)
-        assert drawn != plain
+        assert [(o.action, o.point_space) for o in options] == [
+            (ToolCall("click_at"), space)
+        ]
 
     asyncio.run(run())
 
 
-def test_grid_is_off_without_a_cell_budget():
+def test_accessibility_providers_offer_no_located_tap():
     async def run():
-        driver = SimpleNamespace(
-            supported=set(), supported_buttons=set(), screenshot=AsyncMock()
+        ctx = _context()
+        options = await ctx.state_provider.build_action_candidates(
+            ctx, {"click": {}, "click_at": {}}, include_device_actions=True
         )
-        driver.screenshot.return_value = _png()
-        provider = ScreenshotOnlyStateProvider(driver)
-        state = await provider.get_state()
-        ctx = ActionContext(driver, state, MobileAgentState(), provider)
-
-        assert provider.model_screenshot_cells is None
-        assert "not grid-cell numbers" in state.formatted_text
-        assert await provider.build_action_candidates(ctx, {"click_at": {}}) == ()
+        assert options
+        assert not any(option.point_space for option in options)
 
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("decision", [True, False])
-def test_vision_only_turns_on_the_grid_only_for_decision_selectors(
-    monkeypatch, decision
-):
+@pytest.mark.parametrize("injected", [False, True])
+def test_vision_only_decision_agent_offers_located_taps(monkeypatch, injected):
     from mobilerun.agent.droid import droid_agent
 
     async def run():
@@ -503,22 +468,29 @@ def test_vision_only_turns_on_the_grid_only_for_decision_selectors(
         ctx.driver.get_date = AsyncMock(return_value="2026-10-23")
         ctx.driver.screenshot = AsyncMock(return_value=_png())
         config = MobileConfig()
-        config.agent.vision_only = True
+        config.agent.vision_only = not injected
         config.telemetry.enabled = False
-        selector = (
-            DecisionSelector(SimpleNamespace(decide=AsyncMock()))
-            if decision
-            else StubSelector(requires_action_llm=False)
-        )
         agent = MobileAgent(
-            "Calculate", config=config, action_selectors=selector, driver=ctx.driver
+            "Calculate",
+            config=config,
+            action_selectors=DecisionSelector(SimpleNamespace(decide=AsyncMock())),
+            driver=ctx.driver,
+            state_provider=(
+                ScreenshotOnlyStateProvider(ctx.driver) if injected else None
+            ),
         )
         with patch.object(Context, "write_event_to_stream"):
             await agent.start_handler(Context(agent), StartEvent())
 
-        assert isinstance(agent.state_provider, ScreenshotOnlyStateProvider)
-        expected = DECISION_GRID_CELLS if decision else None
-        assert agent.state_provider.action_grid_cells == expected
+        provider = agent.state_provider
+        assert isinstance(provider, ScreenshotOnlyStateProvider)
+        state = await provider.get_state()
+        options = await provider.build_action_candidates(
+            ActionContext(ctx.driver, state, MobileAgentState(), provider),
+            agent.registry.get_signatures(),
+            include_device_actions=True,
+        )
+        assert [o.action.name for o in options if o.point_space] == ["click_at"]
 
     asyncio.run(run())
 

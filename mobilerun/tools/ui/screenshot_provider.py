@@ -4,22 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
-from mobilerun.tools.helpers.images import (
-    fit_dimensions_to_max_side,
-    grid_cell_label,
-    grid_shape,
-    image_dimensions,
-)
+from mobilerun.tools.helpers.images import fit_dimensions_to_max_side, image_dimensions
 from mobilerun.tools.ui.provider import StateProvider
 from mobilerun.tools.ui.state import UIState
 
 if TYPE_CHECKING:
     from mobilerun_core_local.driver.base import DeviceDriver
 
-
-# Grid cells offered to decision models (9x22 on a phone), leaving room
-# under TypeSafe's 252 options for navigation, delegation and apps.
-DECISION_GRID_CELLS = 200
 
 _SCREENSHOT_ONLY_GUIDANCE = (
     "Prefer click_at on the center of visible text or controls, especially in "
@@ -53,9 +44,6 @@ class ScreenshotOnlyStateProvider(StateProvider):
         self.model_screenshot_grid = not use_normalized
         self.model_screenshot_width: Optional[int] = None
         self.model_screenshot_height: Optional[int] = None
-        # Cell budget for decision models that tap labelled grid cells.
-        self.action_grid_cells: Optional[int] = None
-        self.model_screenshot_cells: Optional[tuple[int, int]] = None
 
     async def get_state(self) -> UIState:
         screenshot = await self.driver.screenshot()
@@ -76,23 +64,6 @@ class ScreenshotOnlyStateProvider(StateProvider):
             )
         self.model_screenshot_width = screen_width
         self.model_screenshot_height = screen_height
-        grid_note = ""
-        if self.action_grid_cells:
-            columns, rows = self.model_screenshot_cells = grid_shape(
-                screen_width, screen_height, self.action_grid_cells
-            )
-            grid_note = (
-                f" The screenshot is divided into {columns}x{rows} labelled cells, "
-                f"from A1 at the top-left to {grid_cell_label(columns - 1, rows - 1)} "
-                "at the bottom-right; 'Tap grid cell C7' taps the centre of cell C7. "
-                + (
-                    "When writing coordinates, use the 0-1000 normalized space, "
-                    "not cell labels."
-                    if self.use_normalized
-                    else "When writing coordinates, use screenshot pixels, not cell "
-                    "labels; the x=/y= labels along the edges mark the cell lines."
-                )
-            )
         phone_state = {
             "observationMode": "screenshot_only",
             "accessibilityTree": False,
@@ -107,8 +78,7 @@ class ScreenshotOnlyStateProvider(StateProvider):
                     "coordinate actions in normalized coordinates: both axes run "
                     "from 0 to 1000 across the screenshot, whatever the image "
                     "size, so (0,0) is top-left, (500,500) is the center and "
-                    f"(1000,1000) is bottom-right.{grid_note} "
-                    f"{_SCREENSHOT_ONLY_GUIDANCE}"
+                    f"(1000,1000) is bottom-right. {_SCREENSHOT_ONLY_GUIDANCE}"
                 ),
                 focused_text="",
                 phone_state=phone_state,
@@ -127,14 +97,10 @@ class ScreenshotOnlyStateProvider(StateProvider):
                 "Screenshot-only mode is active. There is no accessibility tree "
                 "or element index list. Inspect the screenshot and use coordinate "
                 "actions in the screenshot pixel coordinates shown to the model. "
-                + (
-                    grid_note.lstrip() + " "
-                    if grid_note
-                    else "The screenshot includes a coordinate grid for visual "
-                    "reference; use the underlying screenshot pixel coordinates, "
-                    "not grid-cell numbers. "
-                )
-                + f"The screenshot shown to the model is {screen_width}x{screen_height}; "
+                "The screenshot includes a coordinate grid for visual reference; "
+                "use the underlying screenshot pixel coordinates, not grid-cell "
+                "numbers. "
+                f"The screenshot shown to the model is {screen_width}x{screen_height}; "
                 "(0,0) is top-left and "
                 f"({max_x},{max_y}) is bottom-right. {_SCREENSHOT_ONLY_GUIDANCE}"
             ),

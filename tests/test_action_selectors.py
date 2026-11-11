@@ -345,6 +345,46 @@ def test_decision_caps_options_and_keeps_screen_actions_first(caplog, monkeypatc
     assert "1 long_press, 1 open_app" in caplog.text
 
 
+def _located_request(screenshot=b"image"):
+    return SelectionRequest(
+        "Select",
+        screenshot=screenshot,
+        tools={"click_at": {}, "system_button": {}},
+        options=(
+            ActionCandidate(ToolCall("system_button", {"button": "back"}), "Back"),
+            ActionCandidate(ToolCall("click_at"), "Tap on screen", (706, 1568)),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "point,expected", [((0.5, 0.25), (353, 392)), ((1.0, 1.0), (705, 1567))]
+)
+def test_decision_places_a_located_tap_in_the_action_space(point, expected):
+    model = _model(Decision(1, point=point))
+    model.locates_points = True
+    selection = asyncio.run(DecisionSelector(model).select(_located_request()))
+    assert selection.actions == [ToolCall("click_at", dict(zip("xy", expected)))]
+    assert selection.description == f"Tap at ({expected[0]}, {expected[1]})"
+
+
+@pytest.mark.parametrize("locates,screenshot", [(False, b"image"), (True, None)])
+def test_decision_drops_located_taps_it_cannot_resolve(locates, screenshot):
+    model = _model(Decision(0))
+    model.locates_points = locates
+    asyncio.run(DecisionSelector(model).select(_located_request(screenshot)))
+    supplied = model.decide.call_args.args[0].options
+    assert [option.action.name for option in supplied] == ["system_button"]
+
+
+@pytest.mark.parametrize("point", [None, (0.5,), (1.5, 0.5), (float("nan"), 0.1)])
+def test_decision_rejects_invalid_located_points(point):
+    model = _model(Decision(1, point=point))
+    model.locates_points = True
+    with pytest.raises(ValueError, match="located point"):
+        asyncio.run(DecisionSelector(model).select(_located_request()))
+
+
 @pytest.mark.parametrize("index", [-1, 1, True, "0", 0.5])
 def test_decision_rejects_invalid_indices(index):
     request = SelectionRequest(
@@ -391,6 +431,41 @@ def test_decision_only_fast_agent_executes_and_completes(success):
         click.assert_awaited_once_with(index=2, ctx=action_ctx)
         assert model.decide.call_args.args[0].goal == "Select Bob"
         assert "Selected" in str(model.decide.call_args.args[0].history)
+
+    asyncio.run(run())
+
+
+def test_fast_agent_gives_decision_models_the_clean_screenshot(monkeypatch):
+    from mobilerun.agent.fast_agent import fast_agent
+
+    async def run():
+        config, registry, action_ctx, shared, provider, _ = _dependencies()
+        config.fast_agent.vision = True
+        action_ctx.driver.screenshot = AsyncMock(return_value=b"clean")
+        monkeypatch.setattr(
+            fast_agent,
+            "resize_model_screenshot_async",
+            AsyncMock(return_value=b"grounded"),
+        )
+        model = _model(Decision(success=True, message="Done"))
+        agent = FastAgent(
+            action_selector=DecisionSelector(model),
+            agent_config=config,
+            registry=registry,
+            action_ctx=action_ctx,
+            state_provider=provider,
+            shared_state=shared,
+        )
+        await agent.run(input="Select Bob")
+        request = model.decide.call_args.args[0]
+        assert request.screenshot == b"clean"
+        images = [
+            block.image
+            for message in request.messages
+            for block in message.blocks
+            if hasattr(block, "image") and block.image
+        ]
+        assert images == [b"grounded"]
 
     asyncio.run(run())
 

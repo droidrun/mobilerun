@@ -45,6 +45,7 @@ def sdk(monkeypatch):
         "typesafe_sdk",
         SimpleNamespace(
             AsyncTypeSafeClient=factory,
+            Box=lambda **kwargs: kwargs,
             Choice=lambda **kwargs: kwargs,
             Image=lambda data: SimpleNamespace(data=data),
         ),
@@ -115,9 +116,9 @@ def test_screenshot_keeps_full_image_when_padding():
     output = BytesIO()
     original.save(output, format="PNG")
     with Image.open(BytesIO(_prepare_screenshot(output.getvalue()))) as prepared:
-        assert prepared.getpixel((140, 0))[0] >= 250
-        assert prepared.getpixel((140, 1567))[0] >= 250
-        assert prepared.getpixel((0, 784)) == (255, 255, 255)
+        assert prepared.getpixel((30, 0))[0] >= 250
+        assert prepared.getpixel((30, 1567))[0] >= 250
+        assert prepared.getpixel((279, 784)) == (255, 255, 255)
 
 
 def test_screenshot_rejects_invalid_image():
@@ -271,6 +272,54 @@ def test_opaque_choice_labels_preserve_actions_with_duplicate_descriptions(sdk):
     assert criteria["action_0"]["parameters"] == {"index": 7}
     assert criteria["action_1"]["parameters"] == {"index": 12}
     assert criteria["action_0"]["description"] == criteria["action_1"]["description"]
+
+
+@pytest.mark.parametrize(
+    "size,box,point",
+    [
+        ((1080, 2400), (0.2, 0.3, 0.6, 0.8), (0.7, 0.25)),
+        # 100x2400 is sent as 65x1568 padded to 280 wide on the right.
+        ((100, 2400), (0.2, 0.3, 0.1, 0.12), (0.11 * 280 / 65, 0.25)),
+    ],
+)
+def test_located_tap_asks_box_and_maps_its_centre(sdk, size, box, point):
+    top, bottom, left, right = box
+    sdk.client.system_one.return_value.choices["action"].choice = "action_1"
+    sdk.client.system_one.return_value.boxes = {
+        "target": SimpleNamespace(
+            box=SimpleNamespace(top=top, bottom=bottom, left=left, right=right),
+            confidence=0.4,
+        )
+    }
+    options = (
+        ActionCandidate(ToolCall("system_button", {"button": "back"}), "Back"),
+        ActionCandidate(ToolCall("click_at"), "Tap on screen", (706, 1568)),
+    )
+    request = _request(options=options, tools={"click_at": {}}, screenshot=_image(size))
+
+    decision = asyncio.run(TypeSafeDecisionModel().decide(request))
+
+    assert decision.option_index == 1
+    assert decision.point == pytest.approx(point)
+    questions = sdk.client.system_one.call_args.kwargs["questions"]
+    assert "element to tap" in questions["target"]["instructions"]
+
+
+def test_located_tap_without_a_box_is_rejected(sdk):
+    sdk.client.system_one.return_value.boxes = {}
+    options = (ActionCandidate(ToolCall("click_at"), "Tap on screen", (706, 1568)),)
+    request = _request(
+        options=options, tools={"click_at": {}}, screenshot=_image((1080, 2400))
+    )
+    with pytest.raises(ValueError, match="did not locate"):
+        asyncio.run(TypeSafeDecisionModel().decide(request))
+
+
+def test_box_is_asked_only_for_located_taps(sdk):
+    asyncio.run(
+        TypeSafeDecisionModel().decide(_request(screenshot=_image((1080, 2400))))
+    )
+    assert set(sdk.client.system_one.call_args.kwargs["questions"]) == {"action"}
 
 
 def test_choice_limit_is_enforced_before_opening_a_client(sdk):

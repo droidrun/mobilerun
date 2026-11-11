@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Protocol
@@ -22,6 +23,9 @@ class Decision:
     thought: str = ""
     success: bool | None = None
     message: str = ""
+    # Located tap as (x, y) fractions of the screenshot, for options that
+    # leave their point to the model.
+    point: tuple[float, float] | None = None
 
 
 class DecisionModel(Protocol):
@@ -52,6 +56,23 @@ def _cap_options(
     return tuple(options[i] for i in kept)
 
 
+def _place(
+    point: tuple[float, float] | None, space: tuple[float, float]
+) -> tuple[int, int]:
+    """Map a located (x, y) screenshot fraction into the action's space."""
+    if (
+        point is None
+        or len(point) != 2
+        or not all(math.isfinite(value) and 0 <= value <= 1 for value in point)
+    ):
+        raise ValueError(f"Invalid located point: {point}")
+    x, y = (
+        min(math.floor(value * size), math.ceil(size) - 1)
+        for value, size in zip(point, space)
+    )
+    return x, y
+
+
 class DecisionSelector(BaseActionSelector):
     requires_action_candidates = True
 
@@ -79,6 +100,10 @@ class DecisionSelector(BaseActionSelector):
                 "Decision selection requires non-empty options in the request"
             )
         options = tuple(o for o in request.options if o.action.name in request.tools)
+        if request.screenshot is None or not getattr(
+            self.model, "locates_points", False
+        ):
+            options = tuple(o for o in options if o.point_space is None)
         if not options:
             raise ValueError("No decision options match the available tools")
         options = _cap_options(options, getattr(self.model, "max_options", None))
@@ -119,8 +144,13 @@ class DecisionSelector(BaseActionSelector):
         if type(index) is not int or not 0 <= index < len(options):
             raise ValueError(f"Invalid decision option index: {index}")
         option = options[index]
+        action, description = option.action, option.description
+        if option.point_space is not None:
+            x, y = _place(decision.point, option.point_space)
+            action = ToolCall(action.name, {**action.parameters, "x": x, "y": y})
+            description = f"Tap at ({x}, {y})"
         return ActionSelection(
-            actions=[option.action],
+            actions=[action],
             thought=decision.thought,
-            description=option.description,
+            description=description,
         )

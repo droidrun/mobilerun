@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 class ActionCandidate:
     action: ToolCall
     description: str
+    # Set when the decision model locates the action's x/y on the screenshot:
+    # the (width, height) of the coordinate space that point is written in.
+    point_space: tuple[float, float] | None = None
 
 
 @dataclass
@@ -56,7 +59,7 @@ class SelectionRequest:
             "registered_tools": set(self.tools),
             "can_type": bool(available_tools & {"type", "type_text"}),
             "can_scroll": "swipe" in available_tools,
-            "can_tap_grid": "click_at" in available_tools,
+            "can_locate": any(option.point_space for option in self.options or ()),
             "can_complete": can_complete,
             "vision": self.screenshot is not None,
             "variables": self.variables,

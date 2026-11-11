@@ -17,8 +17,8 @@ Only tools with concrete candidates are usable now; a registered tool without a 
 {% if can_scroll %}
 - Use the offered swipe actions to browse lists and reveal off-screen items. Swipe up to scroll down; swipe down to scroll up. Choose only directions offered in the current choices, then inspect the updated UI.
 {% endif %}
-{% if can_tap_grid %}
-- The screenshot is divided into labelled grid cells. "Tap grid cell C7" taps the centre of the cell labelled C7. Pick the cell whose centre lies on the intended control; for a small control, pick the cell covering most of it. If a tap left the screen unchanged, do not tap the same cell again.
+{% if can_locate %}
+- To tap a control visible on the screenshot, choose the on-screen tap; its position is located on the screenshot as the control that advances the goal. If a tap left the screen unchanged, try a different route.
 {% endif %}
 {% if 'open_app' in available_tools %}
 - Opening an app may bring its existing screen to the foreground, not reset it to its main page. If the app is already showing an unhelpful screen, navigate within it instead of repeatedly reopening it.

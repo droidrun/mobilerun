@@ -31,6 +31,10 @@ async def _log_request_progress(started: float) -> None:
 
 
 def _prepare_screenshot(screenshot: bytes) -> bytes:
+    return _prepare_image(screenshot)[0]
+
+
+def _prepare_image(screenshot: bytes) -> tuple[bytes, tuple[float, float]]:
     """Fit TypeSafe's 280–1568px per-side limits without cropping the UI.
 
     https://docs.typesafe.ai/images#limits
@@ -53,16 +57,23 @@ def _prepare_screenshot(screenshot: bytes) -> bytes:
     if size != image.size:
         image = image.resize(size, PILImage.Resampling.LANCZOS)
     # Very narrow/tall images cannot satisfy both limits by scaling alone.
-    image = ImageOps.pad(image, (max(280, size[0]), max(280, size[1])), color="white")
+    padded = (max(280, size[0]), max(280, size[1]))
+    image = ImageOps.pad(image, padded, color="white", centering=(0, 0))
     output = BytesIO()
     # Full-screen PNGs with wallpaper and coordinate grids can exceed 700 KB.
     # Baseline JPEG is supported by TypeSafe and keeps the same dimensions and
     # full UI while substantially reducing upload time on slow connections.
     image.save(output, format="JPEG", quality=85, optimize=True, progressive=False)
-    return output.getvalue()
+    # Share of the sent image the screenshot covers; padding is right/bottom.
+    return output.getvalue(), (size[0] / padded[0], size[1] / padded[1])
 
 
 MAX_CHOICES = 255
+
+
+_LOCATE_INSTRUCTIONS = (
+    "If the chosen action taps an on-screen element, the element to tap."
+)
 
 
 class TypeSafeDecisionModel:
@@ -75,6 +86,8 @@ class TypeSafeDecisionModel:
     screenshot_max_side = 1568
     # A Choice accepts 255 options, three of which are abstain and completion.
     max_options = MAX_CHOICES - 3
+    # Box locates on-screen taps, so screenshot-only screens need no grid.
+    locates_points = True
 
     def __init__(
         self,
@@ -147,11 +160,16 @@ class TypeSafeDecisionModel:
                 phone_state=request.state.phone_state,
             )
         request_kwargs: dict[str, Any] = {}
+        questions: dict[str, Any] = {}
         if request.screenshot is not None:
             from typesafe_sdk import Image
 
-            prepared_screenshot = _prepare_screenshot(request.screenshot)
+            prepared_screenshot, coverage = _prepare_image(request.screenshot)
             state["screenshot"] = Image(prepared_screenshot)
+            if any(option.point_space for option in request.options):
+                from typesafe_sdk import Box
+
+                questions["target"] = Box(instructions=_LOCATE_INSTRUCTIONS)
             # Vision is already explicitly enabled by the caller. TypeSafe also
             # requires this per-request opt-in for its experimental image API.
             request_kwargs["extra_headers"] = {"TypeSafe-Danger-Zone-Images": "true"}
@@ -179,7 +197,8 @@ class TypeSafeDecisionModel:
                 result = await client.system_one(
                     state=state,
                     questions={
-                        "action": Choice(instructions=instructions, criteria=criteria)
+                        "action": Choice(instructions=instructions, criteria=criteria),
+                        **questions,
                     },
                     **request_kwargs,
                 )
@@ -188,10 +207,16 @@ class TypeSafeDecisionModel:
             with suppress(asyncio.CancelledError):
                 await progress
         answer = result.choices.get("action")
+        target = result.boxes.get("target") if questions else None
         logger.info(
-            "Jev returned %s (confidence=%s) in %.2fs.",
+            "Jev returned %s (confidence=%s)%s in %.2fs.",
             getattr(answer, "choice", "<missing>"),
             getattr(answer, "confidence", None),
+            (
+                f", target {target.box} (confidence={target.confidence})"
+                if target is not None
+                else ""
+            ),
             time.monotonic() - started,
         )
         if answer is None or answer.choice not in criteria:
@@ -211,4 +236,16 @@ class TypeSafeDecisionModel:
                     else "Goal cannot be achieved with the available actions."
                 ),
             )
-        return Decision(option_index=indices[answer.choice])
+        index = indices[answer.choice]
+        if request.options[index].point_space is None:
+            return Decision(option_index=index)
+        if target is None:
+            raise ValueError("TypeSafe did not locate the on-screen tap")
+        box = target.box
+        return Decision(
+            option_index=index,
+            point=(
+                min(1.0, (box.left + box.right) / 2 / coverage[0]),
+                min(1.0, (box.top + box.bottom) / 2 / coverage[1]),
+            ),
+        )

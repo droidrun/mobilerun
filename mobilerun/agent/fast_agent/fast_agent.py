@@ -440,11 +440,13 @@ class FastAgent(Workflow):
 
             # Screenshot → last user message
             if self.vision and screenshot:
-                screenshot = await resize_model_screenshot_async(
-                    self.state_provider, screenshot
-                )
+                # LLMs get the grounded copy; decision models get the clean one.
                 messages_to_send[last_user_idx].blocks.append(
-                    ImageBlock(image=screenshot)
+                    ImageBlock(
+                        image=await resize_model_screenshot_async(
+                            self.state_provider, screenshot
+                        )
+                    )
                 )
 
             # Previous device state → second-to-last user message

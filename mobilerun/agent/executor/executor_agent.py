@@ -157,10 +157,11 @@ class ExecutorAgent(Workflow):
         if self.vision:
             screenshot = self.shared_state.screenshot
             if screenshot is not None:
-                screenshot = await resize_model_screenshot_async(
+                # LLMs get the grounded copy; decision models get the clean one.
+                model_screenshot = await resize_model_screenshot_async(
                     self.action_ctx.state_provider, screenshot
                 )
-                messages[0].blocks.append(ImageBlock(image=screenshot))
+                messages[0].blocks.append(ImageBlock(image=model_screenshot))
                 logger.debug("📸 Using screenshot for Executor")
             else:
                 logger.warning("⚠️ Vision enabled but no screenshot available")
