@@ -934,3 +934,218 @@ def test_completion_never_suggests_command_corrections(words, cword):
     assert result.stderr == ""
     assert "Did you mean" not in result.stdout
     assert "to sign in" not in result.stdout
+
+
+@pytest.fixture(
+    params=[
+        (
+            "planted-env-key",
+            "planted-saved-token",
+            "planted-env-key",
+            "env",
+            True,
+            "env key",
+            "env",
+            True,
+            "The key in MOBILERUN_CLOUD_API_KEY was rejected. "
+            "A saved sign-in exists; unset the variable to use it.",
+        ),
+        (
+            "planted-env-key",
+            None,
+            "planted-env-key",
+            "env",
+            False,
+            "env key",
+            "env",
+            False,
+            "The key in MOBILERUN_CLOUD_API_KEY was rejected. "
+            "Check the key, or unset the variable and run `mobilerun auth login`.",
+        ),
+        (
+            None,
+            "planted-saved-token",
+            "planted-saved-token",
+            "login",
+            True,
+            "saved sign-in",
+            "credential file",
+            False,
+            "The saved sign-in was rejected or has expired. Run `mobilerun auth login`.",
+        ),
+    ]
+)
+def cloud_credential_case(request, monkeypatch):
+    env, saved, key, source, has_login, label, env_source, overrides, hint = request.param
+    monkeypatch.delenv("MOBILERUN_CLOUD_API_KEY", raising=False)
+    if env is not None:
+        monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", env)
+    credentials = {"access_token": saved} if saved else None
+    monkeypatch.setattr(deviceauth, "load_credentials", lambda: credentials)
+    return SimpleNamespace(
+        key=key,
+        source=source,
+        has_login=has_login,
+        label=label,
+        env_source=env_source,
+        overrides=overrides,
+        hint=hint,
+    )
+
+
+@pytest.fixture
+def rejected_cloud_command(monkeypatch, cloud_credential_case):
+    def invoke(status, flags):
+        request = httpx.Request(
+            "GET",
+            "http://127.0.0.1:9/v1/devices",
+            headers={
+                "Authorization": "Bearer " + cloud_credential_case.key,
+            },
+        )
+        error = APIStatusError(
+            "rejected",
+            response=httpx.Response(status, request=request),
+            body={"detail": "Rejected " + cloud_credential_case.key},
+        )
+        listing = Mock(side_effect=error)
+        client = SimpleNamespace(list_devices=listing, close=Mock())
+        factory = Mock(return_value=client)
+        monkeypatch.setattr(selection.mobilerun_core, "Mobilerun", factory)
+        result = CliRunner().invoke(cli, ["device", "list", "-t", "cloud", *flags])
+        assert result.exit_code == 1, result.output
+        factory.assert_called_once_with(
+            bearer=cloud_credential_case.key, base_url="https://api.mobilerun.ai/v1"
+        )
+        listing.assert_called_once_with(filters={"state": None}, scope="cloud")
+        client.close.assert_called_once()
+        assert "planted-env-key" not in result.output
+        assert "planted-saved-token" not in result.output
+        return result
+
+    return invoke
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_cloud_rejection_text_names_used_credential(
+    cloud_credential_case, rejected_cloud_command, status
+):
+    result = rejected_cloud_command(status, [])
+    assert result.stdout == ""
+    assert (
+        result.stderr
+        == f"Error: Rejected [redacted] (HTTP {status})\n{cloud_credential_case.hint}\n"
+    )
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_cloud_rejection_json_names_used_credential(
+    cloud_credential_case, rejected_cloud_command, status
+):
+    result = rejected_cloud_command(status, ["-j"])
+    assert json.loads(result.stdout) == {
+        "error": "Rejected [redacted]",
+        "status": status,
+        "code": None,
+        "credential": cloud_credential_case.source,
+    }
+    assert (
+        result.stderr
+        == f"Error: Rejected [redacted] (HTTP {status})\n{cloud_credential_case.hint}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "env,warning",
+    [
+        (None, ""),
+        (
+            "planted-env-key",
+            "Warning: MOBILERUN_CLOUD_API_KEY is set and takes precedence over this sign-in; "
+            "unset it to use the sign-in.\n",
+        ),
+    ],
+)
+def test_successful_cloud_login_warns_about_env_override(monkeypatch, env, warning):
+    monkeypatch.delenv("MOBILERUN_CLOUD_API_KEY", raising=False)
+    if env is not None:
+        monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", env)
+    monkeypatch.setattr(
+        deviceauth, "load_credentials", lambda: {"access_token": "planted-saved-token"}
+    )
+    login = Mock()
+    monkeypatch.setattr(auth, "_login_mobilerun", login)
+    result = CliRunner().invoke(cli, ["auth", "login"])
+    assert result.exit_code == 0, result.output
+    login.assert_called_once()
+    assert result.stdout == ""
+    assert result.stderr == warning
+    assert "planted-env-key" not in result.output
+    assert "planted-saved-token" not in result.output
+
+
+def test_cloud_credential_resolver_preserves_precedence(cloud_credential_case):
+    credential = selection.resolve_cloud_credential()
+    assert credential.value == cloud_credential_case.key
+    assert credential.source == cloud_credential_case.source
+    assert credential.saved_sign_in is cloud_credential_case.has_login
+    assert selection.require_cloud_api_key() == cloud_credential_case.key
+    assert "planted-env-key" not in repr(credential)
+    assert "planted-saved-token" not in repr(credential)
+
+
+@pytest.fixture
+def cloud_status(monkeypatch, tmp_path, cloud_credential_case):
+    monkeypatch.setattr(deviceauth, "credential_path", lambda: tmp_path / "cloud.json")
+    monkeypatch.setattr(
+        deviceauth, "fetch_session", Mock(return_value={"user": {"email": "user@example.test"}})
+    )
+    monkeypatch.setattr(auth, "_oauth_credentials_present", lambda *a: False)
+
+
+def test_cloud_status_json_names_active_credential(cloud_status, cloud_credential_case, tmp_path):
+    result = CliRunner().invoke(cli, ["auth", "status", "-j"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)[0] == {
+        "service": "mobilerun",
+        "signed_in": cloud_credential_case.has_login,
+        "credential_path": str(tmp_path / "cloud.json"),
+        "email": "user@example.test" if cloud_credential_case.has_login else None,
+        "cloud_credential": cloud_credential_case.label,
+        "env_overrides_login": cloud_credential_case.overrides,
+    }
+    assert "planted-env-key" not in result.output
+    assert "planted-saved-token" not in result.output
+
+
+def test_cloud_status_text_names_active_credential(cloud_status, cloud_credential_case):
+    result = CliRunner().invoke(cli, ["auth", "status"])
+    assert result.exit_code == 0, result.output
+    line = result.stdout.splitlines()[0]
+    assert f"cloud commands use {cloud_credential_case.label}" in line
+    assert ("overrides saved sign-in" in line) is cloud_credential_case.overrides
+    assert "planted-env-key" not in result.output
+    assert "planted-saved-token" not in result.output
+
+
+def test_env_json_uses_cloud_credential_source(cloud_credential_case):
+    result = CliRunner().invoke(cli, ["env", "-j"])
+    assert result.exit_code == 0, result.output
+    row = next(
+        row for row in json.loads(result.stdout) if row["variable"] == "MOBILERUN_CLOUD_API_KEY"
+    )
+    assert row == {
+        "variable": "MOBILERUN_CLOUD_API_KEY",
+        "value": "set",
+        "source": cloud_credential_case.env_source,
+    }
+    assert "planted-env-key" not in result.output
+    assert "planted-saved-token" not in result.output
+
+
+def test_env_text_uses_cloud_credential_source(cloud_credential_case):
+    result = CliRunner().invoke(cli, ["env"])
+    assert result.exit_code == 0, result.output
+    assert f"MOBILERUN_CLOUD_API_KEY=set  ({cloud_credential_case.env_source})\n" in result.stdout
+    assert "planted-env-key" not in result.output
+    assert "planted-saved-token" not in result.output

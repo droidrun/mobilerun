@@ -29,6 +29,7 @@ from mobilerun.cli.options import (
     verbose_option,
 )
 from mobilerun.cli.qr import print_qr
+from mobilerun.cli.selection import resolve_cloud_credential
 from mobilerun.config_manager.auth_profile_store import AuthProfileStore
 from mobilerun.config_manager.credential_paths import (
     ANTHROPIC_OAUTH_CREDENTIAL_PATH,
@@ -254,6 +255,11 @@ def login(
         _login_mobilerun(
             auth_url, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr
         )
+        if resolve_cloud_credential().source == "env":
+            click.echo(
+                "Warning: MOBILERUN_CLOUD_API_KEY is set and takes precedence over this sign-in; "
+                "unset it to use the sign-in.", err=True,
+            )
         return
     kwargs = {
         "credential_path": credential_path or str(SERVICES[service][0]),
@@ -309,12 +315,16 @@ def status(verbose, json_output):
     """Show saved sign-in status without exposing tokens."""
     credentials = deviceauth.load_credentials() or {}
     token = credentials.get("access_token")
+    credential = resolve_cloud_credential()
+    cloud_label = {"env": "env key", "login": "saved sign-in", None: "not set"}[credential.source]
     rows = [
         {
             "service": "mobilerun",
             "signed_in": bool(token),
             "credential_path": str(deviceauth.credential_path()),
             "email": None,
+            "cloud_credential": cloud_label,
+            "env_overrides_login": credential.source == "env" and credential.saved_sign_in,
         }
     ]
     failed = False
@@ -347,4 +357,9 @@ def status(verbose, json_output):
         for row in rows:
             label = "signed in" if row["signed_in"] else "not signed in"
             email = f" ({row['email']})" if row.get("email") else ""
-            emit(f"{row['service']}: {label}{email}  {row['credential_path']}")
+            cloud = ""
+            if row["service"] == "mobilerun":
+                cloud = f"; cloud commands use {row['cloud_credential']}"
+                if row["env_overrides_login"]:
+                    cloud += " (overrides saved sign-in)"
+            emit(f"{row['service']}: {label}{email}  {row['credential_path']}{cloud}")

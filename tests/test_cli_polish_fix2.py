@@ -11,7 +11,7 @@ from click.testing import CliRunner
 from mobilerun_core import UiState
 from mobilerun_sdk import APIConnectionError, APIStatusError, Mobilerun
 
-from mobilerun.cli import device_lifecycle, selection
+from mobilerun.cli import device_lifecycle, deviceauth, selection
 from mobilerun.cli import run as run_module
 from mobilerun.cli.main import cli
 from mobilerun.config_manager import ConfigLoader, MobileConfig
@@ -300,6 +300,7 @@ def sdk_error_cases():
 
 def invoke_api_error(monkeypatch, error, *flags):
     monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", ENV_KEY)
+    monkeypatch.setattr(deviceauth, "load_credentials", lambda: None)
     monkeypatch.setattr(device_lifecycle, "core_client", lambda *a, **kw: SimpleNamespace(
         list_devices=Mock(side_effect=error),
     ))
@@ -329,7 +330,10 @@ def test_api_errors_text(monkeypatch, sdk_error_cases):
 def test_api_errors_json(monkeypatch, sdk_error_cases):
     for error, message, status, code, _ in sdk_error_cases:
         result = invoke_api_error(monkeypatch, error, "-j")
-        assert json.loads(result.stdout) == {"error": message, "status": status, "code": code}
+        expected = {"error": message, "status": status, "code": code}
+        if status in {401, 403}:
+            expected["credential"] = "env"
+        assert json.loads(result.stdout) == expected
 
 
 def test_wrapped_api_error_uses_sdk_cause(monkeypatch, sdk_error_cases):
@@ -337,4 +341,4 @@ def test_wrapped_api_error_uses_sdk_cause(monkeypatch, sdk_error_cases):
     wrapped = RuntimeError(f"core wrapper {REQUEST_KEY}")
     wrapped.__cause__ = error
     result = invoke_api_error(monkeypatch, wrapped, "-j")
-    assert json.loads(result.stdout) == {"error": message, "status": status, "code": code}
+    assert json.loads(result.stdout) == {"error": message, "status": status, "code": code, "credential": "env"}

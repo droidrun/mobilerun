@@ -14,7 +14,7 @@ from mobilerun.cli.options import (
     json_option,
     verbose_option,
 )
-from mobilerun.cli.selection import resolve_cloud_api_key
+from mobilerun.cli.selection import resolve_cloud_credential
 from mobilerun.config_manager import ConfigLoader, MobileConfig
 from mobilerun.config_manager.config_manager import PORTAL_TOKEN_ENV_VARS
 from mobilerun.config_manager.env_keys import API_KEY_ENV_VARS, load_env_key_sources
@@ -35,14 +35,14 @@ def resolved_environment(config_path=None):
                                    == click.core.ParameterSource.COMMANDLINE)
         else "env" if os.environ.get("MOBILERUN_CONFIG") else "default"
     )
-    cloud_key = resolve_cloud_api_key()
+    cloud_credential = resolve_cloud_credential()
     credentials = deviceauth.load_credentials() or {}
     values = {
         "MOBILERUN_TARGET": ("local", "default", False),
         "MOBILERUN_DEVICE": (config.device.serial, config_source if config.device.serial else "not set", False),
         "MOBILERUN_CLOUD_API_KEY": (
-            cloud_key,
-            "credential file" if cloud_key else "not set",
+            cloud_credential.value,
+            {"env": "env", "login": "credential file", None: "not set"}[cloud_credential.source],
             True,
         ),
         "MOBILERUN_API_BASE_URL": (DEFAULT_API_URL, "default", False),
@@ -73,7 +73,8 @@ def resolved_environment(config_path=None):
         values[name] = (None, "default", True)
     rows = []
     for name, (value, source, secret) in values.items():
-        if os.environ.get(name) and not (name == "MOBILERUN_CONFIG" and path_source == "flag"):
+        if (name != "MOBILERUN_CLOUD_API_KEY" and os.environ.get(name)
+                and not (name == "MOBILERUN_CONFIG" and path_source == "flag")):
             value, source = os.environ[name], "env"
         if name == "MOBILERUN_TELEMETRY_ENABLED":
             value = is_telemetry_enabled(config_enabled=config.telemetry.enabled)

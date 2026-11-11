@@ -1,6 +1,6 @@
 """Resolve CLI config and device selection before invoking a backend."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import click
 import mobilerun_core
@@ -17,17 +17,29 @@ from mobilerun.config_manager import ConfigLoader, MobileConfig
 from mobilerun.config_manager.config_manager import PORTAL_TOKEN_ENV_VARS
 
 
-def resolve_cloud_api_key():
+@dataclass(frozen=True)
+class CloudCredential:
+    value: str | None = field(repr=False)
+    source: str | None
+    saved_sign_in: bool
+
+
+def resolve_cloud_credential():
+    """Resolve the cloud bearer and its source without changing precedence."""
     import os
 
     from mobilerun.cli import deviceauth
 
     credentials = deviceauth.load_credentials() or {}
-    return (
-        os.environ.get("MOBILERUN_CLOUD_API_KEY")
-        or credentials.get("api_key")
-        or credentials.get("access_token")
-    )
+    saved = credentials.get("api_key") or credentials.get("access_token")
+    env_key = os.environ.get("MOBILERUN_CLOUD_API_KEY")
+    if env_key:
+        return CloudCredential(env_key, "env", bool(saved))
+    return CloudCredential(saved, "login" if saved else None, bool(saved))
+
+
+def resolve_cloud_api_key():
+    return resolve_cloud_credential().value
 
 
 def core_client(api_url=DEFAULT_API_URL, *, cloud=False):

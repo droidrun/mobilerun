@@ -123,7 +123,18 @@ def convert_api_error(exc):
     text = f"{message} (HTTP {status})" if status is not None else message
     hint = None
     if status in {401, 403}:
-        hint = "Run `mobilerun auth login` or set MOBILERUN_CLOUD_API_KEY."
+        from mobilerun.cli.selection import resolve_cloud_credential
+
+        credential = resolve_cloud_credential()
+        document["credential"] = credential.source or "login"
+        if credential.source == "env":
+            hint = "The key in MOBILERUN_CLOUD_API_KEY was rejected. "
+            if credential.saved_sign_in:
+                hint += "A saved sign-in exists; unset the variable to use it."
+            else:
+                hint += "Check the key, or unset the variable and run `mobilerun auth login`."
+        else:
+            hint = "The saved sign-in was rejected or has expired. Run `mobilerun auth login`."
     elif status == 404 and "devices" in request.url.path.split("/"):
         hint = "Find device ids with `mobilerun device list -t cloud`."
     elif status is None:

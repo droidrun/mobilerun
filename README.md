@@ -236,6 +236,7 @@ screenshot, ui, apps, start, and ping.
 ### Environment
 
 For CLI options, flags override environment values, then config values and defaults.
+`MOBILERUN_CLOUD_API_KEY` overrides a saved sign-in; unset it to use the sign-in.
 Inspect resolved values and sources with `mobilerun env`; it shows secrets only
 as `set` or `not set`. Provider authentication follows the selected provider's
 configuration and credential store. `auth status` always checks the service
