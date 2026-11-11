@@ -4,14 +4,17 @@ import asyncio
 import base64
 import json
 import tempfile
+import unicodedata
+from collections.abc import Mapping
 from contextlib import contextmanager
 
 import click
-from mobilerun_core._a11y import node_bounds
 
 from mobilerun.agent.utils.android_device import is_portal_http_url
 from mobilerun.cli.options import Group, device_options, emit, json_option, verbose_option
 from mobilerun.cli.selection import core_client, portal_token, select_device
+
+UI_FLAGS = ("clickable", "checkable", "checked", "editable", "focused", "scrollable", "selected")
 
 
 @contextmanager
@@ -72,30 +75,54 @@ def screenshot(json_output, **params):
 
 
 def _ui_cell(value):
-    return str(value or "").replace("\t", " ").replace("\n", " ").replace("\r", " ")
+    return "".join(
+        " " if unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} else char
+        for char in str(value if value is not None else "")
+    )
+
+
+def _field(node, *keys):
+    for key in keys:
+        value = node.get(key)
+        if value and (not isinstance(value, str) or value.strip()):
+            return value
+    return ""
+
+
+def _ltrb(bounds):
+    if not isinstance(bounds, Mapping) or not bounds:
+        return ""
+    if all(key in bounds for key in ("x", "y", "width", "height")):
+        values = (
+            bounds["x"], bounds["y"],
+            bounds["x"] + bounds["width"], bounds["y"] + bounds["height"],
+        )
+    else:
+        values = tuple(bounds.get(key, "") for key in ("left", "top", "right", "bottom"))
+    return ",".join(_ui_cell(value) for value in values)
 
 
 def ui_lines(state, all_elements=False):
     """Render core's depth-first node list as six tab-separated columns."""
     for index, node in enumerate(state.nodes):
-        flags = [flag for flag in ("clickable", "checkable", "checked", "editable", "focused", "scrollable", "selected")
-                 if node.get(flag) or node.get("is" + flag.capitalize()) or node.get("is_" + flag)]
-        if node.get("disabled") or any(node.get(key) is False for key in ("enabled", "isEnabled", "is_enabled")):
+        flags = [
+            flag for flag in UI_FLAGS
+            if _field(node, flag, "is" + flag.capitalize(), "is_" + flag)
+        ]
+        if node.get("disabled") or any(
+            node.get(key) is False for key in ("enabled", "isEnabled", "is_enabled")
+        ):
             flags.append("disabled")
-        text = node.get("text") or node.get("contentDescription") or node.get("content_description") or ""
-        resource = node.get("resourceId") or node.get("resource_id") or node.get("accessibilityIdentifier") or ""
+        text = _field(node, "text", "contentDescription", "content_description")
+        resource = _field(node, "resourceId", "resource_id", "accessibilityIdentifier")
         if not (all_elements or text or resource or flags):
             continue
-        class_name = node.get("className") or node.get("class_name") or ""
-        bounds = node_bounds(node) or {}
-        if isinstance(bounds, dict):
-            if all(key in bounds for key in ("x", "y", "width", "height")):
-                bounds = (bounds["x"], bounds["y"], bounds["x"] + bounds["width"], bounds["y"] + bounds["height"])
-            else:
-                bounds = tuple(bounds.get(key, "") for key in ("left", "top", "right", "bottom")) if bounds else ()
-        yield "\t".join((str(index), _ui_cell(class_name.rsplit(".", 1)[-1]), _ui_cell(text),
-                          _ui_cell(resource), ",".join(str(value) for value in bounds) if bounds else "",
-                          ",".join(flags)))
+        class_name = _field(node, "className", "class_name")
+        bounds = _field(node, "bounds", "boundsInScreen", "bounds_in_screen", "rect", "frame")
+        yield "\t".join((
+            str(index), _ui_cell(class_name.rsplit(".", 1)[-1]), _ui_cell(text),
+            _ui_cell(resource), _ltrb(bounds), ",".join(flags),
+        ))
 
 
 @device_cli.command()
@@ -104,11 +131,16 @@ def ui_lines(state, all_elements=False):
 @device_options
 def ui(json_output, all_elements, **params):
     """Print tab-separated UI elements, or the raw state with --json."""
+    if json_output and all_elements:
+        raise click.UsageError("--all cannot be combined with --json")
     with device_driver(params) as device:
         if json_output:
             emit(json.loads(device.ui_json()), json_output=True)
             return
-        state = device.ui(filter=False)
+        state = device.ui()
+        if (getattr(state, "dead_tree", False)
+                or getattr(state, "a11y_tree_available", True) is False):
+            raise click.ClickException("The device UI tree is unavailable.")
         for line in ui_lines(state, all_elements):
             emit(line)
         phone = state.get("phone_state") or {}

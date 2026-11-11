@@ -17,7 +17,7 @@ from mobilerun.cli.options import (
 )
 from mobilerun.cli.selection import resolve_cloud_api_key
 from mobilerun.config_manager import ConfigLoader, MobileConfig
-from mobilerun.config_manager.config_manager import PORTAL_TOKEN_ENV_VARS, resolve_portal_token
+from mobilerun.config_manager.config_manager import PORTAL_TOKEN_ENV_VARS
 from mobilerun.config_manager.env_keys import API_KEY_ENV_VARS, load_env_key_sources
 from mobilerun.telemetry.tracker import is_telemetry_enabled
 
@@ -60,9 +60,9 @@ def resolved_environment(config_path=None):
         "NO_COLOR": (None, "default", False),
     }
     for platform, name in PORTAL_TOKEN_ENV_VARS.items():
-        configured = config.device.auth_token if config.device.platform == platform else None
-        value = resolve_portal_token(platform, configured)
-        values[name] = (value, "env" if os.environ.get(name) else config_source if configured else "not set", True)
+        value = config.device.resolve_auth_token(platform)
+        source = "env" if os.environ.get(name) else config_source if value else "not set"
+        values[name] = (value, source, True)
     sources = load_env_key_sources()
     for slot, name in API_KEY_ENV_VARS.items():
         source = sources[slot]

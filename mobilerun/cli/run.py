@@ -139,6 +139,8 @@ async def _run_task(
 
         # Device overrides
         if platform is not None:
+            # Resolve against the loaded platform before changing token ownership.
+            config.device.auth_token = config.device.resolve_auth_token(platform)
             config.device.platform = platform
         if device is not None:
             config.device.serial = device

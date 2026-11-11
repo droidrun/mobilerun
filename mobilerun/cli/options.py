@@ -7,7 +7,6 @@ import sys
 import traceback
 from contextlib import redirect_stdout
 from functools import wraps
-from urllib.parse import urlsplit, urlunsplit
 
 import click
 from mobilerun_sdk import APIConnectionError, APIStatusError, APITimeoutError
@@ -16,22 +15,24 @@ DEFAULT_API_URL = "https://api.mobilerun.ai/v1"
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
-def convert_api_error(exc, ctx):
-    """Return safe text, JSON and optional diagnostics for an SDK error."""
-    seen = set()
-    while exc is not None and id(exc) not in seen:
-        seen.add(id(exc))
+def _sdk_error(exc):
+    while exc is not None:
         if isinstance(exc, (APIStatusError, APIConnectionError)):
-            break
+            return exc
         exc = exc.__cause__
-    else:
+    return None
+
+
+def convert_api_error(exc):
+    """Return safe text, JSON and method/path diagnostics for an SDK error."""
+    exc = _sdk_error(exc)
+    if exc is None:
         return None
     request = exc.request
-    sensitive = [value for name, value in request.headers.items() if name != "host"]
+    sensitive = [os.environ.get("MOBILERUN_CLOUD_API_KEY", "")]
     authorization = request.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
         sensitive.append(authorization[7:])
-    sensitive.append(os.environ.get("MOBILERUN_CLOUD_API_KEY", ""))
 
     def clean(value):
         text = " ".join(str(value).split())
@@ -48,10 +49,12 @@ def convert_api_error(exc, ctx):
     code = next((entry["code"] for entry in fields
                  if isinstance(entry.get("code"), (str, int))), None)
     if message is None:
-        message = first if isinstance(first, str) and first.strip() else (
-            exc.response.reason_phrase if status is not None else
-            "Request timed out" if isinstance(exc, APITimeoutError) else "Could not connect to the API"
-        )
+        if status is not None:
+            message = exc.response.reason_phrase
+        elif isinstance(exc, APITimeoutError):
+            message = "Request timed out"
+        else:
+            message = "Could not connect to the API"
     message = clean(message or "API request failed")
     document = {"error": message, "status": status, "code": clean(code) if code is not None else None}
     text = f"{message} (HTTP {status})" if status is not None else message
@@ -61,11 +64,11 @@ def convert_api_error(exc, ctx):
     elif status == 404 and "devices" in request.url.path.split("/"):
         hint = "Find device ids with `mobilerun device list -t cloud`."
     elif status is None:
-        url = urlsplit(ctx.params.get("api_url") or os.environ.get("MOBILERUN_API_BASE_URL") or DEFAULT_API_URL)
-        safe_url = urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
-        hint = f"Check the API URL: {clean(safe_url)}"
+        hint = f"Check the API URL: {clean(request.url.scheme + '://' + request.url.host)}"
+    if hint:
+        text += f"\n{hint}"
     diagnostic = f"{request.method} {clean(request.url.path)}"
-    return text, document, hint, diagnostic
+    return text, document, diagnostic
 
 
 class Command(click.Command):
@@ -98,12 +101,12 @@ class Command(click.Command):
         except (KeyboardInterrupt, asyncio.CancelledError, click.Abort):
             ctx.exit(130)
         except Exception as exc:
-            converted = convert_api_error(exc, ctx)
+            converted = convert_api_error(exc)
             if converted:
-                text, document, hint, diagnostic = converted
+                text, document, diagnostic = converted
                 if ctx.params.get("verbose"):
                     click.echo(diagnostic, err=True)
-                exc = click.ClickException(text + (f"\n{hint}" if hint else ""))
+                exc = click.ClickException(text)
             else:
                 if not isinstance(exc, click.ClickException):
                     if ctx.params.get("verbose"):
