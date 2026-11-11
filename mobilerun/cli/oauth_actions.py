@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import os
+
 from mobilerun.agent.utils.oauth.anthropic_oauth_llm import (
     DEFAULT_SETUP_TOKEN_SCOPE,
     AnthropicOAuthLLM,
+)
+from mobilerun.agent.utils.oauth.anthropic_oauth_llm import (
+    _is_headless_environment as anthropic_headless,
 )
 from mobilerun.agent.utils.oauth.gemini_oauth_code_assist_llm import (
     DEFAULT_MODEL as GEMINI_OAUTH_DEFAULT_MODEL,
 )
 from mobilerun.agent.utils.oauth.gemini_oauth_code_assist_llm import (
     GeminiOAuthCodeAssistLLM,
+)
+from mobilerun.agent.utils.oauth.gemini_oauth_code_assist_llm import (
+    _is_headless_environment as gemini_headless,
 )
 from mobilerun.agent.utils.oauth.grok_oauth_llm import (
     DEFAULT_GROK_MODEL,
@@ -197,3 +205,11 @@ def run_anthropic_oauth_setup(credential_path: str) -> None:
 
 def get_default_openai_credential_path() -> str:
     return str(DEFAULT_OPENAI_OAUTH_CREDENTIAL_PATH)
+
+
+def login_requires_input(service):
+    """Use each provider's existing flow selection to identify manual prompts."""
+    headless = {"anthropic": anthropic_headless, "gemini": gemini_headless}.get(service)
+    return bool(headless and (
+        headless() or os.environ.get("MOBILERUN_OAUTH_MANUAL", "").lower() in {"1", "true", "yes"}
+    ))

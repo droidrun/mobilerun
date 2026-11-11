@@ -75,6 +75,7 @@ def test_configure_xai_command_forwards_device_code_options(
         lambda **kwargs: calls.append(kwargs),
     )
     credential_path = tmp_path / "auth-profiles.json"
+    monkeypatch.setattr(cli_auth, "input_allowed", lambda _: True)
 
     result = CliRunner().invoke(
         cli_main.cli,
@@ -114,6 +115,7 @@ def test_configure_anthropic_forwards_timeout_and_browser_preference(
         lambda **kwargs: calls.append(kwargs),
     )
     credential_path = tmp_path / "auth-profiles.json"
+    monkeypatch.setattr(cli_auth, "input_allowed", lambda _: True)
 
     result = CliRunner().invoke(
         cli_main.cli,
@@ -280,6 +282,10 @@ def test_exact_xai_configure_forms_keep_provider_and_auth_fixed(
         lambda **kwargs: login_calls.append(kwargs),
     )
 
+    import importlib
+
+    configure = importlib.import_module("mobilerun.cli.configure")
+    monkeypatch.setattr(configure, "input_allowed", lambda _: True)
     result = CliRunner().invoke(
         cli_main.cli,
         ["configure", "--provider", "XAI", "--auth-mode", auth_mode],

@@ -321,3 +321,194 @@ def test_env_text_uses_empty_values_lowercase_booleans_and_one_secret_status(mon
     assert "MOBILERUN_ANDROID_PORTAL_TOKEN=set  (env)\n" in result.stdout
     assert "never-print-marker" not in result.output
     assert "None" not in result.stdout and "False" not in result.stdout
+
+
+@pytest.mark.parametrize("tty,no_input", [(False, False), (False, True), (True, True)])
+@pytest.mark.parametrize("flags,missing", [([], "-p / --provider"),
+                                         (["-p", "openai"], "-m / --model"),
+                                         (["-p", "openai", "-m", "MODEL"], "-k / --api-key"),
+                                         (["-p", "openai-like", "-m", "MODEL", "-k", "dummy"], "-u / --llm-url")])
+def test_configure_without_input_fails_before_loading_or_writing(monkeypatch, tty, no_input, flags, missing, tmp_path):
+    from mobilerun.config_manager import env_keys
+
+    configure = importlib.import_module("mobilerun.cli.configure")
+    monkeypatch.setattr(configure, "input_allowed", lambda disabled: tty and not disabled)
+    monkeypatch.setattr(env_keys, "resolve_env_key", lambda *args: "")
+    monkeypatch.setattr(ConfigLoader, "load", Mock(side_effect=AssertionError("must not load or create config")))
+    wizard = Mock(side_effect=AssertionError("must not prompt"))
+    monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    result = CliRunner().invoke(cli, ["configure", *flags, *(["--no-input"] if no_input else [])])
+    assert result.exit_code == 2, result.output
+    assert missing in result.stderr
+    wizard.assert_not_called()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("stdin", ["dummy-marker\nsecond-line\n", "dummy-marker\r\n", "dummy-marker"])
+@pytest.mark.parametrize("command", ["configure", "token"])
+def test_secret_from_stdin_is_one_line_and_never_printed(monkeypatch, stdin, command, tmp_path):
+    from mobilerun.cli import auth
+
+    secret = "dummy-marker"
+    if command == "configure":
+        module = importlib.import_module("mobilerun.cli.configure")
+        callback = Mock()
+        monkeypatch.setattr(module, "run_configure_wizard", callback)
+        args = ["configure", "-p", "openai", "-m", "MODEL", "-k", "-", "--no-input", "-v"]
+    else:
+        callback = Mock()
+        monkeypatch.setattr(auth, "save_anthropic_setup_token", callback)
+        args = ["auth", "login", "anthropic", "--token", "-", "--credential-path", str(tmp_path / "auth.json"),
+                "--no-input", "-v"]
+    result = CliRunner().invoke(cli, args, input=stdin)
+    assert result.exit_code == 0, result.output
+    assert secret not in result.output and "second-line" not in result.output
+    if command == "configure":
+        assert callback.call_args.kwargs["api_key"] == secret
+    else:
+        assert callback.call_args.args[1] == secret
+
+
+@pytest.mark.parametrize("stdin", ["", "\n", " \n"])
+@pytest.mark.parametrize("args", [["configure", "-k", "-"], ["auth", "login", "anthropic", "--token", "-"]])
+def test_empty_secret_stdin_is_usage_error(args, stdin):
+    result = CliRunner().invoke(cli, args, input=stdin)
+    assert result.exit_code == 2, result.output
+    assert "stdin is empty" in result.stderr
+
+
+@pytest.mark.parametrize("from_stdin", [False, True])
+@pytest.mark.parametrize("verbose", [False, True])
+@pytest.mark.parametrize("command", ["configure", "token"])
+def test_secrets_are_redacted_from_errors_and_verbose_logs(monkeypatch, from_stdin, verbose, command, tmp_path):
+    import logging
+
+    from mobilerun.cli import auth
+
+    secret = "dummy-error-marker"
+
+    def fail(*args, **kwargs):
+        logging.getLogger("mobilerun").error("failure containing %s", secret)
+        raise RuntimeError("upstream failure containing " + secret)
+
+    if command == "configure":
+        module = importlib.import_module("mobilerun.cli.configure")
+        monkeypatch.setattr(module, "run_configure_wizard", fail)
+        args = ["configure", "-p", "openai", "-m", "MODEL", "-k", "-" if from_stdin else secret, "--no-input"]
+    else:
+        monkeypatch.setattr(auth, "save_anthropic_setup_token", fail)
+        args = ["auth", "login", "anthropic", "--token", "-" if from_stdin else secret,
+                "--credential-path", str(tmp_path / "auth.json"), "--no-input"]
+    result = CliRunner().invoke(cli, [*args, *(["-v"] if verbose else [])], input=secret + "\n" if from_stdin else None)
+    assert result.exit_code == 1, result.output
+    assert secret not in result.output
+    assert "[redacted]" in result.stderr
+    assert ("Traceback" in result.stderr) == verbose
+
+
+@pytest.mark.parametrize("service,needs_input", [("mobilerun", False), ("openai", False), ("xai", False),
+                                               ("anthropic", True), ("gemini", True)])
+def test_login_only_blocks_flows_that_need_terminal_input(monkeypatch, service, needs_input):
+    from mobilerun.cli import auth
+
+    monkeypatch.setattr(auth, "login_requires_input", lambda name: name in {"anthropic", "gemini"})
+    callbacks = []
+    for name in ("_login_mobilerun", "_run_openai_oauth_login", "_run_grok_oauth_login",
+                 "_run_anthropic_oauth_login", "_run_gemini_oauth_login"):
+        callback = Mock()
+        monkeypatch.setattr(auth, name, callback)
+        callbacks.append(callback)
+    result = CliRunner().invoke(cli, ["auth", "login", service, "--no-input"])
+    assert result.exit_code == (2 if needs_input else 0), result.output
+    assert sum(callback.call_count for callback in callbacks) == int(not needs_input)
+    if service == "anthropic":
+        assert "--token" in result.stderr
+    if service == "gemini":
+        assert "terminal" in result.stderr and "--no-input" in result.stderr
+
+
+@pytest.mark.parametrize("service", ["anthropic", "gemini"])
+def test_provider_callback_login_without_manual_prompt_is_allowed(monkeypatch, service):
+    from mobilerun.cli import auth
+
+    monkeypatch.setattr(auth, "login_requires_input", lambda _: False)
+    callback = Mock()
+    monkeypatch.setattr(auth, f"_run_{service}_oauth_login", callback)
+    result = CliRunner().invoke(cli, ["auth", "login", service, "--no-input"])
+    assert result.exit_code == 0, result.output
+    callback.assert_called_once()
+
+
+@pytest.mark.parametrize("failure,code", [(EOFError, 1), (KeyboardInterrupt, 130)])
+def test_prompt_eof_and_interrupt_have_distinct_exit_codes(monkeypatch, failure, code):
+    configure = importlib.import_module("mobilerun.cli.configure")
+    monkeypatch.setattr(configure, "input_allowed", lambda _: True)
+    monkeypatch.setattr(configure, "run_configure_wizard", Mock(side_effect=failure))
+    result = CliRunner().invoke(cli, ["configure"])
+    assert result.exit_code == code, result.output
+    if code == 1:
+        assert result.stderr == "Error: Input closed; run the command again in a terminal.\n"
+
+
+@pytest.mark.parametrize("cause,code", [(EOFError, 1), (KeyboardInterrupt, 130)])
+def test_click_prompt_abort_cause_preserves_exit_code(monkeypatch, cause, code):
+    configure = importlib.import_module("mobilerun.cli.configure")
+    monkeypatch.setattr(configure, "input_allowed", lambda _: True)
+
+    def abort(*args, **kwargs):
+        try:
+            raise cause
+        except cause as exc:
+            raise click.Abort from exc
+
+    monkeypatch.setattr(configure, "run_configure_wizard", abort)
+    result = CliRunner().invoke(cli, ["configure"])
+    assert result.exit_code == code, result.output
+
+
+def test_no_input_configure_resolves_provider_environment_key(monkeypatch):
+    configure = importlib.import_module("mobilerun.cli.configure")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-environment-marker")
+    wizard = Mock()
+    monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    result = CliRunner().invoke(cli, ["configure", "-p", "openai", "-m", "MODEL", "--no-input"])
+    assert result.exit_code == 0, result.output
+    assert "dummy-environment-marker" not in result.output
+    assert wizard.call_args.kwargs["api_key"] is None
+
+
+def test_no_input_configure_never_starts_missing_oauth_login(monkeypatch):
+    configure = importlib.import_module("mobilerun.cli.configure")
+    monkeypatch.setattr(configure, "_oauth_credentials_present", lambda *args: False)
+    wizard = Mock()
+    monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    result = CliRunner().invoke(cli, ["configure", "-p", "openai-oauth", "-m", "MODEL", "--no-input"])
+    assert result.exit_code == 2, result.output
+    assert "mobilerun auth login openai" in result.stderr
+    wizard.assert_not_called()
+
+
+def test_click_prompt_eof_is_one_failure_sentence(monkeypatch):
+    configure = importlib.import_module("mobilerun.cli.configure")
+    monkeypatch.setattr(configure, "input_allowed", lambda _: True)
+    monkeypatch.setattr(configure, "run_configure_wizard", lambda *args, **kwargs: click.prompt("Value"))
+    result = CliRunner().invoke(cli, ["configure"], input="")
+    assert result.exit_code == 1, result.output
+    assert result.stderr.count("Input closed; run the command again in a terminal.") == 1
+    assert "Aborted!" not in result.output
+
+
+def test_manual_login_detection_reuses_provider_flow_selection(monkeypatch):
+    from mobilerun.cli import oauth_actions
+
+    monkeypatch.setattr(oauth_actions, "anthropic_headless", lambda: False)
+    monkeypatch.setattr(oauth_actions, "gemini_headless", lambda: False)
+    monkeypatch.delenv("MOBILERUN_OAUTH_MANUAL", raising=False)
+    assert not oauth_actions.login_requires_input("gemini")
+    monkeypatch.setenv("MOBILERUN_OAUTH_MANUAL", "true")
+    assert oauth_actions.login_requires_input("gemini")
+    assert oauth_actions.login_requires_input("anthropic")
+    assert not oauth_actions.login_requires_input("openai")
+    monkeypatch.delenv("MOBILERUN_OAUTH_MANUAL")
+    monkeypatch.setattr(oauth_actions, "gemini_headless", lambda: True)
+    assert oauth_actions.login_requires_input("gemini")

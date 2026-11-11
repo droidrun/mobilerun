@@ -555,6 +555,7 @@ def test_configure_api_provider_preselects_api_key_and_validates_auth_mode(monke
     configure = importlib.import_module("mobilerun.cli.configure")
     wizard = Mock()
     monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    monkeypatch.setattr(configure, "input_allowed", lambda _: True)
     result = CliRunner().invoke(cli, ["configure", "-p", "openai"])
     assert result.exit_code == 0, result.output
     assert wizard.call_args.kwargs["auth_mode"] == "api_key"

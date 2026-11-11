@@ -32,6 +32,27 @@ def local_device_hint(message):
     return message
 
 
+def read_secret(ctx, param, value):
+    """Accept one secret line from stdin, without echoing it."""
+    if value == "-":
+        value = click.get_text_stream("stdin").readline().rstrip("\r\n")
+        if not value.strip():
+            raise click.BadParameter("stdin is empty; provide one secret line.", ctx=ctx, param=param)
+    if value:
+        ctx.meta.setdefault("cli_secrets", []).append(value)
+    return value
+
+
+def redact_secrets(text, ctx):
+    for secret in sorted(set(ctx.meta.get("cli_secrets", ())), key=len, reverse=True):
+        text = text.replace(secret, "[redacted]")
+    return text
+
+
+def input_allowed(no_input=False):
+    return not no_input and sys.stdin.isatty()
+
+
 def _sdk_error(exc):
     while exc is not None:
         if isinstance(exc, (APIStatusError, APIConnectionError)):
@@ -47,6 +68,9 @@ def convert_api_error(exc):
         return None
     request = exc.request
     sensitive = [os.environ.get("MOBILERUN_CLOUD_API_KEY", "")]
+    ctx = click.get_current_context(silent=True)
+    if ctx:
+        sensitive.extend(ctx.meta.get("cli_secrets", ()))
     authorization = request.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
         sensitive.append(authorization[7:])
@@ -133,7 +157,13 @@ class Command(HelpLayout, click.Command):
 
         logger = logging.getLogger("mobilerun")
         previous = logger.handlers[:], logger.level, logger.propagate
-        configure_logging(bool(ctx.params.get("verbose")), logging.StreamHandler(sys.stderr))
+        class SecretFormatter(logging.Formatter):
+            def format(self, record):
+                return redact_secrets(super().format(record), ctx)
+
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(SecretFormatter())
+        configure_logging(bool(ctx.params.get("verbose")), handler)
         try:
             # Libraries and OAuth flows may print progress directly.
             with redirect_stdout(sys.stderr):
@@ -142,8 +172,12 @@ class Command(HelpLayout, click.Command):
                 if ctx.command.name != "doctor":
                     ConfigLoader.resolve_path(ctx.params.get("config_path"))
                 return super().invoke(ctx)
-        except (KeyboardInterrupt, asyncio.CancelledError, click.Abort):
+        except (KeyboardInterrupt, asyncio.CancelledError):
             ctx.exit(130)
+        except (EOFError, click.Abort) as exc:
+            if isinstance(exc.__cause__, KeyboardInterrupt):
+                ctx.exit(130)
+            raise click.ClickException("Input closed; run the command again in a terminal.") from None
         except click.exceptions.Exit:
             raise
         except Exception as exc:
@@ -156,9 +190,9 @@ class Command(HelpLayout, click.Command):
             else:
                 if not isinstance(exc, click.ClickException):
                     if ctx.params.get("verbose"):
-                        traceback.print_exc(file=sys.stderr)
+                        click.echo(redact_secrets(traceback.format_exc(), ctx), err=True)
                     exc = click.ClickException(str(exc) or type(exc).__name__)
-                exc.message = local_device_hint(exc.message)
+                exc.message = local_device_hint(redact_secrets(exc.message, ctx))
                 document = {"error": exc.message}
             if (not isinstance(exc, click.UsageError) and ctx.params.get("json_output")
                     and not ctx.obj["emitted"]):
@@ -197,6 +231,7 @@ class Group(HelpLayout, click.Group):
 
 
 # The same declarations are reused everywhere, including groups.
+no_input_option = click.option("--no-input", is_flag=True, help="Never prompt for input.")
 verbose_option = click.option(
     "-v",
     "--verbose",

@@ -9,6 +9,7 @@ from rich.console import Console
 from mobilerun.cli import deviceauth
 from mobilerun.cli.configure_wizard import _OAUTH_CREDENTIAL_SLOTS, _oauth_credentials_present
 from mobilerun.cli.oauth_actions import (
+    login_requires_input,
     run_anthropic_setup_token_oauth,
     run_gemini_oauth_login,
     run_grok_oauth_login,
@@ -19,8 +20,11 @@ from mobilerun.cli.options import (
     Group,
     auth_url_option,
     emit,
+    input_allowed,
     json_option,
     model_option,
+    no_input_option,
+    read_secret,
     verbose_option,
 )
 from mobilerun.cli.qr import print_qr
@@ -194,7 +198,12 @@ def auth_cli(verbose):
 @click.option("--callback-port", type=click.IntRange(0, 65535), help="OAuth callback port (openai, anthropic, gemini).")
 @click.option("--callback-path", help="OAuth callback path (openai, anthropic, gemini).")
 @click.option("--device-code", is_flag=True, help="Use xAI device-code login.")
-@click.option("--token", help="Save an Anthropic setup-token.")
+@no_input_option
+@click.option(
+    "--token", callback=read_secret,
+    help="Anthropic setup-token; prefer '-' for stdin or ANTHROPIC_API_KEY with configure, "
+         "because flag values end up in shell history.",
+)
 @click.pass_context
 def login(
     ctx,
@@ -212,6 +221,7 @@ def login(
     callback_path,
     device_code,
     token,
+    no_input,
 ):
     """Log in to a service; SERVICE defaults to mobilerun."""
     for name in set().union(*LOGIN_OPTIONS.values()):
@@ -220,6 +230,14 @@ def login(
             and name not in LOGIN_OPTIONS[service]
         ):
             raise click.UsageError(f"--{name.replace('_', '-')} is not supported for {service}")
+    if not input_allowed(no_input) and login_requires_input(service):
+        if service == "anthropic" and not token:
+            raise click.UsageError("Missing option '--token'; pass --token - to read a setup-token from stdin.")
+        if service == "gemini":
+            raise click.UsageError(
+                "Gemini login needs a code; omit --no-input and run "
+                "`mobilerun auth login gemini` in a terminal."
+            )
     if service == "mobilerun":
         _login_mobilerun(
             auth_url or DEFAULT_AUTH_URL, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr
