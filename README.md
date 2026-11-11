@@ -96,7 +96,7 @@ uv tool install "mobilerun[anthropic]"
 
 ```bash
 uv tool install mobilerun
-mobilerun setup
+mobilerun device setup
 mobilerun configure
 mobilerun run "Open settings and turn on dark mode"
 ```
@@ -106,7 +106,7 @@ Before starting, make sure you have [ADB](https://developer.android.com/studio/r
 ### 1. Install the Portal on your device
 
 ```bash
-mobilerun setup
+mobilerun device setup
 ```
 
 This installs the Mobilerun Portal app, enables its accessibility service, and prepares the device for local control.
@@ -114,7 +114,7 @@ This installs the Mobilerun Portal app, enables its accessibility service, and p
 ### 2. Verify the connection
 
 ```bash
-mobilerun ping
+mobilerun device ping
 ```
 
 You should see confirmation that the Portal is installed and accessible.
@@ -139,9 +139,73 @@ Useful run options:
 mobilerun run "Open settings and turn on dark mode"
 mobilerun run "What app is currently open?" --vision
 mobilerun run "Find a contact named John and send him an email" --reasoning
-mobilerun run "Take a screenshot" --ios
-mobilerun run "Open Settings" --steps 30 --debug
+mobilerun run "Take a screenshot" --platform ios
+mobilerun run "Open Settings" --max-steps 30 --verbose
 ```
+
+### CLI commands and environment
+
+```text
+mobilerun run "TASK"
+mobilerun device list|connect|disconnect|setup|ping
+mobilerun device tap|swipe|long-press|type|press|screenshot|ui|apps|start
+mobilerun auth login [SERVICE]
+mobilerun auth logout [SERVICE]
+mobilerun auth status
+mobilerun configure
+mobilerun macro replay|list
+mobilerun doctor
+mobilerun env
+```
+
+Use `-h` or `--help` on any command, and `-V` or `--version` for the version.
+Read commands and `run` accept `-j`/`--json`; stdout contains one JSON document,
+while progress and errors go to stderr. Failures exit 1, invalid usage exits 2,
+and interruption exits 130.
+
+Device commands, `run`, `doctor`, and macro replay share `-d`/`--device`,
+`-t`/`--target local|cloud`, `-P`/`--platform android|ios`, `-c`/`--config`,
+`-v`/`--verbose`, `--api-url`, and `--tcp`/`--no-tcp`. An explicit device
+selects its backend: an ADB serial, a Portal HTTP URL, or a cloud device id.
+Without a device, local commands auto-select; cloud commands require an id.
+
+```bash
+mobilerun auth login
+mobilerun auth status -j
+mobilerun device list -t cloud -j
+mobilerun device ui -d "$DEVICE_ID" -j
+mobilerun run "Report the current app" -d "$DEVICE_ID" -j
+mobilerun auth login openai --no-browser
+mobilerun configure -p openai -m gpt-6.1-sol
+mobilerun run "Open settings" -p ollama -m llama3.2 -u http://localhost:11434 -s 20
+mobilerun macro replay trajectories/example -s 5 -n
+mobilerun env -j
+```
+
+`auth login` and `auth logout` default to `mobilerun`; provider services are
+`openai`, `anthropic`, `gemini`, and `xai`. The configure wizard and `run -p`
+share these provider names: `openai`, `openai-oauth`, `anthropic`,
+`anthropic-oauth`, `gemini`, `gemini-oauth`, `xai`, `ollama`, `openai-like`,
+`minimax`, and `zai` (case-insensitive). `-u`/`--llm-url` sets the LLM endpoint;
+`--api-url` sets the cloud device API endpoint.
+
+| Variable | Meaning | Default / flag |
+| --- | --- | --- |
+| `MOBILERUN_TARGET` | Where to discover devices | `local`; `-t`/`--target` |
+| `MOBILERUN_DEVICE` | Serial, Portal URL, or cloud device id | Auto-select; `-d`/`--device` |
+| `MOBILERUN_CLOUD_API_KEY` | Cloud credential | Saved `auth login` credential |
+| `MOBILERUN_API_BASE_URL` | Cloud API URL | `https://api.mobilerun.ai/v1`; `--api-url` |
+| `MOBILERUN_AUTH_URL` | Sign-in URL | `https://cloud.mobilerun.ai/api/auth`; `--auth-url` |
+| `MOBILERUN_CONFIG` | Config file | User config directory; `-c`/`--config` |
+| `MOBILERUN_DEVICE_TOKEN` | Portal HTTP token | Configured token, if any |
+| `MOBILERUN_DEBUG` | Verbose logs | Off; `-v`/`--verbose` |
+| `MOBILERUN_TELEMETRY_ENABLED` | Anonymous telemetry | `true`, subject to config policy |
+
+Flags override environment values, then config values and defaults. `mobilerun env`
+shows resolved values and their sources; secret values appear only as `set` or
+`not set`. Standard provider keys, `ANDROID_SERIAL`, `NO_COLOR`, `PHOENIX_URL`,
+and `PHOENIX_PROJECT_NAME` remain supported. `MOBILERUN_STREAM_SCREENSHOTS` and
+`MOBILERUN_OAUTH_MANUAL` control screenshot streaming and manual sign-in.
 
 Read the full [framework documentation](https://docs.mobilerun.ai/framework/quickstart).
 

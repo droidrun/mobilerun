@@ -22,4 +22,4 @@ RUN uv sync --locked --no-dev --no-editable --extra anthropic --no-cache
 
 ENTRYPOINT [".venv/bin/mobilerun"]
 
-CMD ["setup"]
+CMD ["device", "setup"]
