@@ -150,7 +150,9 @@ def _wait_for_transport(guid: str, deadline: float) -> str:
         time.sleep(1)
 
 
-@device_cli.command()
+@device_cli.command(
+    epilog='\b\nExamples:\n  mobilerun device pair\n  mobilerun device pair --timeout 180',
+)
 @verbose_option
 @click.option(
     "--timeout", type=click.IntRange(min=1), default=120, show_default=True,

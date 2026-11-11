@@ -51,10 +51,13 @@ def probe_device(params, *, selection=None):
         device.ui()
 
 
-@click.group(cls=Group)
+@click.group(
+    cls=Group,
+    epilog='\b\nExamples:\n  mobilerun device list\n  mobilerun device pair\n  mobilerun device ui -d DEVICE',
+)
 @verbose_option
 def device_cli(verbose):
-    """Direct device actions (screenshot, tap, swipe, etc.)."""
+    """Discover, pair, set up, inspect, and control devices."""
 
 
 @device_cli.command()
@@ -125,7 +128,9 @@ def ui_lines(state, all_elements=False):
         ))
 
 
-@device_cli.command()
+@device_cli.command(
+    epilog='\b\nExamples:\n  mobilerun device ui -d DEVICE\n  mobilerun device ui -d DEVICE -j',
+)
 @json_option
 @click.option("--all", "all_elements", is_flag=True, help="Include empty layout containers.")
 @device_options

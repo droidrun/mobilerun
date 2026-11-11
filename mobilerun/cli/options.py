@@ -1,6 +1,7 @@
 """Shared Click options and command IO policy."""
 
 import asyncio
+import difflib
 import json
 import os
 import sys
@@ -71,7 +72,28 @@ def convert_api_error(exc):
     return text, document, diagnostic
 
 
-class Command(click.Command):
+class HelpLayout:
+    """Keep shared flags and complete command summaries consistent."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("context_settings", CONTEXT_SETTINGS)
+        super().__init__(*args, **kwargs)
+        for param in self.params:
+            if isinstance(param, click.Option) and param.show_default is None:
+                param.show_default = True
+
+    def get_params(self, ctx):
+        first = {"device": 0, "target": 1, "platform": 2, "config_path": 3}
+        last = {"api_url": 5, "json_output": 6, "verbose": 7, "help": 8}
+        return sorted(super().get_params(ctx), key=lambda param: first.get(
+            param.name, last.get(param.name, 4)
+        ))
+
+    def get_short_help_str(self, limit=45):
+        return self.short_help or " ".join((self.help or "").split("\n\n", 1)[0].split())
+
+
+class Command(HelpLayout, click.Command):
     def invoke(self, ctx):
         ctx.ensure_object(dict)
         ctx.obj["stdout"] = sys.stdout
@@ -122,13 +144,31 @@ class Command(click.Command):
             logger.setLevel(level)
 
 
-class Group(click.Group):
+class Group(HelpLayout, click.Group):
     command_class = Command
     group_class = type
 
-    def __init__(self, *args, **kwargs):
-        kwargs.setdefault("context_settings", CONTEXT_SETTINGS)
+    def __init__(self, *args, command_order=None, **kwargs):
+        self.command_order = command_order
         super().__init__(*args, **kwargs)
+
+    def list_commands(self, ctx):
+        names = super().list_commands(ctx)
+        if self.command_order:
+            return [name for name in self.command_order if name in names] + [
+                name for name in names if name not in self.command_order
+            ]
+        return names
+
+    def resolve_command(self, ctx, args):
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError as exc:
+            if args and exc.message.startswith("No such command"):
+                matches = difflib.get_close_matches(args[0], self.list_commands(ctx), n=1, cutoff=0.6)
+                if matches:
+                    exc.message += f" Did you mean '{matches[0]}'?"
+            raise
 
 
 # The same declarations are reused everywhere, including groups.
@@ -184,16 +224,20 @@ api_url_option = click.option(
 )
 auth_url_option = click.option(
     "--auth-url",
-    default=None,
+    default="https://cloud.mobilerun.ai/api/auth",
     envvar="MOBILERUN_AUTH_URL",
     show_envvar=True,
-    help="Sign-in URL (default https://cloud.mobilerun.ai/api/auth).",
+    help="Mobilerun sign-in URL.",
 )
 tcp_option = click.option("--tcp/--no-tcp", default=None, help="Use local Android TCP.")
 json_option = click.option(
     "-j", "--json", "json_output", is_flag=True, help="Print one JSON document."
 )
-model_option = click.option("-m", "--model", help="LLM model.")
+def model_option(function=None, *, help="LLM model."):
+    decorator = click.option("-m", "--model", help=help)
+    return decorator(function) if function is not None else decorator
+
+
 llm_url_option = click.option("-u", "--llm-url", help="LLM API URL.")
 max_steps_option = click.option("-s", "--max-steps", type=int, help="Maximum steps.")
 

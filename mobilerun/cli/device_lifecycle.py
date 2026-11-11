@@ -20,7 +20,9 @@ from mobilerun.cli.selection import core_client, select_device
 from mobilerun.cli.setup import _setup_portal
 
 
-@device_cli.command("list")
+@device_cli.command(
+    "list", epilog='\b\nExamples:\n  mobilerun device list\n  mobilerun device list --all -j',
+)
 @target_option
 @api_url_option
 @verbose_option
@@ -59,7 +61,7 @@ def list_devices(target, api_url, verbose, json_output, all_devices):
 
 
 @device_cli.command()
-@click.argument("serial")
+@click.argument("serial", metavar="HOST:PORT")
 @verbose_option
 @coro
 async def connect(serial, verbose):
@@ -71,7 +73,7 @@ async def connect(serial, verbose):
 
 
 @device_cli.command()
-@click.argument("serial")
+@click.argument("serial", metavar="HOST:PORT")
 @verbose_option
 @coro
 async def disconnect(serial, verbose):

@@ -56,19 +56,21 @@ def macro_cli(verbose):
     pass
 
 
-@macro_cli.command()
+@macro_cli.command(
+    epilog='\b\nExamples:\n  mobilerun macro replay MACRO.json -n\n  mobilerun macro replay TRAJECTORY -d DEVICE',
+)
 @click.argument("path", type=click.Path(exists=True))
 @device_options
 @tcp_option
 @click.option(
-    "--delay", help="Delay between actions (seconds)", default=1.0, type=float
+    "--delay", help="Delay between actions in seconds.", default=1.0, type=float
 )
 @click.option(
-    "--start-from", help="Start from step number (1-based)", default=1, type=int
+    "--start-from", help="Start from step number (1-based).", default=1, type=int
 )
 @max_steps_option
 @click.option(
-    "-n", "--dry-run", is_flag=True, help="Show actions without executing", default=False
+    "-n", "--dry-run", is_flag=True, help="Show actions without executing.", default=False
 )
 @click.option(
     "--on-mismatch",

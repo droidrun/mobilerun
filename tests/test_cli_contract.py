@@ -413,7 +413,7 @@ def test_run_only_providers_work_and_configure_rejects_them(monkeypatch, provide
     assert load.call_args.args == (PROVIDERS[provider].runtime,)
     result = CliRunner().invoke(cli, ["configure", "-p", provider])
     assert result.exit_code == 2
-    assert "run only" in result.output
+    assert "Invalid value" in result.output
 
 
 @pytest.mark.parametrize("args,verb,expected_args,expected_kwargs", [

@@ -286,7 +286,30 @@ async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = N
         click.echo("Failed to disable Mobilerun keyboard", err=True)
 
 
-@click.command(cls=Command, context_settings=CONTEXT_SETTINGS)
+class AgentOption(click.Option):
+    def get_help_record(self, ctx):
+        names = list_agents()
+        if not names:
+            return None
+        self.type = click.Choice(names)
+        return super().get_help_record(ctx)
+
+    def type_cast_value(self, ctx, value):
+        if value is not None:
+            names = list_agents()
+            if not names:
+                raise click.BadParameter(
+                    "No external agents are installed; install one before using --agent.",
+                    ctx=ctx, param=self,
+                )
+            self.type = click.Choice(names)
+        return super().type_cast_value(ctx, value)
+
+
+@click.command(
+    cls=Command, context_settings=CONTEXT_SETTINGS,
+    epilog='\b\nExamples:\n  mobilerun run "Open Settings"\n  mobilerun run "Open Settings" -d DEVICE -p openai -m MODEL',
+)
 @click.argument("task")
 @device_options
 @tcp_option
@@ -295,16 +318,16 @@ async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = N
 @model_option
 @llm_url_option
 @max_steps_option
-@click.option("-T", "--temperature", type=float)
-@click.option("-a", "--agent", type=click.Choice(list_agents()), help="External agent.")
-@click.option("-r", "--reasoning/--no-reasoning", default=None)
-@click.option("--vision/--no-vision", default=None)
-@click.option("--vision-only", is_flag=True, default=None)
-@click.option("--stream/--no-stream", default=None)
-@click.option("--tracing/--no-tracing", default=None)
-@click.option("--backend", type=click.Choice(["visual-remote"]))
+@click.option("-T", "--temperature", type=float, help="LLM sampling temperature.")
+@click.option("-a", "--agent", cls=AgentOption, help="External agent.")
+@click.option("-r", "--reasoning/--no-reasoning", default=None, help="Enable agent reasoning.")
+@click.option("--vision/--no-vision", default=None, help="Enable vision for all agents.")
+@click.option("--vision-only", is_flag=True, default=None, help="Use screenshots without the UI tree.")
+@click.option("--stream/--no-stream", default=None, help="Stream agent responses.")
+@click.option("--tracing/--no-tracing", default=None, help="Enable tracing.")
+@click.option("--backend", type=click.Choice(["visual-remote"]), help="Device control backend.")
 @click.option("--backend-device", help="Device id for a visual remote backend.")
-@click.option("--save-trajectory", type=click.Choice(["none", "step", "action"]))
+@click.option("--save-trajectory", type=click.Choice(["none", "step", "action"]), help="Choose which trajectory data to save.")
 @coro
 async def run(
     task,

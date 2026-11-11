@@ -12,7 +12,11 @@ from mobilerun.cli.run import run, run_command
 __all__ = ["cli", "run_command"]
 
 
-@click.group(cls=Group)
+@click.group(
+    cls=Group,
+    command_order=["run", "device", "configure", "auth", "doctor", "env", "macro", "completion"],
+    epilog='\b\nExamples:\n  mobilerun device list\n  mobilerun configure -p openai\n  mobilerun run "Open Settings"\n\nDocs: https://docs.mobilerun.ai/framework/guides/cli',
+)
 @click.version_option(version("mobilerun"), "-V", "--version")
 @verbose_option
 def cli(verbose):

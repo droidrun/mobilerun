@@ -18,11 +18,14 @@ from mobilerun.cli.options import (
     model_option,
     verbose_option,
 )
-from mobilerun.cli.providers import PROVIDERS, provider_option
+from mobilerun.cli.providers import PROVIDERS, configure_provider_option
 
 
-@click.command(cls=Command, context_settings=CONTEXT_SETTINGS)
-@provider_option
+@click.command(
+    cls=Command, context_settings=CONTEXT_SETTINGS,
+    epilog='\b\nExamples:\n  mobilerun configure\n  mobilerun configure -p openai -m MODEL',
+)
+@configure_provider_option
 @model_option
 @llm_url_option
 @verbose_option

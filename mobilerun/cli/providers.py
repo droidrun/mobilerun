@@ -34,9 +34,15 @@ PROVIDERS = {
     "openrouter": Provider(None, "api_key", "api_base", "OpenRouter"),
     "deepseek": Provider(None, "api_key", "base_url", "DeepSeek"),
 }
-provider_option = click.option(
-    "-p", "--provider", type=click.Choice(list(PROVIDERS), case_sensitive=False), help="LLM provider.",
-)
+def _provider_option(names):
+    return click.option(
+        "-p", "--provider", type=click.Choice(names, case_sensitive=False), metavar="PROVIDER",
+        help="LLM provider: " + ", ".join(names) + ".",
+    )
+
+
+provider_option = _provider_option(list(PROVIDERS))
+configure_provider_option = _provider_option([name for name, spec in PROVIDERS.items() if spec.family])
 
 
 def llm_url_kwargs(runtime, url):

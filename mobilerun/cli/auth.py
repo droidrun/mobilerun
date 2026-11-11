@@ -160,7 +160,7 @@ LOGIN_OPTIONS = {
 }
 
 service_argument = click.argument(
-    "service", type=click.Choice(["mobilerun", *SERVICES]), default="mobilerun"
+    "service", type=click.Choice(["mobilerun", *SERVICES]), default="mobilerun", metavar="[SERVICE]"
 )
 
 
@@ -170,27 +170,29 @@ def auth_cli(verbose):
     """Sign in, sign out, and inspect saved credentials."""
 
 
-@auth_cli.command()
+@auth_cli.command(
+    epilog='\b\nExamples:\n  mobilerun auth login\n  mobilerun auth login openai --no-browser',
+)
 @service_argument
 @verbose_option
 @auth_url_option
-@model_option
+@model_option(help="LLM model (openai, gemini, xai).")
 @click.option("--client-id", default=None, help="Mobilerun device authorization client id.")
 @click.option(
-    "--credential-path", type=click.Path(dir_okay=False), help="Provider credential file."
+    "--credential-path", type=click.Path(dir_okay=False), help="Provider credential file (openai, anthropic, gemini, xai)."
 )
 @click.option(
     "--timeout",
     type=float,
-    default=None,
+    default=300.0,
     callback=_validate_oauth_timeout,
-    help="Login timeout in seconds (default 300).",
+    help="Provider login timeout in seconds (openai, anthropic, gemini, xai).",
 )
-@click.option("--no-browser", is_flag=True, help="Do not open a browser.")
+@click.option("--no-browser", is_flag=True, help="Do not open a provider login browser (openai, anthropic, gemini, xai).")
 @click.option("--no-qr", is_flag=True, help="Do not display the Mobilerun sign-in QR code.")
-@click.option("--callback-host", help="OAuth callback host.")
-@click.option("--callback-port", type=click.IntRange(0, 65535), help="OAuth callback port.")
-@click.option("--callback-path", help="OAuth callback path.")
+@click.option("--callback-host", help="OAuth callback host (openai, anthropic, gemini).")
+@click.option("--callback-port", type=click.IntRange(0, 65535), help="OAuth callback port (openai, anthropic, gemini).")
+@click.option("--callback-path", help="OAuth callback path (openai, anthropic, gemini).")
 @click.option("--device-code", is_flag=True, help="Use xAI device-code login.")
 @click.option("--token", help="Save an Anthropic setup-token.")
 @click.pass_context
@@ -211,7 +213,7 @@ def login(
     device_code,
     token,
 ):
-    """Log in to SERVICE (default mobilerun)."""
+    """Log in to a service; SERVICE defaults to mobilerun."""
     for name in set().union(*LOGIN_OPTIONS.values()):
         if (
             ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
