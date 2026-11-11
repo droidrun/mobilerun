@@ -47,17 +47,7 @@ class ConfigLoader:
         if config_path:
             return cls._load_user_config(Path(config_path))
 
-        env_config = os.environ.get("MOBILERUN_CONFIG") or os.environ.get(
-            "DROIDRUN_CONFIG"
-        )
-        if os.environ.get("DROIDRUN_CONFIG") and not os.environ.get("MOBILERUN_CONFIG"):
-            import warnings
-
-            warnings.warn(
-                "DROIDRUN_CONFIG is deprecated. Use MOBILERUN_CONFIG instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        env_config = os.environ.get("MOBILERUN_CONFIG")
         if env_config and Path(env_config).exists():
             return cls._load_user_config(Path(env_config))
 

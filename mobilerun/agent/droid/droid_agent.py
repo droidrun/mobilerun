@@ -408,7 +408,6 @@ class MobileAgent(Workflow):
 
         self._stream_screenshots = (
             os.environ.get("MOBILERUN_STREAM_SCREENSHOTS")
-            or os.environ.get("DROIDRUN_STREAM_SCREENSHOTS")
             or ""
         ).lower() in ("1", "true")
 

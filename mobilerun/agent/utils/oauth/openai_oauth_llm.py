@@ -777,7 +777,6 @@ class OpenAIOAuth(OpenAI):
         # Headless environments: use device code flow (no local server needed)
         use_device_code = _is_headless_environment() or (
             os.environ.get("MOBILERUN_OAUTH_MANUAL")
-            or os.environ.get("DROIDRUN_OAUTH_MANUAL")
             or ""
         ).lower() in ("1", "true", "yes")
         if use_device_code:
