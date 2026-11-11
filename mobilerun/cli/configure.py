@@ -28,14 +28,14 @@ from mobilerun.cli.providers import PROVIDERS, provider_option
 @verbose_option
 @config_option
 @click.option("-k", "--api-key", help="API key for the selected provider.")
-@click.option("--auth-mode", help="Authentication mode for the provider.")
+@click.option("--auth-mode", type=click.Choice(["api_key", "oauth", "none"]), help="Authentication mode for the provider.")
 def configure(provider, model, llm_url, verbose, config_path, api_key, auth_mode):
     """Configure provider, authentication and model with the wizard."""
     spec = PROVIDERS.get(provider)
-    if provider and provider.endswith("-oauth"):
-        if auth_mode and auth_mode != "oauth":
-            raise click.UsageError("The selected provider requires --auth-mode oauth")
-        auth_mode = "oauth"
+    if spec:
+        if spec.family is None:
+            raise click.UsageError(f"Provider {provider} is supported by run only")
+        auth_mode = auth_mode or spec.auth_mode
     run_configure_wizard(
         Console(stderr=True),
         ConfigureWizardCallbacks(

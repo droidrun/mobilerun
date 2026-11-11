@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+import traceback
 from contextlib import redirect_stdout
 from functools import wraps
 
@@ -16,6 +17,7 @@ class Command(click.Command):
     def invoke(self, ctx):
         ctx.ensure_object(dict)
         ctx.obj["stdout"] = sys.stdout
+        ctx.obj["emitted"] = False
         if "verbose" in ctx.params and ctx.params["verbose"] is None:
             parent = ctx.parent
             while parent:
@@ -33,13 +35,22 @@ class Command(click.Command):
         try:
             # Libraries and OAuth flows may print progress directly.
             with redirect_stdout(sys.stderr):
+                from mobilerun.config_manager import ConfigLoader
+
+                if ctx.command.name != "doctor":
+                    ConfigLoader.resolve_path(ctx.params.get("config_path"))
                 return super().invoke(ctx)
         except (KeyboardInterrupt, asyncio.CancelledError, click.Abort):
             ctx.exit(130)
-        except (click.ClickException, SystemExit):
-            raise
         except Exception as exc:
-            raise click.ClickException(str(exc) or type(exc).__name__) from exc
+            if not isinstance(exc, click.ClickException):
+                if ctx.params.get("verbose"):
+                    traceback.print_exc(file=sys.stderr)
+                exc = click.ClickException(str(exc) or type(exc).__name__)
+            if (not isinstance(exc, click.UsageError) and ctx.params.get("json_output")
+                    and not ctx.obj["emitted"]):
+                emit({"error": exc.message}, json_output=True)
+            raise exc
         finally:
             logger.handlers, level, logger.propagate = previous
             logger.setLevel(level)
@@ -128,7 +139,6 @@ def device_options(function):
         platform_option,
         config_option,
         api_url_option,
-        tcp_option,
         verbose_option,
     ):
         function = option(function)
@@ -148,3 +158,5 @@ def emit(value, *, json_output=False):
     ctx = click.get_current_context(silent=True)
     output = ctx.obj.get("stdout") if ctx and ctx.obj else sys.stdout
     click.echo(json.dumps(value, default=str) if json_output else value, file=output)
+    if ctx and ctx.obj is not None and json_output:
+        ctx.obj["emitted"] = True

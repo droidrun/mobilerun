@@ -1,9 +1,6 @@
-"""
-Mobilerun CLI - Command line interface for controlling Android devices through LLM agents.
-"""
+"""Sign-in commands using the existing credential flows."""
 
 import math
-import os
 from pathlib import Path
 
 import click
@@ -89,10 +86,6 @@ def _login_mobilerun(auth_url: str | None, client_id: str):
     """Authenticate via OAuth 2.0 device authorization and save the session token."""
     import webbrowser
 
-    from mobilerun.cli import deviceauth
-
-    auth_url = auth_url or os.getenv("MOBILERUN_AUTH_URL") or DEFAULT_AUTH_URL
-
     try:
         code = deviceauth.request_code(auth_url, client_id)
     except Exception as e:
@@ -112,8 +105,6 @@ def _login_mobilerun(auth_url: str | None, client_id: str):
         token = deviceauth.poll_token(auth_url, client_id, code)
     except deviceauth.DeviceAuthError as e:
         raise click.ClickException(f"authorization failed: {e}") from e
-    except KeyboardInterrupt:
-        raise
 
     path = deviceauth.save_token(token, auth_url)
     email = None
@@ -133,6 +124,38 @@ SERVICES = {
     "gemini": (GEMINI_OAUTH_CREDENTIAL_PATH, "gemini_oauth_code_assist"),
     "xai": (GROK_OAUTH_CREDENTIAL_PATH, "xai_oauth"),
 }
+LOGIN_OPTIONS = {
+    "mobilerun": {"auth_url", "client_id"},
+    "openai": {
+        "credential_path",
+        "timeout",
+        "no_browser",
+        "callback_host",
+        "callback_port",
+        "callback_path",
+        "model",
+    },
+    "anthropic": {
+        "credential_path",
+        "timeout",
+        "no_browser",
+        "callback_host",
+        "callback_port",
+        "callback_path",
+        "token",
+    },
+    "gemini": {
+        "credential_path",
+        "timeout",
+        "no_browser",
+        "callback_host",
+        "callback_port",
+        "callback_path",
+        "model",
+    },
+    "xai": {"credential_path", "timeout", "no_browser", "device_code", "model"},
+}
+
 service_argument = click.argument(
     "service", type=click.Choice(["mobilerun", *SERVICES]), default="mobilerun"
 )
@@ -184,53 +207,10 @@ def login(
     token,
 ):
     """Log in to SERVICE (default mobilerun)."""
-    supported = {
-        "mobilerun": {"auth_url", "client_id"},
-        "openai": {
-            "credential_path",
-            "timeout",
-            "no_browser",
-            "callback_host",
-            "callback_port",
-            "callback_path",
-            "model",
-        },
-        "anthropic": {
-            "credential_path",
-            "timeout",
-            "no_browser",
-            "callback_host",
-            "callback_port",
-            "callback_path",
-            "token",
-        },
-        "gemini": {
-            "credential_path",
-            "timeout",
-            "no_browser",
-            "callback_host",
-            "callback_port",
-            "callback_path",
-            "model",
-        },
-        "xai": {"credential_path", "timeout", "no_browser", "device_code", "model"},
-    }
-    for name in (
-        "auth_url",
-        "client_id",
-        "credential_path",
-        "timeout",
-        "no_browser",
-        "callback_host",
-        "callback_port",
-        "callback_path",
-        "device_code",
-        "token",
-        "model",
-    ):
+    for name in set().union(*LOGIN_OPTIONS.values()):
         if (
             ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
-            and name not in supported[service]
+            and name not in LOGIN_OPTIONS[service]
         ):
             raise click.UsageError(f"--{name.replace('_', '-')} is not supported for {service}")
     if service == "mobilerun":
@@ -286,8 +266,7 @@ def logout(service, verbose):
 @auth_cli.command()
 @verbose_option
 @json_option
-@auth_url_option
-def status(verbose, json_output, auth_url):
+def status(verbose, json_output):
     """Show saved sign-in status without exposing tokens."""
     credentials = deviceauth.load_credentials() or {}
     token = credentials.get("access_token")
@@ -303,7 +282,7 @@ def status(verbose, json_output, auth_url):
     if token:
         try:
             session = deviceauth.fetch_session(
-                auth_url or credentials.get("auth_url") or DEFAULT_AUTH_URL, token
+                credentials.get("auth_url") or DEFAULT_AUTH_URL, token
             )
             if session is None:
                 failed = True
@@ -311,9 +290,6 @@ def status(verbose, json_output, auth_url):
                 rows[0]["email"] = session.get("user", {}).get("email")
         except Exception:
             failed = True
-        if failed:
-            rows[0]["signed_in"] = False
-            rows[0]["error"] = "session check failed"
     for service, (path, variant) in SERVICES.items():
         rows.append(
             {
@@ -322,6 +298,10 @@ def status(verbose, json_output, auth_url):
                 "credential_path": str(path),
             }
         )
+    if failed:
+        raise click.ClickException(
+            "Mobilerun session check failed; run `mobilerun auth login` again."
+        )
     if json_output:
         emit(rows, json_output=True)
     else:
@@ -329,7 +309,3 @@ def status(verbose, json_output, auth_url):
             label = "signed in" if row["signed_in"] else "not signed in"
             email = f" ({row['email']})" if row.get("email") else ""
             emit(f"{row['service']}: {label}{email}  {row['credential_path']}")
-    if failed:
-        raise click.ClickException(
-            "Mobilerun session check failed; run `mobilerun auth login` again."
-        )

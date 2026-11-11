@@ -44,19 +44,19 @@ class ConfigLoader:
            ~/.config/droidrun/config.yaml on Linux)
         4. Package defaults (creates user config)
         """
-        if config_path:
-            return cls._load_user_config(Path(config_path))
-
-        env_config = os.environ.get("MOBILERUN_CONFIG")
-        if env_config and Path(env_config).exists():
-            return cls._load_user_config(Path(env_config))
-
-        user_config_path = cls.get_user_config_path()
-
-        if user_config_path.exists():
-            return cls._load_user_config(user_config_path)
-
+        path = cls.resolve_path(config_path)
+        if path.exists():
+            return cls._load_user_config(path)
         return cls._init_user_config()
+
+    @classmethod
+    def resolve_path(cls, explicit=None) -> Path:
+        """Resolve the config path, rejecting a missing explicitly selected file."""
+        selected = explicit or os.environ.get("MOBILERUN_CONFIG")
+        path = Path(selected).expanduser() if selected else cls.get_user_config_path()
+        if selected and not path.is_file():
+            raise FileNotFoundError(f"Config file does not exist: {path}")
+        return path
 
     @classmethod
     def _load_user_config(cls, user_config_path: Path) -> MobileConfig:
@@ -87,11 +87,11 @@ class ConfigLoader:
         return config
 
     @classmethod
-    def save(cls, config: MobileConfig) -> Path:
+    def save(cls, config: MobileConfig, path: str | Path | None = None) -> Path:
         """Save config to user config path."""
         config_dict = config.to_dict()
         config_dict["_version"] = CURRENT_VERSION
-        return cls._save_dict(config_dict, cls.get_user_config_path())
+        return cls._save_dict(config_dict, Path(path) if path is not None else cls.get_user_config_path())
 
     @classmethod
     def _save_dict(cls, config_dict: Dict[str, Any], path: Path) -> Path:

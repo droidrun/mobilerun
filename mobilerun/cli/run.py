@@ -1,6 +1,4 @@
-"""
-Mobilerun CLI - Command line interface for controlling Android devices through LLM agents.
-"""
+"""Run tasks with the framework agent and native async drivers."""
 
 import logging
 
@@ -12,14 +10,15 @@ from rich.panel import Panel
 from rich.text import Text
 
 from mobilerun import MobileAgent, ResultEvent
+from mobilerun.agent.external import list_agents
 from mobilerun.agent.utils.android_device import (
     is_portal_http_url,
 )
-from mobilerun.agent.utils.errors import describe_error
 from mobilerun.agent.utils.llm_picker import load_llm
 from mobilerun.cli.event_handler import EventHandler
 from mobilerun.cli.options import (
     CONTEXT_SETTINGS,
+    DEFAULT_API_URL,
     Command,
     coro,
     device_options,
@@ -28,8 +27,10 @@ from mobilerun.cli.options import (
     llm_url_option,
     max_steps_option,
     model_option,
+    tcp_option,
 )
-from mobilerun.cli.providers import PROVIDERS, provider_option
+from mobilerun.cli.providers import PROVIDERS, llm_url_kwargs, provider_option
+from mobilerun.cli.selection import _native_driver, select_device
 from mobilerun.config_manager import ConfigLoader, MobileConfig
 from mobilerun.log_handlers import CLILogHandler, configure_logging
 from mobilerun.telemetry import print_telemetry_message
@@ -56,7 +57,7 @@ def _setup_cli_logging(debug: bool) -> None:
     configure_logging(debug=debug, handler=handler)
 
 
-async def run_command(
+async def _run_task(
     command: str,
     config_path: str | None = None,
     device: str | None = None,
@@ -64,13 +65,8 @@ async def run_command(
     provider: str | None = None,
     model: str | None = None,
     steps: int | None = None,
-    base_url: str | None = None,
-    api_base: str | None = None,
     vision: bool | None = None,
     vision_only: bool | None = None,
-    manager_vision: bool | None = None,
-    executor_vision: bool | None = None,
-    fast_agent_vision: bool | None = None,
     reasoning: bool | None = None,
     stream: bool | None = None,
     tracing: bool | None = None,
@@ -79,26 +75,14 @@ async def run_command(
     control_backend: str | None = None,
     device_id: str | None = None,
     save_trajectory: str | None = None,
-    ios: bool = False,
     platform: str | None = None,
     temperature: float | None = None,
     llm_url: str | None = None,
     target: str = "local",
-    api_url: str = "https://api.mobilerun.ai/v1",
-    json_output: bool = False,
-    **kwargs,
-) -> bool:
-    """Run a command on your Android device using natural language.
-
-    Returns:
-        bool: True if the task completed successfully, False otherwise.
-    """
-    try:
-        config = ConfigLoader.load(config_path)
-    except Exception as exc:
-        if json_output:
-            emit({"success": False, "reason": str(exc), "steps": None}, json_output=True)
-        raise click.ClickException(f"Could not load config: {exc}") from exc
+    api_url: str = DEFAULT_API_URL,
+) -> tuple[bool, str | None, int | None]:
+    """Execute a task and return the result-event fields."""
+    config = ConfigLoader.load(config_path)
 
     # Print cloud link in a box
     if config.logging.rich_text:
@@ -143,15 +127,6 @@ async def run_command(
             config.agent.executor.vision = vision
             config.agent.fast_agent.vision = vision
             logger.debug(f"CLI override: vision={vision} (all agents)")
-        else:
-            # Apply individual agent vision overrides
-            if manager_vision is not None:
-                config.agent.manager.vision = manager_vision
-            if executor_vision is not None:
-                config.agent.executor.vision = executor_vision
-            if fast_agent_vision is not None:
-                config.agent.fast_agent.vision = fast_agent_vision
-
         # Agent overrides
         if agent is not None:
             config.agent.name = agent
@@ -165,8 +140,6 @@ async def run_command(
         # Device overrides
         if platform is not None:
             config.device.platform = platform
-        elif ios:
-            config.device.platform = "ios"
         if device is not None:
             config.device.serial = device
         if tcp is not None:
@@ -191,14 +164,12 @@ async def run_command(
             config.tracing.enabled = tracing
 
         # The framework keeps its native async drivers. Core decides the backend.
-        from mobilerun.cli.selection import resolve_cloud_api_key, select_device
-
         if not config.device.control_backend:
             selection = await select_device(
                 config.device.serial,
                 config_path,
                 tcp,
-                "ios" if ios else config.device.platform,
+                config.device.platform,
                 target,
                 discover=False,
                 config=config,
@@ -209,17 +180,7 @@ async def run_command(
                 is_cloud = True
                 if tcp:
                     raise click.UsageError("--tcp is only supported for local Android devices")
-                from mobilerun_core_local.driver.cloud import CloudDriver
-
-                key = resolve_cloud_api_key()
-                if not key:
-                    raise click.ClickException(
-                        "No cloud API key found. Set MOBILERUN_CLOUD_API_KEY or run `mobilerun auth login`."
-                    )
-                injected_driver = CloudDriver(
-                    device_id=selection.device, api_key=key, base_url=api_url
-                )
-                await injected_driver.connect()
+                injected_driver = await _native_driver(selection, config, api_url)
                 # CloudDriver supplies Android-shaped trees for every platform.
                 config.device.platform = "android"
                 config.device.serial = None
@@ -251,26 +212,14 @@ async def run_command(
             llm_kwargs = {}
             if temperature is not None:
                 llm_kwargs["temperature"] = temperature
-            if base_url is not None:
-                llm_kwargs["base_url"] = base_url
-            if api_base is not None:
-                llm_kwargs["api_base"] = api_base
-            from mobilerun.cli.providers import llm_url_kwargs
-
             llm_kwargs.update(llm_url_kwargs(provider, llm_url))
-            llm = load_llm(provider, model=model, **llm_kwargs, **kwargs)
+            llm = load_llm(provider, model=model, **llm_kwargs)
         else:
             if llm_url is not None:
-                from mobilerun.cli.providers import llm_url_kwargs
-
                 for profile in config.llm_profiles.values():
                     profile.kwargs.update(llm_url_kwargs(profile.provider, llm_url))
             if temperature is not None:
                 droid_agent_kwargs["temperature"] = temperature
-            if base_url is not None:
-                droid_agent_kwargs["base_url"] = base_url
-            if api_base is not None:
-                droid_agent_kwargs["api_base"] = api_base
 
         droid_agent = MobileAgent(
             goal=command,
@@ -290,55 +239,24 @@ async def run_command(
 
         event_handler = EventHandler()
 
-        try:
-            handler = droid_agent.run()
+        handler = droid_agent.run()
+        async for event in handler.stream_events():
+            event_handler.handle(event)
+        result: ResultEvent = await handler
+        return result.success, result.reason, result.steps
 
-            async for event in handler.stream_events():
-                event_handler.handle(event)
-            result: ResultEvent = await handler
-            if json_output:
-                emit(
-                    {
-                        "success": result.success,
-                        "reason": getattr(result, "reason", None),
-                        "steps": getattr(result, "steps", None),
-                    },
-                    json_output=True,
-                )
-            return result.success
-
-        except KeyboardInterrupt:
-            logger.info("⏹️ Stopped by user")
-            raise
-
-        except Exception as e:
-            err_desc = describe_error(e) or type(e).__name__
-            logger.error(f"💥 Error: {err_desc}")
-            if config.logging.debug:
-                import traceback
-
-                logger.debug(traceback.format_exc())
-            if json_output:
-                emit({"success": False, "reason": err_desc, "steps": None}, json_output=True)
-            return False
-
-    except click.ClickException as exc:
-        if json_output and not isinstance(exc, click.UsageError):
-            emit({"success": False, "reason": exc.message, "steps": None}, json_output=True)
-        raise
-    except Exception as e:
-        err_desc = describe_error(e) or type(e).__name__
-        logger.error(f"💥 Setup error: {err_desc}")
-        if debug_mode:
-            import traceback
-
-            logger.debug(traceback.format_exc())
-        if json_output:
-            emit({"success": False, "reason": err_desc, "steps": None}, json_output=True)
-        return False
     finally:
         if not is_cloud:
             await _cleanup_android_keyboard(config, getattr(droid_agent, "android_serial", None))
+
+
+async def run_command(*args, **kwargs) -> bool:
+    """Keep the boolean interface used by macro handoff and Python callers."""
+    try:
+        success, _, _ = await _run_task(*args, **kwargs)
+        return success
+    except Exception:
+        return False
 
 
 async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = None) -> None:
@@ -367,15 +285,16 @@ async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = N
 
 
 @click.command(cls=Command, context_settings=CONTEXT_SETTINGS)
-@click.argument("command")
+@click.argument("task")
 @device_options
+@tcp_option
 @json_option
 @provider_option
 @model_option
 @llm_url_option
 @max_steps_option
 @click.option("-T", "--temperature", type=float)
-@click.option("-a", "--agent", help="External agent.")
+@click.option("-a", "--agent", type=click.Choice(list_agents()), help="External agent.")
 @click.option("-r", "--reasoning/--no-reasoning", default=None)
 @click.option("--vision/--no-vision", default=None)
 @click.option("--vision-only", is_flag=True, default=None)
@@ -386,7 +305,7 @@ async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = N
 @click.option("--save-trajectory", type=click.Choice(["none", "step", "action"]))
 @coro
 async def run(
-    command,
+    task,
     config_path,
     device,
     target,
@@ -413,17 +332,15 @@ async def run(
     """Run a task on a mobile device using natural language."""
     if (provider is None) != (model is None):
         raise click.UsageError("--provider and --model must be given together")
-    success = await run_command(
-        command=command,
+    success, reason, steps = await _run_task(
+        command=task,
         config_path=config_path,
         device=device,
         target=target,
-        ios=platform == "ios",
         platform=platform,
         api_url=api_url,
         tcp=tcp,
         debug=verbose,
-        json_output=json_output,
         provider=PROVIDERS[provider].runtime if provider else None,
         model=model,
         llm_url=llm_url,
@@ -439,5 +356,7 @@ async def run(
         device_id=backend_device,
         save_trajectory=save_trajectory,
     )
+    if json_output:
+        emit({"success": success, "reason": reason, "steps": steps}, json_output=True)
     if not success:
-        raise click.ClickException("Task failed")
+        raise click.ClickException(reason or "Task failed")
