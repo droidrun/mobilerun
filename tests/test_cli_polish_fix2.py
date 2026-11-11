@@ -120,7 +120,7 @@ def test_run_platform_override_does_not_reassign_android_config_token(monkeypatc
             return done().__await__()
 
     agent = Mock(return_value=SimpleNamespace(run=lambda: Handler()))
-    monkeypatch.setattr(run_module, "MobileAgent", agent)
+    monkeypatch.setattr("mobilerun.MobileAgent", agent)
     monkeypatch.setattr(run_module, "_cleanup_android_keyboard", AsyncMock())
     result = CliRunner().invoke(cli, [
         "run", "task", "-P", "ios", "-d", "http://localhost:8080", "-j",

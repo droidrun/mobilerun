@@ -3,7 +3,9 @@ Mobilerun - A framework for controlling Android devices through LLM agents.
 """
 
 import logging
+from importlib import import_module
 from importlib.metadata import version
+from typing import TYPE_CHECKING
 
 __version__ = version("mobilerun")
 
@@ -17,11 +19,7 @@ _logger.addHandler(CLILogHandler())
 _logger.setLevel(logging.INFO)
 _logger.propagate = False
 
-# Import main classes for easier access
-from mobilerun.agent import ResultEvent  # noqa: E402
-from mobilerun.agent.droid import MobileAgent, MobileAgentState  # noqa: E402
 from mobilerun.agent.utils.errors import HtmlErrorPageFilter  # noqa: E402
-from mobilerun.agent.utils.llm_picker import load_llm  # noqa: E402
 
 # llama-index's retry warnings include provider error bodies verbatim.
 for _retry_logger in (
@@ -30,32 +28,55 @@ for _retry_logger in (
 ):
     logging.getLogger(_retry_logger).addFilter(HtmlErrorPageFilter())
 
-# Import configuration classes
-from mobilerun.config_manager import (  # noqa: E402
-    # Agent configs
-    AgentConfig,
-    AppCardConfig,
-    CredentialsConfig,
-    # Feature configs
-    DeviceConfig,
-    ExecutorConfig,
-    FastAgentConfig,
-    LLMProfile,
-    LoggingConfig,
-    ManagerConfig,
-    MobileConfig,
-    TelemetryConfig,
-    ToolsConfig,
-    TracingConfig,
-)
 
-# Import macro functionality
-from mobilerun.macro import (  # noqa: E402
-    MacroPlayer,
-    replay_macro_file,
-    replay_macro_folder,
-)
-from mobilerun.tools import AndroidDriver, DeviceDriver, RecordingDriver  # noqa: E402
+
+if TYPE_CHECKING:
+    from mobilerun.agent import ResultEvent
+    from mobilerun.agent.droid import MobileAgent, MobileAgentState
+    from mobilerun.agent.utils.llm_picker import load_llm
+    from mobilerun.config_manager import (
+        AgentConfig,
+        AppCardConfig,
+        CredentialsConfig,
+        DeviceConfig,
+        ExecutorConfig,
+        FastAgentConfig,
+        LLMProfile,
+        LoggingConfig,
+        ManagerConfig,
+        MobileConfig,
+        TelemetryConfig,
+        ToolsConfig,
+        TracingConfig,
+    )
+    from mobilerun.macro import MacroPlayer, replay_macro_file, replay_macro_folder
+    from mobilerun.tools import AndroidDriver, DeviceDriver, RecordingDriver
+
+_EXPORTS = {
+    'ResultEvent': ('mobilerun.agent', 'ResultEvent'),
+    'MobileAgent': ('mobilerun.agent.droid', 'MobileAgent'),
+    'MobileAgentState': ('mobilerun.agent.droid', 'MobileAgentState'),
+    'load_llm': ('mobilerun.agent.utils.llm_picker', 'load_llm'),
+    'AgentConfig': ('mobilerun.config_manager', 'AgentConfig'),
+    'AppCardConfig': ('mobilerun.config_manager', 'AppCardConfig'),
+    'CredentialsConfig': ('mobilerun.config_manager', 'CredentialsConfig'),
+    'DeviceConfig': ('mobilerun.config_manager', 'DeviceConfig'),
+    'ExecutorConfig': ('mobilerun.config_manager', 'ExecutorConfig'),
+    'FastAgentConfig': ('mobilerun.config_manager', 'FastAgentConfig'),
+    'LLMProfile': ('mobilerun.config_manager', 'LLMProfile'),
+    'LoggingConfig': ('mobilerun.config_manager', 'LoggingConfig'),
+    'ManagerConfig': ('mobilerun.config_manager', 'ManagerConfig'),
+    'MobileConfig': ('mobilerun.config_manager', 'MobileConfig'),
+    'TelemetryConfig': ('mobilerun.config_manager', 'TelemetryConfig'),
+    'ToolsConfig': ('mobilerun.config_manager', 'ToolsConfig'),
+    'TracingConfig': ('mobilerun.config_manager', 'TracingConfig'),
+    'MacroPlayer': ('mobilerun.macro', 'MacroPlayer'),
+    'replay_macro_file': ('mobilerun.macro', 'replay_macro_file'),
+    'replay_macro_folder': ('mobilerun.macro', 'replay_macro_folder'),
+    'AndroidDriver': ('mobilerun.tools', 'AndroidDriver'),
+    'DeviceDriver': ('mobilerun.tools', 'DeviceDriver'),
+    'RecordingDriver': ('mobilerun.tools', 'RecordingDriver'),
+}
 
 # Make main components available at package level
 __all__ = [
@@ -107,5 +128,14 @@ def __getattr__(name):
             DeprecationWarning,
             stacklevel=2,
         )
-        return globals()[new_name]
+        return getattr(import_module(__name__), new_name)
+    if name in _EXPORTS:
+        module, attribute = _EXPORTS[name]
+        value = getattr(import_module(module), attribute)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

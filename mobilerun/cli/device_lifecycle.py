@@ -1,5 +1,7 @@
 """Device discovery and Android lifecycle commands."""
 
+from __future__ import annotations
+
 import click
 from async_adbutils import adb
 
@@ -23,7 +25,6 @@ from mobilerun.cli.options import (
     verbose_option,
 )
 from mobilerun.cli.selection import core_client, select_device
-from mobilerun.cli.setup import _setup_portal
 
 
 @device_cli.command(
@@ -124,6 +125,8 @@ async def disconnect(serial, verbose):
 @coro
 async def setup(device, config_path, verbose, apk, portal_version, latest):
     """Install and enable the Portal on a local Android device."""
+    from mobilerun.cli.setup import _setup_portal
+
     if sum(bool(x) for x in (apk, portal_version, latest)) > 1:
         raise click.UsageError("Choose one of --apk, --portal-version or --latest")
     selection = await select_device(device, config_path)
@@ -144,3 +147,15 @@ def ping(**params):
     """Connect to a device and read its UI state once."""
     probe_device(params)
     click.echo("Device is reachable and serving the UI tree.", err=True)
+
+
+from mobilerun.cli.options import _lazy_imports  # noqa: E402
+
+__getattr__ = _lazy_imports(globals(), {
+    '_setup_portal': ('mobilerun.cli.setup', '_setup_portal'),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from mobilerun.cli.setup import _setup_portal as _setup_portal

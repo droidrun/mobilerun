@@ -1,5 +1,7 @@
 """Sign-in commands using the existing credential flows."""
 
+from __future__ import annotations
+
 import math
 from pathlib import Path
 
@@ -7,15 +9,6 @@ import click
 from rich.console import Console
 
 from mobilerun.cli import deviceauth
-from mobilerun.cli.configure_wizard import _OAUTH_CREDENTIAL_SLOTS, _oauth_credentials_present
-from mobilerun.cli.oauth_actions import (
-    login_requires_input,
-    run_anthropic_setup_token_oauth,
-    run_gemini_oauth_login,
-    run_grok_oauth_login,
-    run_openai_oauth_login,
-    save_anthropic_setup_token,
-)
 from mobilerun.cli.options import (
     DEFAULT_AUTH_URL,
     Group,
@@ -57,17 +50,23 @@ def _print_oauth_login_success(provider_label: str, credential_path: str) -> Non
 
 
 def _run_openai_oauth_login(credential_path: str, model: str | None, **kwargs) -> None:
+    from mobilerun.cli.oauth_actions import run_openai_oauth_login
+
     run_openai_oauth_login(credential_path=credential_path, model=model, **kwargs)
     _print_oauth_login_success("OpenAI", credential_path)
 
 
 def _run_gemini_oauth_login(credential_path: str, model: str | None, **kwargs) -> None:
+    from mobilerun.cli.oauth_actions import run_gemini_oauth_login
+
     run_gemini_oauth_login(credential_path=credential_path, model=model, **kwargs)
     _print_oauth_login_success("Gemini", credential_path)
 
 
 def _run_anthropic_oauth_login(credential_path: str, **kwargs) -> None:
     """Run the full Anthropic OAuth flow inline and save the token."""
+    from mobilerun.cli.oauth_actions import run_anthropic_setup_token_oauth
+
     console.print("[blue]Starting Anthropic login...[/]")
     run_anthropic_setup_token_oauth(
         credential_path=credential_path,
@@ -77,6 +76,8 @@ def _run_anthropic_oauth_login(credential_path: str, **kwargs) -> None:
 
 
 def _run_grok_oauth_login(credential_path: str, model: str | None = None, **kwargs) -> None:
+    from mobilerun.cli.oauth_actions import run_grok_oauth_login
+
     run_grok_oauth_login(
         credential_path=credential_path,
         model=model,
@@ -235,6 +236,8 @@ def login(
     no_input,
 ):
     """Log in to a service; SERVICE defaults to mobilerun."""
+    from mobilerun.cli.oauth_actions import login_requires_input, save_anthropic_setup_token
+
     for name in set().union(*LOGIN_OPTIONS.values()):
         if (
             ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
@@ -296,6 +299,8 @@ def login(
 @verbose_option
 def logout(service, verbose):
     """Remove SERVICE's stored credential, preserving other services."""
+    from mobilerun.cli.configure_wizard import _OAUTH_CREDENTIAL_SLOTS, _oauth_credentials_present
+
     if service == "mobilerun":
         removed = deviceauth.clear_credentials()
     else:
@@ -313,6 +318,8 @@ def logout(service, verbose):
 @json_option
 def status(verbose, json_output):
     """Show saved sign-in status without exposing tokens."""
+    from mobilerun.cli.configure_wizard import _oauth_credentials_present
+
     credentials = deviceauth.load_credentials() or {}
     token = credentials.get("access_token")
     credential = resolve_cloud_credential()
@@ -363,3 +370,33 @@ def status(verbose, json_output):
                 if row["env_overrides_login"]:
                     cloud += " (overrides saved sign-in)"
             emit(f"{row['service']}: {label}{email}  {row['credential_path']}{cloud}")
+
+
+from mobilerun.cli.options import _lazy_imports  # noqa: E402
+
+__getattr__ = _lazy_imports(globals(), {
+    '_OAUTH_CREDENTIAL_SLOTS': ('mobilerun.cli.configure_wizard', '_OAUTH_CREDENTIAL_SLOTS'),
+    '_oauth_credentials_present': ('mobilerun.cli.configure_wizard', '_oauth_credentials_present'),
+    'login_requires_input': ('mobilerun.cli.oauth_actions', 'login_requires_input'),
+    'run_anthropic_setup_token_oauth': ('mobilerun.cli.oauth_actions', 'run_anthropic_setup_token_oauth'),
+    'run_gemini_oauth_login': ('mobilerun.cli.oauth_actions', 'run_gemini_oauth_login'),
+    'run_grok_oauth_login': ('mobilerun.cli.oauth_actions', 'run_grok_oauth_login'),
+    'run_openai_oauth_login': ('mobilerun.cli.oauth_actions', 'run_openai_oauth_login'),
+    'save_anthropic_setup_token': ('mobilerun.cli.oauth_actions', 'save_anthropic_setup_token'),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from mobilerun.cli.configure_wizard import _OAUTH_CREDENTIAL_SLOTS as _OAUTH_CREDENTIAL_SLOTS
+    from mobilerun.cli.configure_wizard import (
+        _oauth_credentials_present as _oauth_credentials_present,
+    )
+    from mobilerun.cli.oauth_actions import login_requires_input as login_requires_input
+    from mobilerun.cli.oauth_actions import (
+        run_anthropic_setup_token_oauth as run_anthropic_setup_token_oauth,
+    )
+    from mobilerun.cli.oauth_actions import run_gemini_oauth_login as run_gemini_oauth_login
+    from mobilerun.cli.oauth_actions import run_grok_oauth_login as run_grok_oauth_login
+    from mobilerun.cli.oauth_actions import run_openai_oauth_login as run_openai_oauth_login
+    from mobilerun.cli.oauth_actions import save_anthropic_setup_token as save_anthropic_setup_token

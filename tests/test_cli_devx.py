@@ -62,13 +62,13 @@ def allow_input(monkeypatch):
 def secret_command(request, monkeypatch, tmp_path):
     callback = Mock()
     if request.param == "configure":
-        monkeypatch.setattr(configure, "run_configure_wizard", callback)
+        monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", callback)
         args = ["configure", "-p", "openai", "-m", "MODEL", "-k"]
 
         def value():
             return callback.call_args.kwargs["api_key"]
     else:
-        monkeypatch.setattr(auth, "save_anthropic_setup_token", callback)
+        monkeypatch.setattr("mobilerun.cli.oauth_actions.save_anthropic_setup_token", callback)
         args = [
             "auth",
             "login",
@@ -226,7 +226,7 @@ def test_doctor_preserves_checks_once(monkeypatch, failed, json_output):
         console.print("Please enable accessibility manually")
         return [CheckResult("Device", Status.FAIL if failed else Status.PASS, "observed", "detail")]
 
-    monkeypatch.setattr(doctor_command, "run_doctor", check)
+    monkeypatch.setattr("mobilerun.cli.doctor.run_doctor", check)
     result = CliRunner().invoke(cli, ["doctor", *(["-j"] if json_output else [])])
     assert result.exit_code == int(failed), result.output
     assert "Please enable accessibility manually" in result.stderr
@@ -492,7 +492,7 @@ def test_configure_without_input_fails_before_loading_or_writing(
         ConfigLoader, "load", Mock(side_effect=AssertionError("must not load or create config"))
     )
     wizard = Mock(side_effect=AssertionError("must not prompt"))
-    monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", wizard)
     result = CliRunner().invoke(cli, ["configure", *flags, *(["--no-input"] if no_input else [])])
     assert result.exit_code == 2, result.output
     assert missing in result.stderr
@@ -555,7 +555,7 @@ def test_secrets_are_redacted_from_errors_and_verbose_logs(secret_command, from_
 )
 def test_login_only_blocks_flows_that_need_terminal_input(monkeypatch, service, code, calls, hints):
 
-    monkeypatch.setattr(auth, "login_requires_input", lambda name: name in {"anthropic", "gemini"})
+    monkeypatch.setattr("mobilerun.cli.oauth_actions.login_requires_input", lambda name: name in {"anthropic", "gemini"})
     callbacks = []
     for name in (
         "_login_mobilerun",
@@ -577,7 +577,7 @@ def test_login_only_blocks_flows_that_need_terminal_input(monkeypatch, service, 
 @pytest.mark.parametrize("service", ["anthropic", "gemini"])
 def test_provider_callback_login_without_manual_prompt_is_allowed(monkeypatch, service):
 
-    monkeypatch.setattr(auth, "login_requires_input", lambda _: False)
+    monkeypatch.setattr("mobilerun.cli.oauth_actions.login_requires_input", lambda _: False)
     callback = Mock()
     monkeypatch.setattr(auth, f"_run_{service}_oauth_login", callback)
     result = CliRunner().invoke(cli, ["auth", "login", service, "--no-input"])
@@ -587,7 +587,7 @@ def test_provider_callback_login_without_manual_prompt_is_allowed(monkeypatch, s
 
 @pytest.mark.parametrize("failure,code", [(EOFError, 1), (KeyboardInterrupt, 130)])
 def test_prompt_eof_and_interrupt_have_distinct_exit_codes(monkeypatch, allow_input, failure, code):
-    monkeypatch.setattr(configure, "run_configure_wizard", Mock(side_effect=failure))
+    monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", Mock(side_effect=failure))
     result = CliRunner().invoke(cli, ["configure"])
     assert result.exit_code == code, result.output
     if code == 1:
@@ -601,7 +601,7 @@ def test_click_prompt_interrupt_exits_130(monkeypatch, allow_input):
         )
         return click.prompt("Value")
 
-    monkeypatch.setattr(configure, "run_configure_wizard", prompt)
+    monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", prompt)
     result = CliRunner().invoke(cli, ["configure"])
     assert result.exit_code == 130, result.output
     assert "Input closed" not in result.output
@@ -610,7 +610,7 @@ def test_click_prompt_interrupt_exits_130(monkeypatch, allow_input):
 def test_no_input_configure_resolves_provider_environment_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-environment-marker")
     wizard = Mock()
-    monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", wizard)
     result = CliRunner().invoke(cli, ["configure", "-p", "openai", "-m", "MODEL", "--no-input"])
     assert result.exit_code == 0, result.output
     assert "dummy-environment-marker" not in result.output
@@ -618,9 +618,9 @@ def test_no_input_configure_resolves_provider_environment_key(monkeypatch):
 
 
 def test_no_input_configure_never_starts_missing_oauth_login(monkeypatch):
-    monkeypatch.setattr(configure, "_oauth_credentials_present", lambda *args: False)
+    monkeypatch.setattr("mobilerun.cli.configure_wizard._oauth_credentials_present", lambda *args: False)
     wizard = Mock()
-    monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", wizard)
     result = CliRunner().invoke(
         cli, ["configure", "-p", "openai-oauth", "-m", "MODEL", "--no-input"]
     )
@@ -1100,7 +1100,7 @@ def cloud_status(monkeypatch, tmp_path, cloud_credential_case):
     monkeypatch.setattr(
         deviceauth, "fetch_session", Mock(return_value={"user": {"email": "user@example.test"}})
     )
-    monkeypatch.setattr(auth, "_oauth_credentials_present", lambda *a: False)
+    monkeypatch.setattr("mobilerun.cli.configure_wizard._oauth_credentials_present", lambda *a: False)
 
 
 def test_cloud_status_json_names_active_credential(cloud_status, cloud_credential_case, tmp_path):

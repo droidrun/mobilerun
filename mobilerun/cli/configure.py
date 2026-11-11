@@ -1,5 +1,7 @@
 """Interactive configuration command."""
 
+from __future__ import annotations
+
 import click
 from rich.console import Console
 
@@ -9,11 +11,6 @@ from mobilerun.cli.auth import (
     _run_gemini_oauth_login,
     _run_grok_oauth_login,
     _run_openai_oauth_login,
-)
-from mobilerun.cli.configure_wizard import (
-    ConfigureWizardCallbacks,
-    _oauth_credentials_present,
-    run_configure_wizard,
 )
 from mobilerun.cli.options import (
     Command,
@@ -62,6 +59,8 @@ class ConfigureCommand(Command):
 @click.option("--auth-mode", type=click.Choice(["api_key", "oauth", "none"]), help="Authentication mode for the provider.")
 def configure(provider, model, llm_url, verbose, config_path, api_key, auth_mode, no_input):
     """Configure provider, authentication and model with the wizard."""
+    from mobilerun.cli.configure_wizard import ConfigureWizardCallbacks, run_configure_wizard
+
     spec = PROVIDERS.get(provider)
     if spec:
         auth_mode = auth_mode or spec.auth_mode
@@ -87,6 +86,7 @@ def configure(provider, model, llm_url, verbose, config_path, api_key, auth_mode
 def _validate_non_interactive(provider, model, api_key, base_url, auth_mode):
     """Validate before loading or saving config, or entering the wizard."""
     from mobilerun.agent.providers.registry import VARIANT_ENV_KEY_SLOT, resolve_provider_variant
+    from mobilerun.cli.configure_wizard import _oauth_credentials_present
     from mobilerun.config_manager.env_keys import resolve_env_key
 
     if not provider:
@@ -111,3 +111,21 @@ def _validate_non_interactive(provider, model, api_key, base_url, auth_mode):
             f"Saved OAuth credentials required; run `mobilerun auth login {spec.family}` "
             "in a terminal first, or choose -p PROVIDER with API-key authentication."
         )
+
+
+from mobilerun.cli.options import _lazy_imports  # noqa: E402
+
+__getattr__ = _lazy_imports(globals(), {
+    'ConfigureWizardCallbacks': ('mobilerun.cli.configure_wizard', 'ConfigureWizardCallbacks'),
+    '_oauth_credentials_present': ('mobilerun.cli.configure_wizard', '_oauth_credentials_present'),
+    'run_configure_wizard': ('mobilerun.cli.configure_wizard', 'run_configure_wizard'),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from mobilerun.cli.configure_wizard import ConfigureWizardCallbacks as ConfigureWizardCallbacks
+    from mobilerun.cli.configure_wizard import (
+        _oauth_credentials_present as _oauth_credentials_present,
+    )
+    from mobilerun.cli.configure_wizard import run_configure_wizard as run_configure_wizard

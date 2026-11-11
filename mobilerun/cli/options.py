@@ -1,5 +1,7 @@
 """Shared Click options and command IO policy."""
 
+from __future__ import annotations
+
 import asyncio
 import difflib
 import json
@@ -12,7 +14,6 @@ from contextlib import redirect_stdout
 from functools import wraps
 
 import click
-from mobilerun_sdk import APIConnectionError, APIStatusError, APITimeoutError
 
 DEFAULT_API_URL = "https://api.mobilerun.ai/v1"
 DEFAULT_AUTH_URL = "https://cloud.mobilerun.ai/api/auth"
@@ -79,6 +80,8 @@ def input_allowed(no_input=False):
 
 
 def _sdk_error(exc):
+    from mobilerun_sdk import APIConnectionError, APIStatusError
+
     while exc is not None:
         if isinstance(exc, (APIStatusError, APIConnectionError)):
             return exc
@@ -88,6 +91,8 @@ def _sdk_error(exc):
 
 def convert_api_error(exc):
     """Return safe text, JSON and method/path diagnostics for an SDK error."""
+    from mobilerun_sdk import APIStatusError, APITimeoutError
+
     exc = _sdk_error(exc)
     if exc is None:
         return None
@@ -192,9 +197,9 @@ class Command(HelpLayout, click.Command):
         try:
             # Libraries and OAuth flows may print progress directly.
             with redirect_stdout(sys.stderr):
-                from mobilerun.config_manager import ConfigLoader
-
                 if ctx.command.name not in {"doctor", "completion"}:
+                    from mobilerun.config_manager import ConfigLoader
+
                     ConfigLoader.resolve_path(ctx.params.get("config_path"))
                 return super().invoke(ctx)
         except (KeyboardInterrupt, asyncio.CancelledError):
@@ -417,3 +422,34 @@ def stdout():
 def examples(*lines, docs=None):
     text = "\b\nExamples:\n" + "\n".join("  " + line for line in lines)
     return text + (f"\n\nDocs: {docs}" if docs else "")
+
+
+
+def _lazy_imports(namespace, exports):
+    """Preserve module export paths while deferring optional dependencies."""
+    from importlib import import_module
+
+    def get_attribute(name):
+        if name not in exports:
+            raise AttributeError(f"module {namespace['__name__']!r} has no attribute {name!r}")
+        module, attribute = exports[name]
+        value = import_module(module)
+        if attribute is not None:
+            value = getattr(value, attribute)
+        namespace[name] = value
+        return value
+
+    return get_attribute
+
+__getattr__ = _lazy_imports(globals(), {
+    'APIConnectionError': ('mobilerun_sdk', 'APIConnectionError'),
+    'APIStatusError': ('mobilerun_sdk', 'APIStatusError'),
+    'APITimeoutError': ('mobilerun_sdk', 'APITimeoutError'),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from mobilerun_sdk import APIConnectionError as APIConnectionError
+    from mobilerun_sdk import APIStatusError as APIStatusError
+    from mobilerun_sdk import APITimeoutError as APITimeoutError

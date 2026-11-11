@@ -1,10 +1,10 @@
 """Public provider spellings shared by run and configuration."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import click
-
-from mobilerun.agent.providers.registry import resolve_provider_variant
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,8 @@ class Provider:
 
     @property
     def runtime(self):
+        from mobilerun.agent.providers.registry import resolve_provider_variant
+
         return resolve_provider_variant(self.family, self.auth_mode).id if self.family else self.run_only
 
 
@@ -57,3 +59,17 @@ def llm_url_kwargs(runtime, url):
     if runtime == "XAI":
         raise click.UsageError("-u/--llm-url is not supported for provider XAI")
     return {spec.url_keyword: {"base_url": url} if spec.url_keyword == "http_options" else url}
+
+
+from mobilerun.cli.options import _lazy_imports  # noqa: E402
+
+__getattr__ = _lazy_imports(globals(), {
+    'resolve_provider_variant': ('mobilerun.agent.providers.registry', 'resolve_provider_variant'),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from mobilerun.agent.providers.registry import (
+        resolve_provider_variant as resolve_provider_variant,
+    )

@@ -2,21 +2,21 @@
 Command-line interface for Mobilerun macro replay.
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
 
-from mobilerun.agent.utils.trajectory import Trajectory
 from mobilerun.cli.options import (
-    examples,
     Group,
     coro,
     device_options,
     emit,
     emit_rows,
+    examples,
     json_option,
     max_steps_option,
     model_option,
@@ -26,7 +26,6 @@ from mobilerun.cli.options import (
 from mobilerun.cli.providers import PROVIDERS, provider_option
 from mobilerun.cli.selection import _native_driver, select_device, teardown_native_driver
 from mobilerun.config_manager.path_resolver import PathResolver
-from mobilerun.macro.replay import MacroPlayer
 
 
 def configure_logging(debug: bool = False):
@@ -154,6 +153,8 @@ async def _replay_async(
 ):
     """Async function to handle macro replay."""
     # Resolve path (checks working dir, then package dir)
+    from mobilerun.macro.replay import MacroPlayer
+
     resolved_path = PathResolver.resolve(path, must_exist=True)
 
     if resolved_path.is_file():
@@ -234,6 +235,8 @@ async def _show_dry_run(
     macro_data: dict, start_from: int, max_steps: Optional[int], logger: logging.Logger
 ):
     """Show what actions would be executed in dry run mode."""
+    from rich.table import Table
+
     actions = macro_data.get("actions", [])
 
     # Apply filters
@@ -293,6 +296,8 @@ async def _show_dry_run(
 @json_option
 def list(directory: str, verbose: bool, json_output: bool):
     """List available trajectory folders in a directory."""
+    from mobilerun.agent.utils.trajectory import Trajectory
+
     logger = configure_logging(bool(verbose))
 
     # Resolve directory (checks working dir, then package dir)
@@ -349,3 +354,20 @@ def console_render(table):
 
 if __name__ == "__main__":
     macro_cli()
+
+
+from mobilerun.cli.options import _lazy_imports  # noqa: E402
+
+__getattr__ = _lazy_imports(globals(), {
+    'Table': ('rich.table', 'Table'),
+    'Trajectory': ('mobilerun.agent.utils.trajectory', 'Trajectory'),
+    'MacroPlayer': ('mobilerun.macro.replay', 'MacroPlayer'),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from rich.table import Table as Table
+
+    from mobilerun.agent.utils.trajectory import Trajectory as Trajectory
+    from mobilerun.macro.replay import MacroPlayer as MacroPlayer

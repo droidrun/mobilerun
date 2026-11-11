@@ -1,5 +1,7 @@
 """Synchronous device actions through mobilerun-core."""
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
@@ -9,7 +11,6 @@ from contextlib import contextmanager
 
 import click
 
-from mobilerun.agent.utils.android_device import is_portal_http_url
 from mobilerun.cli.options import (
     Group,
     _ui_cell,
@@ -28,6 +29,8 @@ UI_FLAGS = ("clickable", "checkable", "checked", "editable", "focused", "scrolla
 @contextmanager
 def device_driver(params=None, *, selection=None):
     """Resolve Click's device options once and yield the connected core Device."""
+    from mobilerun.agent.utils.android_device import is_portal_http_url
+
     params = params if params is not None else click.get_current_context().params
     if selection is None:
         selection = asyncio.run(select_device(
@@ -249,3 +252,15 @@ def start(package, **params):
     with device_driver(params) as device:
         device.start_app(package)
     click.echo(f"Started {package}", err=True)
+
+
+from mobilerun.cli.options import _lazy_imports  # noqa: E402
+
+__getattr__ = _lazy_imports(globals(), {
+    'is_portal_http_url': ('mobilerun.agent.utils.android_device', 'is_portal_http_url'),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from mobilerun.agent.utils.android_device import is_portal_http_url as is_portal_http_url

@@ -1,21 +1,16 @@
 """Run tasks with the framework agent and native async drivers."""
 
+from __future__ import annotations
+
 import logging
 
 import click
 from async_adbutils import adb
-from mobilerun_core_local.driver.visual_remote import VISUAL_REMOTE_CONNECTION
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from mobilerun import MobileAgent, ResultEvent
 from mobilerun.agent.external import list_agents
-from mobilerun.agent.utils.android_device import (
-    is_portal_http_url,
-)
-from mobilerun.agent.utils.llm_picker import load_llm
-from mobilerun.cli.event_handler import EventHandler
 from mobilerun.cli.options import (
     DEFAULT_API_URL,
     Command,
@@ -31,9 +26,7 @@ from mobilerun.cli.options import (
 )
 from mobilerun.cli.providers import PROVIDERS, llm_url_kwargs, provider_option
 from mobilerun.cli.selection import _native_driver, select_device
-from mobilerun.config_manager import ConfigLoader, MobileConfig
 from mobilerun.log_handlers import CLILogHandler, configure_logging
-from mobilerun.telemetry import print_telemetry_message
 
 console = Console(stderr=True)
 
@@ -82,6 +75,14 @@ async def _run_task(
     api_url: str = DEFAULT_API_URL,
 ) -> tuple[bool, str | None, int | None]:
     """Execute a task and return the result-event fields."""
+    from mobilerun_core_local.driver.visual_remote import VISUAL_REMOTE_CONNECTION
+
+    from mobilerun import MobileAgent
+    from mobilerun.agent.utils.llm_picker import load_llm
+    from mobilerun.cli.event_handler import EventHandler
+    from mobilerun.config_manager import ConfigLoader
+    from mobilerun.telemetry import print_telemetry_message
+
     config = ConfigLoader.load(config_path)
 
     # Print cloud link in a box
@@ -262,6 +263,10 @@ async def run_command(*args, **kwargs) -> bool:
 
 
 async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = None) -> None:
+    from mobilerun_core_local.driver.visual_remote import VISUAL_REMOTE_CONNECTION
+
+    from mobilerun.agent.utils.android_device import is_portal_http_url
+
     platform = (config.device.platform or "").lower()
     control_backend = (config.device.control_backend or "").lower()
     if platform == "ios" or control_backend == VISUAL_REMOTE_CONNECTION:
@@ -393,3 +398,34 @@ async def run(
         emit({"success": success, "reason": reason, "steps": steps}, json_output=True)
     if not success:
         raise click.ClickException(reason or "Task failed")
+
+
+from mobilerun.cli.options import _lazy_imports  # noqa: E402
+
+__getattr__ = _lazy_imports(globals(), {
+    'VISUAL_REMOTE_CONNECTION': ('mobilerun_core_local.driver.visual_remote', 'VISUAL_REMOTE_CONNECTION'),
+    'MobileAgent': ('mobilerun', 'MobileAgent'),
+    'ResultEvent': ('mobilerun', 'ResultEvent'),
+    'is_portal_http_url': ('mobilerun.agent.utils.android_device', 'is_portal_http_url'),
+    'load_llm': ('mobilerun.agent.utils.llm_picker', 'load_llm'),
+    'EventHandler': ('mobilerun.cli.event_handler', 'EventHandler'),
+    'ConfigLoader': ('mobilerun.config_manager', 'ConfigLoader'),
+    'MobileConfig': ('mobilerun.config_manager', 'MobileConfig'),
+    'print_telemetry_message': ('mobilerun.telemetry', 'print_telemetry_message'),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from mobilerun_core_local.driver.visual_remote import (
+        VISUAL_REMOTE_CONNECTION as VISUAL_REMOTE_CONNECTION,
+    )
+
+    from mobilerun import MobileAgent as MobileAgent
+    from mobilerun import ResultEvent as ResultEvent
+    from mobilerun.agent.utils.android_device import is_portal_http_url as is_portal_http_url
+    from mobilerun.agent.utils.llm_picker import load_llm as load_llm
+    from mobilerun.cli.event_handler import EventHandler as EventHandler
+    from mobilerun.config_manager import ConfigLoader as ConfigLoader
+    from mobilerun.config_manager import MobileConfig as MobileConfig
+    from mobilerun.telemetry import print_telemetry_message as print_telemetry_message

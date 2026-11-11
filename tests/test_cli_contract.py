@@ -12,7 +12,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import auth, device_lifecycle, deviceauth, selection
+from mobilerun.cli import auth, device_lifecycle, deviceauth
 from mobilerun.cli.main import cli
 from mobilerun.cli.providers import PROVIDERS, llm_url_kwargs
 from mobilerun.config_manager import ConfigLoader, MobileConfig, credential_paths
@@ -153,7 +153,7 @@ def test_env_sources_and_secret_config(monkeypatch, tmp_path):
 
 
 def test_cloud_target_without_device_does_not_touch_adb(monkeypatch):
-    monkeypatch.setattr(selection, "resolve_android_serial", AsyncMock(side_effect=AssertionError("must not discover")))
+    monkeypatch.setattr("mobilerun.agent.utils.android_device.resolve_android_serial", AsyncMock(side_effect=AssertionError("must not discover")))
     result = CliRunner().invoke(cli, ["device", "ui", "-t", "cloud"])
     assert result.exit_code == 1
     assert "mobilerun device list -t cloud" in result.output
@@ -187,9 +187,8 @@ def test_macro_list_json(tmp_path):
 
 
 def test_doctor_failure_json(monkeypatch):
-    doctor = importlib.import_module("mobilerun.cli.doctor_command")
     from mobilerun.cli.doctor import CheckResult, Status
-    monkeypatch.setattr(doctor, "run_doctor", AsyncMock(return_value=[CheckResult("Device", Status.FAIL, "missing device")]))
+    monkeypatch.setattr("mobilerun.cli.doctor.run_doctor", AsyncMock(return_value=[CheckResult("Device", Status.FAIL, "missing device")]))
     result = CliRunner().invoke(cli, ["doctor", "-j"])
     assert result.exit_code == 1
     assert json.loads(result.stdout) == {
@@ -259,7 +258,7 @@ def fake_agent(result, calls=None):
 
 @pytest.mark.parametrize("success", [True, False])
 def test_run_json_is_built_from_result_event(monkeypatch, success):
-    monkeypatch.setattr(run_module, "MobileAgent", fake_agent(SimpleNamespace(success=success, reason="observed result", steps=4)))
+    monkeypatch.setattr("mobilerun.MobileAgent", fake_agent(SimpleNamespace(success=success, reason="observed result", steps=4)))
     result = CliRunner().invoke(cli, ["run", "task", "-j"])
     assert result.exit_code == (0 if success else 1), result.output
     assert json.loads(result.stdout) == {"success": success, "reason": "observed result", "steps": 4}
@@ -277,7 +276,7 @@ def test_run_injects_cloud_driver_without_agent_changes(monkeypatch):
         async def connect(self):
             pass
     monkeypatch.setattr(cloud, "CloudDriver", Driver)
-    monkeypatch.setattr(run_module, "MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1), calls))
+    monkeypatch.setattr("mobilerun.MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1), calls))
     monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "fake-key")
     device_id = "123e4567-e89b-12d3-a456-426614174000"
     result = CliRunner().invoke(cli, ["run", "task", "-d", device_id, "-j", "--api-url", "https://example.test/v1"])
@@ -329,7 +328,7 @@ def test_failed_macro_replay_exits_nonzero(monkeypatch, tmp_path):
         async def replay_macro(self, *args, **kwargs):
             return False
 
-    monkeypatch.setattr(macro, "MacroPlayer", Player)
+    monkeypatch.setattr("mobilerun.macro.replay.MacroPlayer", Player)
     monkeypatch.setattr(macro, "select_device", AsyncMock(return_value=SimpleNamespace(device="serial", config=MobileConfig())))
     monkeypatch.setattr(macro, "_native_driver", AsyncMock(return_value=object()))
     result = CliRunner().invoke(cli, ["macro", "replay", str(path)])
@@ -398,7 +397,7 @@ def test_config_provider_url_never_crashes_with_stop_iteration(monkeypatch, runt
     for profile in config.llm_profiles.values():
         profile.provider = runtime
     monkeypatch.setattr(run_module.ConfigLoader, "load", lambda _: config)
-    monkeypatch.setattr(run_module, "MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1)))
+    monkeypatch.setattr("mobilerun.MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1)))
     result = CliRunner().invoke(cli, ["run", "task", "-u", "http://x", "-j"])
     assert "StopIteration" not in result.output
     if expected:
@@ -414,8 +413,8 @@ def test_config_provider_url_never_crashes_with_stop_iteration(monkeypatch, runt
 def test_run_only_providers_work_and_configure_rejects_them(monkeypatch, provider):
     llm = object()
     load = Mock(return_value=llm)
-    monkeypatch.setattr(run_module, "load_llm", load)
-    monkeypatch.setattr(run_module, "MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1)))
+    monkeypatch.setattr("mobilerun.agent.utils.llm_picker.load_llm", load)
+    monkeypatch.setattr("mobilerun.MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1)))
     result = CliRunner().invoke(cli, ["run", "task", "-p", provider, "-m", "test-model", "-j"])
     assert result.exit_code == 0, result.output
     assert load.call_args.args == (PROVIDERS[provider].runtime,)
@@ -554,7 +553,7 @@ def test_doctor_checks_system_before_ambiguous_device(monkeypatch):
 def test_configure_api_provider_preselects_api_key_and_validates_auth_mode(monkeypatch):
     configure = importlib.import_module("mobilerun.cli.configure")
     wizard = Mock()
-    monkeypatch.setattr(configure, "run_configure_wizard", wizard)
+    monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", wizard)
     monkeypatch.setattr(configure, "input_allowed", lambda _: True)
     result = CliRunner().invoke(cli, ["configure", "-p", "openai"])
     assert result.exit_code == 0, result.output
@@ -569,7 +568,6 @@ def test_run_help_task_and_agent_validation():
 
 
 def test_macro_replay_unexpected_error_printed_once_with_traceback(monkeypatch, tmp_path):
-    macro = importlib.import_module("mobilerun.macro.cli")
     class Player:
         def __init__(self, **kwargs):
             pass
@@ -577,7 +575,7 @@ def test_macro_replay_unexpected_error_printed_once_with_traceback(monkeypatch, 
             raise RuntimeError("unique macro failure")
     path = tmp_path / "macro.json"
     path.write_text("{}")
-    monkeypatch.setattr(macro, "MacroPlayer", Player)
+    monkeypatch.setattr("mobilerun.macro.replay.MacroPlayer", Player)
     result = CliRunner().invoke(cli, ["macro", "replay", str(path), "-n"])
     assert result.exit_code == 1
     assert result.stderr.count("unique macro failure") == 1

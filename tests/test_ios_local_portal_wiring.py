@@ -148,7 +148,7 @@ def test_device_commands_route_ios_through_facade(tmp_path, monkeypatch):
 def test_device_commands_discover_when_no_device(tmp_path, monkeypatch):
     from mobilerun_core import Mobilerun
 
-    from mobilerun.cli import device_commands, selection
+    from mobilerun.cli import device_commands
 
     created = {}
     async def discover():
@@ -156,7 +156,7 @@ def test_device_commands_discover_when_no_device(tmp_path, monkeypatch):
     def connect(self, device_id, **kwargs):
         created.update(kwargs)
         return object()
-    monkeypatch.setattr(selection, "discover_ios_device", discover)
+    monkeypatch.setattr("mobilerun_core_local.driver.ios.discover_ios_device", discover)
     monkeypatch.setattr(Mobilerun, "connect", connect)
     cfg = tmp_path / "config.yaml"
     cfg.write_text("_version: 7\ndevice:\n  platform: ios\n")

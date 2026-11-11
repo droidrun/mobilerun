@@ -1,13 +1,15 @@
 """Shared terminal QR rendering."""
 
+from __future__ import annotations
+
 import sys
 from io import StringIO
-
-import segno
 
 
 def print_qr(data: str) -> bool:
     """Print a compact QR with its quiet zone to terminal stderr."""
+    import segno
+
     try:
         if not sys.stderr.isatty():
             return False
@@ -20,3 +22,15 @@ def print_qr(data: str) -> bool:
     except Exception:
         return False
     return True
+
+
+from mobilerun.cli.options import _lazy_imports  # noqa: E402
+
+__getattr__ = _lazy_imports(globals(), {
+    'segno': ('segno', None),
+})
+
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    import segno as segno
