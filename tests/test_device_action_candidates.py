@@ -428,8 +428,9 @@ def test_screenshot_only_offers_one_located_tap(use_normalized):
         state = await provider.get_state()
         ctx = ActionContext(driver, state, MobileAgentState(), provider)
 
+        assert not await provider.build_action_candidates(ctx, {"click_at": {}})
         options = await provider.build_action_candidates(
-            ctx, {"click_at": {}}, include_device_actions=True
+            ctx, {"click_at": {}}, include_device_actions=True, locate_taps=True
         )
 
         space = (
@@ -448,7 +449,10 @@ def test_accessibility_providers_offer_no_located_tap():
     async def run():
         ctx = _context()
         options = await ctx.state_provider.build_action_candidates(
-            ctx, {"click": {}, "click_at": {}}, include_device_actions=True
+            ctx,
+            {"click": {}, "click_at": {}},
+            include_device_actions=True,
+            locate_taps=True,
         )
         assert options
         assert not any(option.point_space for option in options)
@@ -473,7 +477,9 @@ def test_vision_only_decision_agent_offers_located_taps(monkeypatch, injected):
         agent = MobileAgent(
             "Calculate",
             config=config,
-            action_selectors=DecisionSelector(SimpleNamespace(decide=AsyncMock())),
+            action_selectors=DecisionSelector(
+                SimpleNamespace(decide=AsyncMock(), locates_points=True)
+            ),
             driver=ctx.driver,
             state_provider=(
                 ScreenshotOnlyStateProvider(ctx.driver) if injected else None
@@ -484,11 +490,13 @@ def test_vision_only_decision_agent_offers_located_taps(monkeypatch, injected):
 
         provider = agent.state_provider
         assert isinstance(provider, ScreenshotOnlyStateProvider)
+        assert agent.action_selector.locates_points
         state = await provider.get_state()
         options = await provider.build_action_candidates(
             ActionContext(ctx.driver, state, MobileAgentState(), provider),
             agent.registry.get_signatures(),
             include_device_actions=True,
+            locate_taps=True,
         )
         assert [o.action.name for o in options if o.point_space] == ["click_at"]
 

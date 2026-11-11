@@ -13,6 +13,7 @@ from mobilerun.agent.selectors.base import (
     ActionSelector,
     BaseActionSelector,
     SelectionRequest,
+    all_locate_points,
     sum_usage,
     supports_native_tool_calls,
 )
@@ -64,6 +65,10 @@ class DelegatingSelector(BaseActionSelector):
             selector.requires_action_candidates
             for selector in (self.primary, self.delegate)
         )
+
+    @property
+    def locates_points(self) -> bool:
+        return all_locate_points((self.primary, self.delegate))
 
     @property
     def screenshot_max_side(self) -> int | None:

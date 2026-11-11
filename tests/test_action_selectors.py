@@ -32,6 +32,7 @@ from mobilerun.agent.selectors import (
     ActionSelection,
     Decision,
     DecisionSelector,
+    DelegatingSelector,
     FallbackSelector,
     LlamaIndexLLMSelector,
     SelectionRequest,
@@ -435,11 +436,20 @@ def test_decision_only_fast_agent_executes_and_completes(success):
     asyncio.run(run())
 
 
-def test_fast_agent_gives_decision_models_the_clean_screenshot(monkeypatch):
+@pytest.mark.parametrize("locates", [True, False])
+def test_fast_agent_offers_located_taps_only_to_locating_selectors(
+    monkeypatch, locates
+):
     from mobilerun.agent.fast_agent import fast_agent
 
+    class CoordinateProvider(_Provider):
+        requires_coordinate_tools = True
+
     async def run():
-        config, registry, action_ctx, shared, provider, _ = _dependencies()
+        config, registry, action_ctx, shared, _, _ = _dependencies()
+        registry.register("click_at", AsyncMock(), {"x": {}, "y": {}}, "Tap")
+        provider = CoordinateProvider(_state())
+        action_ctx.state_provider = provider
         config.fast_agent.vision = True
         action_ctx.driver.screenshot = AsyncMock(return_value=b"clean")
         monkeypatch.setattr(
@@ -448,6 +458,7 @@ def test_fast_agent_gives_decision_models_the_clean_screenshot(monkeypatch):
             AsyncMock(return_value=b"grounded"),
         )
         model = _model(Decision(success=True, message="Done"))
+        model.locates_points = locates
         agent = FastAgent(
             action_selector=DecisionSelector(model),
             agent_config=config,
@@ -458,16 +469,37 @@ def test_fast_agent_gives_decision_models_the_clean_screenshot(monkeypatch):
         )
         await agent.run(input="Select Bob")
         request = model.decide.call_args.args[0]
-        assert request.screenshot == b"clean"
+        assert any(o.point_space for o in request.options) is locates
+        assert ("click_at" in request.instructions) is locates
+        assert request.screenshot == (b"clean" if locates else b"grounded")
         images = [
             block.image
             for message in request.messages
             for block in message.blocks
-            if hasattr(block, "image") and block.image
+            if getattr(block, "image", None)
         ]
         assert images == [b"grounded"]
 
     asyncio.run(run())
+
+
+def test_composite_selectors_report_point_location():
+    locating = DecisionSelector(
+        SimpleNamespace(decide=AsyncMock(), locates_points=True)
+    )
+    plain = DecisionSelector(SimpleNamespace(decide=AsyncMock()))
+    llm = LlamaIndexLLMSelector(MockLLM())
+    assert locating.locates_points and not plain.locates_points
+    assert not llm.locates_points
+    assert DelegatingSelector(locating, llm).locates_points
+    assert DelegatingSelector(llm, locating).locates_points
+    assert not DelegatingSelector(plain, llm).locates_points
+    # A chooser that cannot locate would be told about a tap it never gets.
+    assert not DelegatingSelector(plain, locating).locates_points
+    assert FallbackSelector(llm, [locating]).locates_points
+    assert not FallbackSelector(plain, [llm]).locates_points
+    assert not FallbackSelector(locating, [plain]).locates_points
+    assert not FallbackSelector(llm, []).locates_points
 
 
 @pytest.mark.parametrize(

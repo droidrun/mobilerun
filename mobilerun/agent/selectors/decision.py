@@ -92,6 +92,10 @@ class DecisionSelector(BaseActionSelector):
     def screenshot_max_side(self) -> int | None:
         return getattr(self.model, "screenshot_max_side", None)
 
+    @property
+    def locates_points(self) -> bool:
+        return bool(getattr(self.model, "locates_points", False))
+
     async def select(self, request: SelectionRequest) -> ActionSelection | None:
         from mobilerun.agent.fast_agent.xml_parser import ToolCall
 
@@ -100,9 +104,7 @@ class DecisionSelector(BaseActionSelector):
                 "Decision selection requires non-empty options in the request"
             )
         options = tuple(o for o in request.options if o.action.name in request.tools)
-        if request.screenshot is None or not getattr(
-            self.model, "locates_points", False
-        ):
+        if request.screenshot is None or not self.locates_points:
             options = tuple(o for o in options if o.point_space is None)
         if not options:
             raise ValueError("No decision options match the available tools")

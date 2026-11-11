@@ -66,6 +66,12 @@ class SelectionRequest:
         }
 
 
+def all_locate_points(selectors) -> bool:
+    """Whether every selector that chooses among options can locate taps."""
+    choosers = [s for s in selectors if s.requires_action_candidates]
+    return bool(choosers) and all(s.locates_points for s in choosers)
+
+
 def sum_usage(*usages: UsageResult | None) -> UsageResult | None:
     """Add the usage of every model call made for one step."""
     present = [usage for usage in usages if usage is not None]
@@ -101,6 +107,11 @@ class ActionSelector(ABC):
     @property
     def supports_native_tool_calls(self) -> bool:
         """Whether native tool-call messages can be used throughout this selector."""
+        return False
+
+    @property
+    def locates_points(self) -> bool:
+        """Whether selection can locate a tap on the screenshot itself."""
         return False
 
     @property

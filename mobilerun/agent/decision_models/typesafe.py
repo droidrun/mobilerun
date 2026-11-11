@@ -76,6 +76,12 @@ _LOCATE_INSTRUCTIONS = (
 )
 
 
+_LOCATE_UI = (
+    "No accessibility tree is available. Use the screenshot; an on-screen tap "
+    "is located on it."
+)
+
+
 class TypeSafeDecisionModel:
     """Choose only among supplied actions; abstain on low-confidence answers.
 
@@ -153,9 +159,14 @@ class TypeSafeDecisionModel:
             ],
             "variables": request.variables,
         }
+        locating = request.screenshot is not None and any(
+            option.point_space for option in request.options
+        )
         if request.state is not None:
             state.update(
-                ui=request.state.formatted_text,
+                # Screenshot-only text describes the LLMs' coordinate grid,
+                # which the clean screenshot sent here does not have.
+                ui=_LOCATE_UI if locating else request.state.formatted_text,
                 focused_text=request.state.focused_text,
                 phone_state=request.state.phone_state,
             )
@@ -166,7 +177,7 @@ class TypeSafeDecisionModel:
 
             prepared_screenshot, coverage = _prepare_image(request.screenshot)
             state["screenshot"] = Image(prepared_screenshot)
-            if any(option.point_space for option in request.options):
+            if locating:
                 from typesafe_sdk import Box
 
                 questions["target"] = Box(instructions=_LOCATE_INSTRUCTIONS)
@@ -241,6 +252,11 @@ class TypeSafeDecisionModel:
             return Decision(option_index=index)
         if target is None:
             raise ValueError("TypeSafe did not locate the on-screen tap")
+        if target.confidence is not None and not (
+            math.isfinite(target.confidence)
+            and target.confidence >= self.min_confidence
+        ):
+            return None
         box = target.box
         return Decision(
             option_index=index,

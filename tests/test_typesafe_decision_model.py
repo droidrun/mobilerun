@@ -305,6 +305,33 @@ def test_located_tap_asks_box_and_maps_its_centre(sdk, size, box, point):
     assert "element to tap" in questions["target"]["instructions"]
 
 
+@pytest.mark.parametrize("box_confidence,tapped", [(0.1, False), (None, True)])
+def test_located_tap_respects_min_confidence(sdk, box_confidence, tapped):
+    sdk.client.system_one.return_value.boxes = {
+        "target": SimpleNamespace(
+            box=SimpleNamespace(top=0.1, bottom=0.2, left=0.1, right=0.2),
+            confidence=box_confidence,
+        )
+    }
+    options = (ActionCandidate(ToolCall("click_at"), "Tap on screen", (706, 1568)),)
+    request = _request(
+        options=options,
+        tools={"click_at": {}},
+        screenshot=_image((1080, 2400)),
+        state=SimpleNamespace(
+            formatted_text="The screenshot includes a coordinate grid",
+            focused_text="",
+            phone_state={},
+        ),
+    )
+
+    decision = asyncio.run(TypeSafeDecisionModel(min_confidence=0.5).decide(request))
+
+    assert (decision is not None) is tapped
+    ui = sdk.client.system_one.call_args.kwargs["state"]["ui"]
+    assert "coordinate grid" not in ui
+
+
 def test_located_tap_without_a_box_is_rejected(sdk):
     sdk.client.system_one.return_value.boxes = {}
     options = (ActionCandidate(ToolCall("click_at"), "Tap on screen", (706, 1568)),)

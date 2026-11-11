@@ -414,6 +414,11 @@ class FastAgent(Workflow):
             preserve_first=True,
         )
         messages_to_send = [self.system_prompt] + copy.deepcopy(limited_history)
+        model_screenshot = (
+            await resize_model_screenshot_async(self.state_provider, screenshot)
+            if self.vision and screenshot
+            else None
+        )
 
         # Inject device state and screenshot into the copy (not the original)
         user_indices = [
@@ -439,14 +444,9 @@ class FastAgent(Workflow):
                 )
 
             # Screenshot → last user message
-            if self.vision and screenshot:
-                # LLMs get the grounded copy; decision models get the clean one.
+            if model_screenshot:
                 messages_to_send[last_user_idx].blocks.append(
-                    ImageBlock(
-                        image=await resize_model_screenshot_async(
-                            self.state_provider, screenshot
-                        )
-                    )
+                    ImageBlock(image=model_screenshot)
                 )
 
             # Previous device state → second-to-last user message
@@ -468,9 +468,12 @@ class FastAgent(Workflow):
                 self.action_ctx,
                 tools,
                 include_device_actions=True,
+                locate_taps=bool(model_screenshot)
+                and self.action_selector.locates_points,
             )
         else:
             options = ()
+        located = any(option.point_space for option in options)
         request = SelectionRequest(
             goal=await ctx.store.get(
                 "selection_goal", default=self.shared_state.instruction
@@ -478,7 +481,8 @@ class FastAgent(Workflow):
             state=ui_state,
             memory=self.shared_state.agent_memory,
             history=limited_history,
-            screenshot=screenshot if self.vision else None,
+            # Located taps need the clean screenshot, not the grid copy.
+            screenshot=screenshot if located else model_screenshot,
             tools=tools,
             variables=self.shared_state.custom_variables,
             messages=messages_to_send,

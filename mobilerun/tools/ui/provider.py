@@ -280,13 +280,18 @@ class StateProvider:
         tools: dict[str, Any],
         *,
         include_device_actions: bool = False,
+        locate_taps: bool = False,
     ) -> tuple[ActionCandidate, ...]:
-        """Keep provider overrides and add only enabled, supported device actions."""
+        """Keep provider overrides and add only enabled, supported device actions.
+
+        ``locate_taps`` offers a tap whose point the selector locates on the
+        screenshot, for screens without elements to choose from.
+        """
         from mobilerun.agent.fast_agent.xml_parser import ToolCall
         from mobilerun.agent.selectors.base import ActionCandidate
 
         options = list(self.get_action_candidates(ctx.ui)) if ctx.ui is not None else []
-        if "click_at" in tools:
+        if locate_taps and "click_at" in tools:
             options.extend(self._tap_candidates(ctx.ui))
         if not include_device_actions:
             return tuple(options)

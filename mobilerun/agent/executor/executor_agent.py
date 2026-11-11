@@ -157,11 +157,10 @@ class ExecutorAgent(Workflow):
         if self.vision:
             screenshot = self.shared_state.screenshot
             if screenshot is not None:
-                # LLMs get the grounded copy; decision models get the clean one.
-                model_screenshot = await resize_model_screenshot_async(
+                screenshot = await resize_model_screenshot_async(
                     self.action_ctx.state_provider, screenshot
                 )
-                messages[0].blocks.append(ImageBlock(image=model_screenshot))
+                messages[0].blocks.append(ImageBlock(image=screenshot))
                 logger.debug("📸 Using screenshot for Executor")
             else:
                 logger.warning("⚠️ Vision enabled but no screenshot available")
@@ -183,26 +182,31 @@ class ExecutorAgent(Workflow):
         messages = await ctx.store.get("executor_messages")
         logger.info("Executor response:", extra={"color": "green"})
         tools = self.registry.get_signatures(exclude=self._EXCLUDE_TOOLS)
+        model_screenshot = (
+            await ctx.store.get(
+                "executor_screenshot", default=self.shared_state.screenshot
+            )
+            if self.vision
+            else None
+        )
         if self.action_selector.requires_action_candidates:
             options = await self.action_ctx.state_provider.build_action_candidates(
                 self.action_ctx,
                 tools,
                 include_device_actions=True,
+                locate_taps=model_screenshot is not None
+                and self.action_selector.locates_points,
             )
         else:
             options = ()
+        # Located taps need the clean screenshot, not the grid copy.
+        located = any(option.point_space for option in options)
         request = SelectionRequest(
             goal=ev.subgoal,
             state=self.action_ctx.ui,
             memory=self.shared_state.agent_memory,
             history=await ctx.store.get("executor_history", default=[]),
-            screenshot=(
-                await ctx.store.get(
-                    "executor_screenshot", default=self.shared_state.screenshot
-                )
-                if self.vision
-                else None
-            ),
+            screenshot=self.shared_state.screenshot if located else model_screenshot,
             tools=tools,
             variables=self.shared_state.custom_variables,
             messages=messages,
