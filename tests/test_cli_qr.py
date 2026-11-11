@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import auth, device_pair, deviceauth, qr
+from mobilerun.cli import auth, device_pair, deviceauth, options, qr
 from mobilerun.cli.main import cli
 from mobilerun.config_manager import ConfigLoader
 
@@ -199,6 +199,22 @@ def test_pair_adb_failure_redacts_password(pairing, stage, index, returncode):
     assert "Ab12Cd34Ef" not in result.output
     assert result.stdout == ""
     assert pairing.calls[-1][0][0] == stage
+
+
+def test_pair_errors_use_shared_command_handler(monkeypatch, pairing):
+    pairing.responses[3] = (1, "", "Pairing failed: Ab12Cd34Ef")
+    convert = Mock(wraps=options.convert_api_error)
+    monkeypatch.setattr(options, "convert_api_error", convert)
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Pairing failed: [redacted]" in result.stderr
+    assert "Ab12Cd34Ef" not in result.output
+    convert.assert_called_once()
+    error, context = convert.call_args.args
+    assert error.message == "Pairing failed: [redacted]"
+    assert context.command is cli.commands["device"].commands["pair"]
+    assert isinstance(context.command, options.Command)
 
 
 def test_pair_requires_mdns(pairing):

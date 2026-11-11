@@ -200,7 +200,8 @@ share these provider names: `openai`, `openai-oauth`, `anthropic`,
 | `MOBILERUN_API_BASE_URL` | Cloud API URL | `https://api.mobilerun.ai/v1`; `--api-url` |
 | `MOBILERUN_AUTH_URL` | Sign-in URL | `https://cloud.mobilerun.ai/api/auth`; `--auth-url` |
 | `MOBILERUN_CONFIG` | Config file | User config directory; `-c`/`--config` |
-| `MOBILERUN_DEVICE_TOKEN` | Portal HTTP token | Configured token, if any |
+| `MOBILERUN_ANDROID_PORTAL_TOKEN` | Android Portal HTTP token | Configured token, if any |
+| `MOBILERUN_IOS_PORTAL_TOKEN` | iOS Portal HTTP token | Configured token, if any |
 | `MOBILERUN_DEBUG` | Verbose logs | Off; `-v`/`--verbose` |
 | `MOBILERUN_TELEMETRY_ENABLED` | Anonymous telemetry | `true`, subject to config policy |
 

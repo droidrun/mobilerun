@@ -7,6 +7,7 @@ import tempfile
 from contextlib import contextmanager
 
 import click
+from mobilerun_core._a11y import node_bounds
 
 from mobilerun.agent.utils.android_device import is_portal_http_url
 from mobilerun.cli.options import Group, device_options, emit, json_option, verbose_option
@@ -70,14 +71,53 @@ def screenshot(json_output, **params):
         emit({"path": path} if json_output else path, json_output=json_output)
 
 
+def _ui_cell(value):
+    return str(value or "").replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+
+def ui_lines(state, all_elements=False):
+    """Render core's depth-first node list as six tab-separated columns."""
+    for index, node in enumerate(state.nodes):
+        flags = [flag for flag in ("clickable", "checkable", "checked", "editable", "focused", "scrollable", "selected")
+                 if node.get(flag) or node.get("is" + flag.capitalize()) or node.get("is_" + flag)]
+        if node.get("disabled") or any(node.get(key) is False for key in ("enabled", "isEnabled", "is_enabled")):
+            flags.append("disabled")
+        text = node.get("text") or node.get("contentDescription") or node.get("content_description") or ""
+        resource = node.get("resourceId") or node.get("resource_id") or node.get("accessibilityIdentifier") or ""
+        if not (all_elements or text or resource or flags):
+            continue
+        class_name = node.get("className") or node.get("class_name") or ""
+        bounds = node_bounds(node) or {}
+        if isinstance(bounds, dict):
+            if all(key in bounds for key in ("x", "y", "width", "height")):
+                bounds = (bounds["x"], bounds["y"], bounds["x"] + bounds["width"], bounds["y"] + bounds["height"])
+            else:
+                bounds = tuple(bounds.get(key, "") for key in ("left", "top", "right", "bottom")) if bounds else ()
+        yield "\t".join((str(index), _ui_cell(class_name.rsplit(".", 1)[-1]), _ui_cell(text),
+                          _ui_cell(resource), ",".join(str(value) for value in bounds) if bounds else "",
+                          ",".join(flags)))
+
+
 @device_cli.command()
 @json_option
+@click.option("--all", "all_elements", is_flag=True, help="Include empty layout containers.")
 @device_options
-def ui(json_output, **params):
-    """Print the UI state returned by the device."""
+def ui(json_output, all_elements, **params):
+    """Print tab-separated UI elements, or the raw state with --json."""
     with device_driver(params) as device:
-        state = json.loads(device.ui_json())
-        emit(state if json_output else json.dumps(state, indent=2), json_output=json_output)
+        if json_output:
+            emit(json.loads(device.ui_json()), json_output=True)
+            return
+        state = device.ui(filter=False)
+        for line in ui_lines(state, all_elements):
+            emit(line)
+        phone = state.get("phone_state") or {}
+        context = state.get("device_context") or {}
+        screen = context.get("screen_bounds") or context.get("display_metrics") or {}
+        app = phone.get("currentApp") or phone.get("packageName") or "unknown"
+        width = screen.get("width", screen.get("widthPixels", "?"))
+        height = screen.get("height", screen.get("heightPixels", "?"))
+        click.echo(f"App: {_ui_cell(app)}; screen: {_ui_cell(width)}x{_ui_cell(height)}", err=True)
 
 
 @device_cli.command()

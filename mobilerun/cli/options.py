@@ -2,15 +2,70 @@
 
 import asyncio
 import json
+import os
 import sys
 import traceback
 from contextlib import redirect_stdout
 from functools import wraps
+from urllib.parse import urlsplit, urlunsplit
 
 import click
+from mobilerun_sdk import APIConnectionError, APIStatusError, APITimeoutError
 
 DEFAULT_API_URL = "https://api.mobilerun.ai/v1"
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+
+def convert_api_error(exc, ctx):
+    """Return safe text, JSON and optional diagnostics for an SDK error."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, (APIStatusError, APIConnectionError)):
+            break
+        exc = exc.__cause__
+    else:
+        return None
+    request = exc.request
+    sensitive = [value for name, value in request.headers.items() if name != "host"]
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        sensitive.append(authorization[7:])
+    sensitive.append(os.environ.get("MOBILERUN_CLOUD_API_KEY", ""))
+
+    def clean(value):
+        text = " ".join(str(value).split())
+        for secret in sorted(filter(None, sensitive), key=len, reverse=True):
+            text = text.replace(secret, "[redacted]")
+        return text
+
+    status = exc.status_code if isinstance(exc, APIStatusError) else None
+    body = exc.body if isinstance(exc.body, dict) else {}
+    first = (body.get("errors") or [None])[0] if isinstance(body.get("errors"), list) else None
+    fields = (body, first) if isinstance(first, dict) else (body,)
+    message = next((entry[key] for entry in fields for key in ("detail", "title", "message")
+                    if isinstance(entry.get(key), str) and entry[key].strip()), None)
+    code = next((entry["code"] for entry in fields
+                 if isinstance(entry.get("code"), (str, int))), None)
+    if message is None:
+        message = first if isinstance(first, str) and first.strip() else (
+            exc.response.reason_phrase if status is not None else
+            "Request timed out" if isinstance(exc, APITimeoutError) else "Could not connect to the API"
+        )
+    message = clean(message or "API request failed")
+    document = {"error": message, "status": status, "code": clean(code) if code is not None else None}
+    text = f"{message} (HTTP {status})" if status is not None else message
+    hint = None
+    if status in {401, 403}:
+        hint = "Run `mobilerun auth login` or set MOBILERUN_CLOUD_API_KEY."
+    elif status == 404 and "devices" in request.url.path.split("/"):
+        hint = "Find device ids with `mobilerun device list -t cloud`."
+    elif status is None:
+        url = urlsplit(ctx.params.get("api_url") or os.environ.get("MOBILERUN_API_BASE_URL") or DEFAULT_API_URL)
+        safe_url = urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
+        hint = f"Check the API URL: {clean(safe_url)}"
+    diagnostic = f"{request.method} {clean(request.url.path)}"
+    return text, document, hint, diagnostic
 
 
 class Command(click.Command):
@@ -43,13 +98,21 @@ class Command(click.Command):
         except (KeyboardInterrupt, asyncio.CancelledError, click.Abort):
             ctx.exit(130)
         except Exception as exc:
-            if not isinstance(exc, click.ClickException):
+            converted = convert_api_error(exc, ctx)
+            if converted:
+                text, document, hint, diagnostic = converted
                 if ctx.params.get("verbose"):
-                    traceback.print_exc(file=sys.stderr)
-                exc = click.ClickException(str(exc) or type(exc).__name__)
+                    click.echo(diagnostic, err=True)
+                exc = click.ClickException(text + (f"\n{hint}" if hint else ""))
+            else:
+                if not isinstance(exc, click.ClickException):
+                    if ctx.params.get("verbose"):
+                        traceback.print_exc(file=sys.stderr)
+                    exc = click.ClickException(str(exc) or type(exc).__name__)
+                document = {"error": exc.message}
             if (not isinstance(exc, click.UsageError) and ctx.params.get("json_output")
                     and not ctx.obj["emitted"]):
-                emit({"error": exc.message}, json_output=True)
+                emit(document, json_output=True)
             raise exc
         finally:
             logger.handlers, level, logger.propagate = previous
