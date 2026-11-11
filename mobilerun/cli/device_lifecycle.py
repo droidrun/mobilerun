@@ -4,6 +4,7 @@ import click
 from async_adbutils import adb
 
 from mobilerun.cli.device_commands import device_cli, probe_device
+from mobilerun.cli.device_pair import pair
 from mobilerun.cli.options import (
     api_url_option,
     config_option,
@@ -17,6 +18,8 @@ from mobilerun.cli.options import (
 )
 from mobilerun.cli.selection import core_client, select_device
 from mobilerun.cli.setup import _setup_portal
+
+device_cli.add_command(pair)
 
 
 @device_cli.command("list")

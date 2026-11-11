@@ -23,6 +23,7 @@ from mobilerun.cli.options import (
     model_option,
     verbose_option,
 )
+from mobilerun.cli.qr import print_qr
 from mobilerun.config_manager.auth_profile_store import AuthProfileStore
 from mobilerun.config_manager.credential_paths import (
     ANTHROPIC_OAUTH_CREDENTIAL_PATH,
@@ -82,7 +83,7 @@ DEFAULT_AUTH_URL = "https://cloud.mobilerun.ai/api/auth"
 DEFAULT_DEVICE_CLIENT_ID = "mobilerun-cli"
 
 
-def _login_mobilerun(auth_url: str | None, client_id: str):
+def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool = False):
     """Authenticate via OAuth 2.0 device authorization and save the session token."""
     import webbrowser
 
@@ -93,6 +94,8 @@ def _login_mobilerun(auth_url: str | None, client_id: str):
 
     console.print(f"Visit: [bold]{code.verification_uri}[/]")
     console.print(f"Code:  [bold cyan]{code.user_code}[/]")
+    if code.verification_uri_complete and not no_qr:
+        print_qr(code.verification_uri_complete)
     if code.verification_uri_complete:
         console.print(f"[dim](Opening {code.verification_uri_complete} ...)[/]")
         try:
@@ -125,7 +128,7 @@ SERVICES = {
     "xai": (GROK_OAUTH_CREDENTIAL_PATH, "xai_oauth"),
 }
 LOGIN_OPTIONS = {
-    "mobilerun": {"auth_url", "client_id"},
+    "mobilerun": {"auth_url", "client_id", "no_qr"},
     "openai": {
         "credential_path",
         "timeout",
@@ -184,6 +187,7 @@ def auth_cli(verbose):
     help="Login timeout in seconds (default 300).",
 )
 @click.option("--no-browser", is_flag=True, help="Do not open a browser.")
+@click.option("--no-qr", is_flag=True, help="Do not display the Mobilerun sign-in QR code.")
 @click.option("--callback-host", help="OAuth callback host.")
 @click.option("--callback-port", type=click.IntRange(0, 65535), help="OAuth callback port.")
 @click.option("--callback-path", help="OAuth callback path.")
@@ -200,6 +204,7 @@ def login(
     credential_path,
     timeout,
     no_browser,
+    no_qr,
     callback_host,
     callback_port,
     callback_path,
@@ -214,7 +219,9 @@ def login(
         ):
             raise click.UsageError(f"--{name.replace('_', '-')} is not supported for {service}")
     if service == "mobilerun":
-        _login_mobilerun(auth_url or DEFAULT_AUTH_URL, client_id or DEFAULT_DEVICE_CLIENT_ID)
+        _login_mobilerun(
+            auth_url or DEFAULT_AUTH_URL, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr
+        )
         return
     kwargs = {
         "credential_path": credential_path or str(SERVICES[service][0]),

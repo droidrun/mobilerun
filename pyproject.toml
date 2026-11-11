@@ -9,6 +9,7 @@ dependencies = [
     "posthog>=6.7.6",
     "pydantic>=2.11.10",
     "rich>=14.1.0",
+    "segno>=1.6.6",
     "InquirerPy>=0.3.4",
     "opentelemetry-exporter-otlp-proto-http>=1.40.0",
     "opentelemetry-sdk>=1.40.0",

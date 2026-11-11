@@ -52,9 +52,13 @@ def test_tree_and_short_options():
     assert set(cli.commands) == {"run", "device", "auth", "configure", "macro", "doctor", "env"}
     assert set(cli.commands["device"].commands) == {
         "list", "connect", "disconnect", "setup", "ping", "tap", "swipe", "long-press",
-        "type", "press", "screenshot", "ui", "apps", "start",
+        "type", "press", "screenshot", "ui", "apps", "start", "pair",
     }
     assert set(cli.commands["auth"].commands) == {"login", "logout", "status"}
+    assert "--no-qr" in {
+        option for param in cli.commands["auth"].commands["login"].params
+        for option in getattr(param, "opts", ())
+    }
     expected = {"-d": "--device", "-t": "--target", "-P": "--platform", "-c": "--config",
                 "-v": "--verbose", "-j": "--json", "-p": "--provider", "-m": "--model",
                 "-u": "--llm-url", "-T": "--temperature", "-s": "--max-steps",
