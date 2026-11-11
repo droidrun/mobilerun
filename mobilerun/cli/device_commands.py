@@ -393,4 +393,3 @@ async def start(package, device, config_path, tcp, platform, target, api_url, ve
         click.echo(result, err=True)
     finally:
         await _teardown_android(driver)
-
