@@ -4,7 +4,7 @@ import click
 from async_adbutils import adb
 
 from mobilerun.cli.device_commands import device_cli, probe_device
-from mobilerun.cli.device_pair import pair
+from mobilerun.cli.device_pair import adb_connect_succeeded
 from mobilerun.cli.options import (
     api_url_option,
     config_option,
@@ -18,8 +18,6 @@ from mobilerun.cli.options import (
 )
 from mobilerun.cli.selection import core_client, select_device
 from mobilerun.cli.setup import _setup_portal
-
-device_cli.add_command(pair)
 
 
 @device_cli.command("list")
@@ -67,7 +65,7 @@ def list_devices(target, api_url, verbose, json_output, all_devices):
 async def connect(serial, verbose):
     """Connect to an Android device over TCP/IP."""
     result = await adb.connect(serial)
-    if "connected to" not in result:
+    if not adb_connect_succeeded(result):
         raise click.ClickException(f"Failed to connect to {serial}: {result}")
     click.echo(f"Successfully connected to {serial}", err=True)
 

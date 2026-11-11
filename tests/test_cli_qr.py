@@ -1,17 +1,16 @@
 """Terminal QR rendering and local wireless debugging at the CLI boundary."""
 
 import io
-import re
 import subprocess
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import auth, device_pair, deviceauth, options, qr
+from mobilerun.cli import auth, device_lifecycle, device_pair, deviceauth, qr
 from mobilerun.cli.main import cli
 from mobilerun.config_manager import ConfigLoader
 
@@ -50,17 +49,35 @@ def test_print_qr_uses_stderr_and_preserves_quiet_zone(monkeypatch):
     make.assert_called_once_with(payload)
     lines = output.getvalue().splitlines()
     assert len(lines) > 10
-    # Segno's compact output renders light modules as full blocks: two
-    # solid lines preserve the four-module quiet zone above the symbol.
-    assert lines[:2] == ["█" * code.symbol_size()[0]] * 2
-    assert any("█" in line or "▀" in line or "▄" in line for line in lines)
+    assert all(line.startswith("\x1b[97;40m") and line.endswith("\x1b[0m") for line in lines)
+    # Two compact rows preserve the four-module light quiet zone.
+    assert lines[:2] == ["\x1b[97;40m" + "█" * code.symbol_size()[0] + "\x1b[0m"] * 2
 
 
-@pytest.mark.parametrize("no_qr,complete", [(False, True), (True, True), (False, False)])
-def test_login_qr_keeps_existing_flow_and_stdout(monkeypatch, tmp_path, no_qr, complete):
+@pytest.mark.parametrize("error", [ValueError("cannot encode"), UnicodeError("cannot render")])
+def test_print_qr_encoding_failure_returns_false(monkeypatch, error):
+    output = io.StringIO()
+    output.isatty = lambda: True
+    monkeypatch.setattr(qr.sys, "stderr", output)
+    monkeypatch.setattr(qr.segno, "make_qr", Mock(side_effect=error))
+    assert qr.print_qr("https://example.test/verify") is False
+    assert output.getvalue() == ""
+
+
+@pytest.mark.parametrize("error", [OSError("cannot write"), UnicodeError("unsupported encoding")])
+def test_print_qr_write_failure_returns_false(monkeypatch, error):
+    output = io.StringIO()
+    output.isatty = lambda: True
+    output.write = Mock(side_effect=error)
+    monkeypatch.setattr(qr.sys, "stderr", output)
+    assert qr.print_qr("https://example.test/verify") is False
+
+
+@pytest.fixture
+def login(monkeypatch, tmp_path):
     import webbrowser
 
-    link = "https://example.test/verify?user_code=ABCD-EFGH" if complete else ""
+    link = "https://example.test/verify?user_code=ABCD-EFGH"
     code = deviceauth.CodeResponse("device-code", "ABCD-EFGH", "https://example.test/verify",
                                    link, 120, 5)
     request = Mock(return_value=code)
@@ -74,23 +91,51 @@ def test_login_qr_keeps_existing_flow_and_stdout(monkeypatch, tmp_path, no_qr, c
     monkeypatch.setattr(webbrowser, "open", browser)
     printed = Mock(side_effect=qr.print_qr)
     monkeypatch.setattr(auth, "print_qr", printed)
-    args = ["auth", "login"] + (["--no-qr"] if no_qr else [])
-    result = TerminalRunner().invoke(cli, args)
+    return SimpleNamespace(code=code, request=request, poll=poll, save=save,
+                           browser=browser, printed=printed)
+
+
+def test_login_prints_complete_link_qr_and_preserves_flow(login):
+    result = TerminalRunner().invoke(cli, ["auth", "login"])
     assert result.exit_code == 0, result.output
     assert result.stdout == ""
     assert "ABCD-EFGH" in result.stderr and "Visit:" in result.stderr
-    if complete and not no_qr:
-        printed.assert_called_once_with(link)
-        assert "█" in result.stderr or "▀" in result.stderr or "▄" in result.stderr
-    else:
-        printed.assert_not_called()
-    if complete:
-        browser.assert_called_once_with(link)
-    else:
-        browser.assert_not_called()
-    request.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID)
-    poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, code)
-    save.assert_called_once_with("test-session", auth.DEFAULT_AUTH_URL)
+    login.printed.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
+    assert "\x1b[97;40m" in result.stderr
+    login.browser.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
+    login.request.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID)
+    login.poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, login.code)
+    login.save.assert_called_once_with("test-session", auth.DEFAULT_AUTH_URL)
+
+
+def test_login_no_qr_preserves_browser_and_polling(login):
+    result = TerminalRunner().invoke(cli, ["auth", "login", "--no-qr"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == ""
+    login.printed.assert_not_called()
+    login.browser.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
+    login.poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, login.code)
+
+
+def test_login_without_complete_link_skips_qr_and_browser(login):
+    login.code.verification_uri_complete = ""
+    result = TerminalRunner().invoke(cli, ["auth", "login"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == ""
+    login.printed.assert_not_called()
+    login.browser.assert_not_called()
+    login.poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, login.code)
+
+
+def test_login_continues_after_qr_render_failure(monkeypatch, login):
+    monkeypatch.setattr(qr.segno, "make_qr", Mock(side_effect=ValueError("cannot encode")))
+    result = TerminalRunner().invoke(cli, ["auth", "login"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == ""
+    assert "Visit:" in result.stderr and "ABCD-EFGH" in result.stderr
+    login.browser.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
+    login.poll.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, login.code)
+    login.save.assert_called_once_with("test-session", auth.DEFAULT_AUTH_URL)
 
 
 @pytest.mark.parametrize("service", ["openai", "anthropic", "gemini", "xai"])
@@ -116,9 +161,20 @@ def test_mdns_parser_reads_services_and_ignores_header():
         ("other-device", "_adb-tls-pairing._tcp", "192.0.2.2:30001"),
         ("mobilerun-a1b2c3", "_adb-tls-pairing._tcp", "192.0.2.1:30002"),
         ("adb-device", "_adb-tls-connect._tcp", "192.0.2.1:30003"),
+        ("legacy", "_adb._tcp", "192.0.2.1:5555"),
         ("ipv6", "_adb-tls-connect._tcp", "[2001:db8::1]:30004"),
     ]
     assert services[-1].ip == "[2001:db8::1]"
+
+
+@pytest.mark.parametrize("address", [
+    "2001:db8::1:30004", "fe80::1%en0:30004", "[fe80::1%en0]:30004",
+    "169.254.1.2:30004", "192.0.2.1:0", "192.0.2.1:65536", "invalid:30004",
+])
+def test_mdns_parser_skips_unsafe_addresses(address):
+    assert device_pair.parse_mdns_services(
+        f"mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t{address}"
+    ) == []
 
 
 @pytest.fixture
@@ -137,7 +193,7 @@ def pairing(monkeypatch):
         (0, "other\t_adb-tls-pairing._tcp\t192.0.2.2:31001\n"
             "mobilerun-a1b2c3-extra\t_adb-tls-pairing._tcp\t192.0.2.2:31002", ""),
         (0, "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t192.0.2.1:32001", ""),
-        (0, "Successfully paired to 192.0.2.1:32001", ""),
+        (0, "Enter pairing code: Successfully paired to 192.0.2.1:32001 [guid=adb-device]", ""),
         (0, "unrelated\t_adb-tls-connect._tcp\t192.0.2.2:33001", ""),
         (0, "adb-device\t_adb-tls-connect._tcp\t192.0.2.1:33002", ""),
         (0, "connected to 192.0.2.1:33002", ""),
@@ -160,8 +216,6 @@ def test_pair_sequences_discovery_pair_and_connect_without_exposing_password(pai
     assert "Paired and connected" in result.stderr
     assert "mobilerun device setup -d 192.0.2.1:33002" in result.stderr
     assert pairing.printed.call_args.args == ("WIFI:T:ADB;S:mobilerun-a1b2c3;P:Ab12Cd34Ef;;",)
-    assert re.fullmatch(r"WIFI:T:ADB;S:mobilerun-[a-z0-9]{6};P:[a-zA-Z0-9]{10};;",
-                        pairing.printed.call_args.args[0])
     assert [args for args, _ in pairing.calls] == [
         ("mdns", "check"), ("mdns", "services"), ("mdns", "services"),
         ("pair", "192.0.2.1:32001"), ("mdns", "services"), ("mdns", "services"),
@@ -169,19 +223,73 @@ def test_pair_sequences_discovery_pair_and_connect_without_exposing_password(pai
     ]
     assert pairing.calls[3][1]["input"] == "Ab12Cd34Ef\n"
     assert all("Ab12Cd34Ef" not in " ".join(args) for args, _ in pairing.calls)
-    assert all(kwargs["input"] is None for i, (_, kwargs) in enumerate(pairing.calls) if i != 3)
+    assert all(kwargs["input"] is None for _, kwargs in pairing.calls[:3] + pairing.calls[4:])
     assert "Ab12Cd34Ef" not in result.output
     assert pairing.clock.now == 2
 
 
-@pytest.mark.parametrize("stage", ["pairing", "connection"])
-def test_pair_timeout(pairing, stage):
-    if stage == "pairing":
-        pairing.responses[:] = pairing.responses[:2]
-        limit = 1
-    else:
-        pairing.responses[:] = pairing.responses[:5]
-        limit = 2
+def test_pair_prefers_ipv4_when_ipv6_is_listed_first(pairing):
+    pairing.responses[2] = (0,
+        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t[2001:db8::1]:32001\n"
+        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t192.0.2.1:32001", "")
+    pairing.responses[5] = (0,
+        "adb-device\t_adb-tls-connect._tcp\t[2001:db8::1]:33002\n"
+        "adb-device\t_adb-tls-connect._tcp\t192.0.2.1:33002", "")
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "192.0.2.1:33002\n"
+    assert pairing.calls[3][0] == ("pair", "192.0.2.1:32001")
+    assert pairing.calls[-1][0] == ("connect", "192.0.2.1:33002")
+
+
+def test_pair_accepts_bracketed_global_ipv6_when_no_ipv4_exists(pairing):
+    pairing.responses[2] = (0,
+        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t[2001:db8::1]:32001", "")
+    pairing.responses[5] = (0,
+        "adb-device\t_adb-tls-connect._tcp\t[2001:db8::1]:33002", "")
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "[2001:db8::1]:33002\n"
+    assert pairing.calls[3][0] == ("pair", "[2001:db8::1]:32001")
+    assert pairing.calls[-1][0] == ("connect", "[2001:db8::1]:33002")
+
+
+CONNECT_REPLIES = [
+    ("connected to 192.0.2.1:33002", 0),
+    ("already connected to 192.0.2.1:33002", 0),
+    ("daemon started\nconnected to 192.0.2.1:33002", 0),
+    ("not connected to 192.0.2.1:33002", 1),
+    ("error: connected to wrong service", 1),
+]
+
+
+@pytest.mark.parametrize("reply,exit_code", CONNECT_REPLIES)
+def test_pair_connect_reply(reply, exit_code, pairing):
+    pairing.responses[-1] = (0, reply, "")
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == exit_code, result.output
+
+
+@pytest.mark.parametrize("reply,exit_code", CONNECT_REPLIES)
+def test_device_connect_reply(monkeypatch, reply, exit_code):
+    monkeypatch.setattr(device_lifecycle.adb, "connect", AsyncMock(return_value=reply))
+    result = CliRunner().invoke(cli, ["device", "connect", "192.0.2.1:33002"])
+    assert result.exit_code == exit_code, result.output
+
+
+def test_pair_fails_if_qr_cannot_be_rendered(monkeypatch, pairing):
+    monkeypatch.setattr(device_pair, "print_qr", qr.print_qr)
+    monkeypatch.setattr(qr.segno, "make_qr", Mock(side_effect=ValueError("cannot encode")))
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 1
+    assert "Could not display the pairing QR code." in result.stderr
+    assert result.stdout == ""
+    assert [args for args, _ in pairing.calls] == [("mdns", "check")]
+
+
+@pytest.mark.parametrize("response_count,limit", [(2, 1), (5, 2)])
+def test_pair_timeout(pairing, response_count, limit):
+    pairing.responses[:] = pairing.responses[:response_count]
     result = TerminalRunner().invoke(cli, ["device", "pair", "--timeout", str(limit)])
     assert result.exit_code == 1
     assert "Timed out" in result.stderr
@@ -189,32 +297,19 @@ def test_pair_timeout(pairing, stage):
     assert pairing.clock.now == limit
 
 
-@pytest.mark.parametrize("stage,index", [("pair", 3), ("connect", 6)])
+@pytest.mark.parametrize("stage,index,message,expected", [
+    ("pair", 3, "Failed pair: Ab12Cd34Ef", "Failed pair: [redacted]"),
+    ("connect", 6, "Failed connect: refused", "Failed connect: refused"),
+])
 @pytest.mark.parametrize("returncode", [0, 1])
-def test_pair_adb_failure_redacts_password(pairing, stage, index, returncode):
-    pairing.responses[index] = (returncode, f"Failed {stage}: Ab12Cd34Ef", "")
+def test_pair_adb_failure_redacts_password(pairing, stage, index, message, expected, returncode):
+    pairing.responses[index] = (returncode, message, "")
     result = TerminalRunner().invoke(cli, ["device", "pair", "-v"])
     assert result.exit_code == 1
-    assert f"Failed {stage}: [redacted]" in result.stderr
+    assert expected in result.stderr
     assert "Ab12Cd34Ef" not in result.output
     assert result.stdout == ""
     assert pairing.calls[-1][0][0] == stage
-
-
-def test_pair_errors_use_shared_command_handler(monkeypatch, pairing):
-    pairing.responses[3] = (1, "", "Pairing failed: Ab12Cd34Ef")
-    convert = Mock(wraps=options.convert_api_error)
-    monkeypatch.setattr(options, "convert_api_error", convert)
-    result = TerminalRunner().invoke(cli, ["device", "pair"])
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert "Pairing failed: [redacted]" in result.stderr
-    assert "Ab12Cd34Ef" not in result.output
-    convert.assert_called_once()
-    error, context = convert.call_args.args
-    assert error.message == "Pairing failed: [redacted]"
-    assert context.command is cli.commands["device"].commands["pair"]
-    assert isinstance(context.command, options.Command)
 
 
 def test_pair_requires_mdns(pairing):

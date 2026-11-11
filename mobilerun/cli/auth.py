@@ -83,7 +83,7 @@ DEFAULT_AUTH_URL = "https://cloud.mobilerun.ai/api/auth"
 DEFAULT_DEVICE_CLIENT_ID = "mobilerun-cli"
 
 
-def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool = False):
+def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool):
     """Authenticate via OAuth 2.0 device authorization and save the session token."""
     import webbrowser
 
@@ -94,9 +94,9 @@ def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool = False):
 
     console.print(f"Visit: [bold]{code.verification_uri}[/]")
     console.print(f"Code:  [bold cyan]{code.user_code}[/]")
-    if code.verification_uri_complete and not no_qr:
-        print_qr(code.verification_uri_complete)
     if code.verification_uri_complete:
+        if not no_qr:
+            print_qr(code.verification_uri_complete)
         console.print(f"[dim](Opening {code.verification_uri_complete} ...)[/]")
         try:
             webbrowser.open(code.verification_uri_complete)

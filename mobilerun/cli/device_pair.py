@@ -6,11 +6,13 @@ import string
 import subprocess
 import sys
 import time
+from ipaddress import ip_address
 from typing import NamedTuple
 
 import click
 
-from mobilerun.cli.options import CONTEXT_SETTINGS, Command, emit, verbose_option
+from mobilerun.cli.device_commands import device_cli
+from mobilerun.cli.options import emit, verbose_option
 from mobilerun.cli.qr import print_qr
 
 
@@ -33,12 +35,18 @@ def parse_mdns_services(output: str) -> list[MdnsService]:
             continue
         name, service_type, address = fields
         service_type = service_type.rstrip(".")
-        if service_type not in {"_adb-tls-pairing._tcp", "_adb-tls-connect._tcp"}:
+        host, _, port = address.rpartition(":")
+        if not port.isdigit() or not 0 < int(port) < 65536:
             continue
-        host, separator, port = address.rpartition(":")
-        if host and separator and port.isdigit() and 0 < int(port) < 65536:
+        if ":" in host and not (host.startswith("[") and host.endswith("]")):
+            continue
+        try:
+            ip = ip_address(host.removeprefix("[").removesuffix("]"))
+        except ValueError:
+            continue
+        if not ip.is_link_local:
             services.append(MdnsService(name, service_type, address))
-    return services
+    return sorted(services, key=lambda service: service.address.startswith("["))
 
 
 def _run_adb(
@@ -51,7 +59,17 @@ def _run_adb(
     )
 
 
-def _adb(*args: str, deadline: float, password: str = "", input: str | None = None):
+def _adb_failure(result: subprocess.CompletedProcess[str], fallback: str) -> click.ClickException:
+    return click.ClickException(result.stderr.strip() or result.stdout.strip() or fallback)
+
+
+def adb_connect_succeeded(output: str) -> bool:
+    """Recognize adb's connect replies consistently for both commands."""
+    return any(line.lower().startswith(("connected to ", "already connected to "))
+               for line in output.splitlines())
+
+
+def _adb(*args: str, deadline: float, input: str | None = None):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise click.ClickException("Timed out waiting for wireless debugging.")
@@ -60,34 +78,31 @@ def _adb(*args: str, deadline: float, password: str = "", input: str | None = No
     except subprocess.TimeoutExpired:
         raise click.ClickException("Timed out waiting for adb wireless debugging.") from None
     # adb diagnostics must not echo the pairing password, even on failure.
-    if password:
-        result.stdout = result.stdout.replace(password, "[redacted]")
-        result.stderr = result.stderr.replace(password, "[redacted]")
+    if input:
+        secret = input.rstrip("\r\n")
+        if secret:
+            result.stdout = result.stdout.replace(secret, "[redacted]")
+            result.stderr = result.stderr.replace(secret, "[redacted]")
     if result.returncode:
-        raise click.ClickException(
-            result.stderr.strip() or result.stdout.strip() or "adb command failed."
-        )
+        raise _adb_failure(result, "adb command failed.")
     return result
 
 
 def _wait_for_service(
-    service_type: str, deadline: float, password: str, *, name: str | None = None,
+    service_type: str, deadline: float, *, name: str | None = None,
     ip: str | None = None,
 ) -> MdnsService:
     while True:
-        result = _adb("mdns", "services", deadline=deadline, password=password)
+        result = _adb("mdns", "services", deadline=deadline)
         for service in parse_mdns_services(result.stdout):
             if (service.service_type == service_type
                     and (name is None or service.name == name)
                     and (ip is None or service.ip == ip)):
                 return service
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise click.ClickException("Timed out waiting for wireless debugging.")
-        time.sleep(min(1, remaining))
+        time.sleep(1)
 
 
-@click.command(cls=Command, context_settings=CONTEXT_SETTINGS)
+@device_cli.command()
 @verbose_option
 @click.option(
     "--timeout", type=click.IntRange(min=1), default=120, show_default=True,
@@ -114,25 +129,20 @@ def pair(timeout: int, verbose: bool | None):
         err=True,
     )
     if not print_qr(f"WIFI:T:ADB;S:{name};P:{password};;"):
-        raise click.UsageError("This command needs a terminal.")
+        raise click.ClickException("Could not display the pairing QR code.")
     pairing = _wait_for_service(
-        "_adb-tls-pairing._tcp", deadline, password, name=name
+        "_adb-tls-pairing._tcp", deadline, name=name
     )
     result = _adb("pair", pairing.address, input=password + "\n",
-                  deadline=deadline, password=password)
+                  deadline=deadline)
     if "successfully paired to" not in result.stdout.lower():
-        raise click.ClickException(
-            result.stderr.strip() or result.stdout.strip() or "adb pairing failed."
-        )
+        raise _adb_failure(result, "adb pairing failed.")
     connection = _wait_for_service(
-        "_adb-tls-connect._tcp", deadline, password, ip=pairing.ip
+        "_adb-tls-connect._tcp", deadline, ip=pairing.ip
     )
-    result = _adb("connect", connection.address, deadline=deadline, password=password)
-    if not any(line.lower().startswith(("connected to ", "already connected to "))
-               for line in result.stdout.splitlines()):
-        raise click.ClickException(
-            result.stderr.strip() or result.stdout.strip() or "adb connection failed."
-        )
+    result = _adb("connect", connection.address, deadline=deadline)
+    if not adb_connect_succeeded(result.stdout):
+        raise _adb_failure(result, "adb connection failed.")
     emit(connection.address)
     click.echo(
         f"Paired and connected. Run `mobilerun device setup -d {connection.address}`.",
