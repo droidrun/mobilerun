@@ -17,12 +17,12 @@ from mobilerun.agent.utils.android_device import (
 from mobilerun.agent.utils.llm_picker import load_llm
 from mobilerun.cli.event_handler import EventHandler
 from mobilerun.cli.options import (
-    CONTEXT_SETTINGS,
     DEFAULT_API_URL,
     Command,
     coro,
     device_options,
     emit,
+    examples,
     json_option,
     llm_url_option,
     max_steps_option,
@@ -287,28 +287,33 @@ async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = N
 
 
 class AgentOption(click.Option):
+    def installed_type(self):
+        self.type = click.Choice(list_agents())
+        return self.type
+
     def get_help_record(self, ctx):
-        names = list_agents()
-        if not names:
+        if not self.installed_type().choices:
             return None
-        self.type = click.Choice(names)
         return super().get_help_record(ctx)
 
     def type_cast_value(self, ctx, value):
-        if value is not None:
-            names = list_agents()
-            if not names:
-                raise click.BadParameter(
-                    "No external agents are installed; install one before using --agent.",
-                    ctx=ctx, param=self,
-                )
-            self.type = click.Choice(names)
+        if value is not None and not self.installed_type().choices:
+            raise click.BadParameter(
+                "No external agents are installed; install one before using --agent.",
+                ctx=ctx, param=self,
+            )
         return super().type_cast_value(ctx, value)
+
+    def shell_complete(self, ctx, incomplete):
+        return self.installed_type().shell_complete(ctx, self, incomplete)
 
 
 @click.command(
-    cls=Command, context_settings=CONTEXT_SETTINGS,
-    epilog='\b\nExamples:\n  mobilerun run "Open Settings"\n  mobilerun run "Open Settings" -d DEVICE -p openai -m MODEL',
+    cls=Command,
+    epilog=examples(
+        'mobilerun run "Open Settings"',
+        'mobilerun run "Open Settings" -d DEVICE -p openai -m MODEL',
+    ),
 )
 @click.argument("task")
 @device_options
@@ -327,7 +332,10 @@ class AgentOption(click.Option):
 @click.option("--tracing/--no-tracing", default=None, help="Enable tracing.")
 @click.option("--backend", type=click.Choice(["visual-remote"]), help="Device control backend.")
 @click.option("--backend-device", help="Device id for a visual remote backend.")
-@click.option("--save-trajectory", type=click.Choice(["none", "step", "action"]), help="Choose which trajectory data to save.")
+@click.option(
+    "--save-trajectory", type=click.Choice(["none", "step", "action"]),
+    help="Choose which trajectory data to save.",
+)
 @coro
 async def run(
     task,

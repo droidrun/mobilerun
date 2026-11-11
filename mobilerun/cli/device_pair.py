@@ -13,7 +13,7 @@ from typing import NamedTuple
 import click
 
 from mobilerun.cli.device_commands import device_cli
-from mobilerun.cli.options import emit, verbose_option
+from mobilerun.cli.options import emit, examples, verbose_option
 from mobilerun.cli.qr import print_qr
 
 
@@ -151,7 +151,10 @@ def _wait_for_transport(guid: str, deadline: float) -> str:
 
 
 @device_cli.command(
-    epilog='\b\nExamples:\n  mobilerun device pair\n  mobilerun device pair --timeout 180',
+    epilog=examples(
+        'mobilerun device pair',
+        'mobilerun device pair --timeout 180',
+    ),
 )
 @verbose_option
 @click.option(

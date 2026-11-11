@@ -289,10 +289,10 @@ document on failure; API errors include the HTTP status and an optional code:
 {"error":"Device not found","status":404,"code":null}
 ```
 
-`doctor -j` always retains its checks, including when it exits 1:
+`doctor -j` retains completed checks, including when it exits 1:
 
 ```json
-{"ok":false,"checks":[{"name":"Device","status":"fail","detail":"No device connected"}]}
+{"ok":false,"checks":[{"name":"Device","status":"fail","detail":"no device connected\nConnect a device over USB or run `mobilerun device pair`; use `-t cloud` for cloud devices."}]}
 ```
 
 `device list --all` lists local devices first, then cloud devices. If either
@@ -328,7 +328,8 @@ printf '%s\n' "$ANTHROPIC_SETUP_TOKEN" | mobilerun auth login anthropic --token 
 Device-code and browser-callback login flows can proceed without terminal input.
 If a provider flow needs a pasted code, it fails before starting when input is
 disabled. For Anthropic, supply `--token -`; for Gemini, run the login in a
-terminal without `--no-input`. Tokens and keys are never included in CLI errors
+terminal without `--no-input`: headless Gemini sign-in needs a terminal because
+no option supplies its code. Tokens and keys are never included in CLI errors
 or verbose logs.
 
 ### Shell completion

@@ -5,10 +5,9 @@ import os
 import click
 
 from mobilerun.cli import deviceauth
-from mobilerun.cli.auth import DEFAULT_AUTH_URL
 from mobilerun.cli.options import (
-    CONTEXT_SETTINGS,
     DEFAULT_API_URL,
+    DEFAULT_AUTH_URL,
     Command,
     config_option,
     emit,
@@ -20,6 +19,9 @@ from mobilerun.config_manager import ConfigLoader, MobileConfig
 from mobilerun.config_manager.config_manager import PORTAL_TOKEN_ENV_VARS
 from mobilerun.config_manager.env_keys import API_KEY_ENV_VARS, load_env_key_sources
 from mobilerun.telemetry.tracker import is_telemetry_enabled
+
+TRUTHY = {"1", "true", "yes", "on"}
+BOOLEAN_VARIABLES = {"MOBILERUN_DEBUG", "MOBILERUN_STREAM_SCREENSHOTS", "MOBILERUN_OAUTH_MANUAL"}
 
 
 def resolved_environment(config_path=None):
@@ -75,8 +77,8 @@ def resolved_environment(config_path=None):
             value, source = os.environ[name], "env"
         if name == "MOBILERUN_TELEMETRY_ENABLED":
             value = is_telemetry_enabled(config_enabled=config.telemetry.enabled)
-        if name == "MOBILERUN_DEBUG" and source == "env":
-            value = value.lower() in {"1", "true", "yes", "on"}
+        if name in BOOLEAN_VARIABLES and isinstance(value, str):
+            value = value.lower() in TRUTHY
         if secret and not value:
             source = "not set"
         if secret:
@@ -85,7 +87,7 @@ def resolved_environment(config_path=None):
     return rows
 
 
-@click.command(cls=Command, context_settings=CONTEXT_SETTINGS)
+@click.command(cls=Command)
 @config_option
 @verbose_option
 @json_option
@@ -97,13 +99,10 @@ def env(config_path, verbose, json_output):
     else:
         for row in rows:
             value = row["value"]
-            if isinstance(value, str) and row["variable"] in {
-                "MOBILERUN_STREAM_SCREENSHOTS", "MOBILERUN_OAUTH_MANUAL",
-            }:
-                value = value.lower() in {"1", "true", "yes", "on"}
             if isinstance(value, bool):
                 value = str(value).lower()
             elif value is None:
                 value = ""
-            source = f"  ({row['source']})" if row["source"] != value else ""
+            show_source = not (value == "not set" and row["source"] == "not set")
+            source = f"  ({row['source']})" if show_source else ""
             emit(f"{row['variable']}={value}{source}")

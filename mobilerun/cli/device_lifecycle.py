@@ -6,6 +6,7 @@ from async_adbutils import adb
 from mobilerun.cli.device_commands import device_cli, probe_device
 from mobilerun.cli.device_pair import adb_connect_succeeded
 from mobilerun.cli.options import (
+    NO_CLOUD_DEVICES_HINT,
     NO_LOCAL_DEVICES_HINT,
     api_url_option,
     config_option,
@@ -14,8 +15,10 @@ from mobilerun.cli.options import (
     device_option,
     emit,
     emit_rows,
+    examples,
     json_option,
     platform_option,
+    redact_secrets,
     target_option,
     verbose_option,
 )
@@ -24,7 +27,10 @@ from mobilerun.cli.setup import _setup_portal
 
 
 @device_cli.command(
-    "list", epilog='\b\nExamples:\n  mobilerun device list\n  mobilerun device list --all -j',
+    "list", epilog=examples(
+        'mobilerun device list',
+        'mobilerun device list --all -j',
+    ),
 )
 @target_option
 @api_url_option
@@ -34,14 +40,16 @@ from mobilerun.cli.setup import _setup_portal
 def list_devices(target, api_url, verbose, json_output, all_devices):
     """List devices in the selected target."""
     rows, errors = [], []
-    for scope in (["local", "cloud"] if all_devices else [target]):
+    scopes = ["local", "cloud"] if all_devices else [target]
+    for scope in scopes:
         try:
             rows.extend(_list_target(api_url, scope))
         except Exception as exc:
             if not all_devices:
                 raise
             converted = convert_api_error(exc)
-            message = converted[0] if converted else str(exc)
+            message = converted[1]["error"] if converted else str(exc)
+            message = " ".join(redact_secrets(message, click.get_current_context()).split())
             errors.append({"target": scope, "error": message})
             click.echo(f"Warning: {scope}: {' '.join(message.split())}", err=True)
     if json_output:
@@ -50,9 +58,10 @@ def list_devices(target, api_url, verbose, json_output, all_devices):
         emit_rows(("DEVICE_ID", "NAME", "STATE", "TYPE"), (
             (row["device_id"], row["name"] or "-", row["state"], row["type"]) for row in rows
         ))
-    else:
-        click.echo("No devices found. " + NO_LOCAL_DEVICES_HINT, err=True)
-    if len(errors) == 2:
+    elif len(errors) < len(scopes):
+        hint = NO_CLOUD_DEVICES_HINT if target == "cloud" and not all_devices else NO_LOCAL_DEVICES_HINT
+        click.echo("No devices found. " + hint, err=True)
+    if len(errors) == len(scopes):
         click.get_current_context().exit(1)
 
 

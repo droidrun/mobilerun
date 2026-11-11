@@ -3,9 +3,11 @@
 import asyncio
 import difflib
 import json
+import logging
 import os
 import sys
 import traceback
+import unicodedata
 from contextlib import redirect_stdout
 from functools import wraps
 
@@ -13,40 +15,63 @@ import click
 from mobilerun_sdk import APIConnectionError, APIStatusError, APITimeoutError
 
 DEFAULT_API_URL = "https://api.mobilerun.ai/v1"
-CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+DEFAULT_AUTH_URL = "https://cloud.mobilerun.ai/api/auth"
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"], "show_default": True}
+SECRETS_KEY = "cli_secrets"
 NO_LOCAL_DEVICES_HINT = (
     "Connect a device over USB or run `mobilerun device pair`; "
     "use `-t cloud` for cloud devices."
 )
 
+NO_CLOUD_DEVICES_HINT = "Create or start a device in Mobilerun Cloud and check your sign-in."
 
-def local_device_hint(message):
+
+def local_device_hint(message, target="local"):
     """Add the recovery step for known local discovery errors."""
     lowered = message.lower()
     if any(text in lowered for text in (
         "no connected android devices", "no devices", "no device connected",
     )):
-        return message + "\n" + NO_LOCAL_DEVICES_HINT
+        return message + "\n" + (NO_CLOUD_DEVICES_HINT if target == "cloud" else NO_LOCAL_DEVICES_HINT)
     if "unknown device" in lowered or ("device" in lowered and "not found" in lowered):
-        return message + "\nFind connected devices with `mobilerun device list`."
+        command = "mobilerun device list -t cloud" if target == "cloud" else "mobilerun device list"
+        return message + f"\nFind connected devices with `{command}`."
     return message
 
 
 def read_secret(ctx, param, value):
     """Accept one secret line from stdin, without echoing it."""
+    if ctx.resilient_parsing:
+        return value
     if value == "-":
-        value = click.get_text_stream("stdin").readline().rstrip("\r\n")
+        stream = click.get_text_stream("stdin")
+        value = (click.prompt(param.human_readable_name, hide_input=True, err=True,
+                              default="", show_default=False)
+                 if stream.isatty() else stream.readline()).rstrip("\r\n")
         if not value.strip():
             raise click.BadParameter("stdin is empty; provide one secret line.", ctx=ctx, param=param)
     if value:
-        ctx.meta.setdefault("cli_secrets", []).append(value)
+        ctx.meta.setdefault(SECRETS_KEY, []).append(value)
     return value
 
 
-def redact_secrets(text, ctx):
-    for secret in sorted(set(ctx.meta.get("cli_secrets", ())), key=len, reverse=True):
+def redact(text, secrets):
+    for secret in sorted(set(filter(None, secrets)), key=len, reverse=True):
         text = text.replace(secret, "[redacted]")
     return text
+
+
+def redact_secrets(text, ctx):
+    return redact(text, ctx.meta.get(SECRETS_KEY, ()))
+
+
+class SecretFormatter(logging.Formatter):
+    def __init__(self, ctx):
+        super().__init__()
+        self.ctx = ctx
+
+    def format(self, record):
+        return redact_secrets(super().format(record), self.ctx)
 
 
 def input_allowed(no_input=False):
@@ -70,16 +95,13 @@ def convert_api_error(exc):
     sensitive = [os.environ.get("MOBILERUN_CLOUD_API_KEY", "")]
     ctx = click.get_current_context(silent=True)
     if ctx:
-        sensitive.extend(ctx.meta.get("cli_secrets", ()))
+        sensitive.extend(ctx.meta.get(SECRETS_KEY, ()))
     authorization = request.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
         sensitive.append(authorization[7:])
 
     def clean(value):
-        text = " ".join(str(value).split())
-        for secret in sorted(filter(None, sensitive), key=len, reverse=True):
-            text = text.replace(secret, "[redacted]")
-        return text
+        return redact(" ".join(str(value).split()), sensitive)
 
     status = exc.status_code if isinstance(exc, APIStatusError) else None
     body = exc.body if isinstance(exc.body, dict) else {}
@@ -124,16 +146,14 @@ class HelpLayout:
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("context_settings", CONTEXT_SETTINGS)
         super().__init__(*args, **kwargs)
-        for param in self.params:
-            if isinstance(param, click.Option) and param.show_default is None:
-                param.show_default = True
 
     def get_params(self, ctx):
-        first = {"device": 0, "target": 1, "platform": 2, "config_path": 3}
-        last = {"api_url": 5, "json_output": 6, "verbose": 7, "help": 8}
-        return sorted(super().get_params(ctx), key=lambda param: first.get(
-            param.name, last.get(param.name, 4)
-        ))
+        def rank(param):
+            order = ("device", "target", "platform", "config_path", None,
+                     "api_url", "json_output", "verbose", "help")
+            return order.index(param.name if param.name in order else None)
+
+        return sorted(super().get_params(ctx), key=rank)
 
     def get_short_help_str(self, limit=45):
         return self.short_help or " ".join((self.help or "").split("\n\n", 1)[0].split())
@@ -151,18 +171,12 @@ class Command(HelpLayout, click.Command):
                     ctx.params["verbose"] = parent.params["verbose"]
                     break
                 parent = parent.parent
-        import logging
-
         from mobilerun.log_handlers import configure_logging
 
         logger = logging.getLogger("mobilerun")
         previous = logger.handlers[:], logger.level, logger.propagate
-        class SecretFormatter(logging.Formatter):
-            def format(self, record):
-                return redact_secrets(super().format(record), ctx)
-
         handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(SecretFormatter())
+        handler.setFormatter(SecretFormatter(ctx))
         configure_logging(bool(ctx.params.get("verbose")), handler)
         try:
             # Libraries and OAuth flows may print progress directly.
@@ -175,7 +189,7 @@ class Command(HelpLayout, click.Command):
         except (KeyboardInterrupt, asyncio.CancelledError):
             ctx.exit(130)
         except (EOFError, click.Abort) as exc:
-            if isinstance(exc.__cause__, KeyboardInterrupt):
+            if isinstance(exc.__cause__ or exc.__context__, KeyboardInterrupt):
                 ctx.exit(130)
             raise click.ClickException("Input closed; run the command again in a terminal.") from None
         except click.exceptions.Exit:
@@ -192,7 +206,9 @@ class Command(HelpLayout, click.Command):
                     if ctx.params.get("verbose"):
                         click.echo(redact_secrets(traceback.format_exc(), ctx), err=True)
                     exc = click.ClickException(str(exc) or type(exc).__name__)
-                exc.message = local_device_hint(redact_secrets(exc.message, ctx))
+                exc.message = local_device_hint(
+                    redact_secrets(exc.message, ctx), ctx.params.get("target", "local"),
+                )
                 document = {"error": exc.message}
             if (not isinstance(exc, click.UsageError) and ctx.params.get("json_output")
                     and not ctx.obj["emitted"]):
@@ -284,7 +300,7 @@ api_url_option = click.option(
 )
 auth_url_option = click.option(
     "--auth-url",
-    default="https://cloud.mobilerun.ai/api/auth",
+    default=DEFAULT_AUTH_URL,
     envvar="MOBILERUN_AUTH_URL",
     show_envvar=True,
     help="Mobilerun sign-in URL.",
@@ -293,9 +309,7 @@ tcp_option = click.option("--tcp/--no-tcp", default=None, help="Use local Androi
 json_option = click.option(
     "-j", "--json", "json_output", is_flag=True, help="Print one JSON document."
 )
-def model_option(function=None, *, help="LLM model."):
-    decorator = click.option("-m", "--model", help=help)
-    return decorator(function) if function is not None else decorator
+model_option = click.option("-m", "--model", help="LLM model.")
 
 
 llm_url_option = click.option("-u", "--llm-url", help="LLM API URL.")
@@ -326,22 +340,37 @@ def coro(function):
 def emit(value, *, json_output=False):
     """Write data to the original stdout, even inside a progress redirect."""
     ctx = click.get_current_context(silent=True)
-    output = ctx.obj.get("stdout") if ctx and ctx.obj else sys.stdout
+    output = stdout()
     click.echo(json.dumps(value, default=str) if json_output else value, file=output)
     if ctx and ctx.obj is not None and json_output:
         ctx.obj["emitted"] = True
 
 
+def _ui_cell(value):
+    return "".join(
+        " " if unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} else char
+        for char in str(value if value is not None else "")
+    )
+
+
 def emit_rows(headers, rows):
     """Print tab-separated data, adding a header only on terminal stdout."""
-    ctx = click.get_current_context(silent=True)
-    output = ctx.obj.get("stdout") if ctx and ctx.obj else sys.stdout
+    output = stdout()
 
     def line(values):
-        return "\t".join(str(value if value is not None else "").replace("\t", " ")
-                         .replace("\r", " ").replace("\n", " ") for value in values)
+        return "\t".join(_ui_cell(value) for value in values)
 
     if output.isatty():
         emit(line(headers))
     for row in rows:
         emit(line(row))
+
+
+def stdout():
+    ctx = click.get_current_context(silent=True)
+    return ctx.obj.get("stdout", sys.stdout) if ctx and ctx.obj else sys.stdout
+
+
+def examples(*lines, docs=None):
+    text = "\b\nExamples:\n" + "\n".join("  " + line for line in lines)
+    return text + (f"\n\nDocs: {docs}" if docs else "")

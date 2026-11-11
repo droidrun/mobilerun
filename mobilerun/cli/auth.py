@@ -17,12 +17,13 @@ from mobilerun.cli.oauth_actions import (
     save_anthropic_setup_token,
 )
 from mobilerun.cli.options import (
+    DEFAULT_AUTH_URL,
     Group,
     auth_url_option,
     emit,
+    examples,
     input_allowed,
     json_option,
-    model_option,
     no_input_option,
     read_secret,
     verbose_option,
@@ -83,7 +84,6 @@ def _run_grok_oauth_login(credential_path: str, model: str | None = None, **kwar
     _print_oauth_login_success("XAI", credential_path)
 
 
-DEFAULT_AUTH_URL = "https://cloud.mobilerun.ai/api/auth"
 DEFAULT_DEVICE_CLIENT_ID = "mobilerun-cli"
 
 
@@ -175,15 +175,19 @@ def auth_cli(verbose):
 
 
 @auth_cli.command(
-    epilog='\b\nExamples:\n  mobilerun auth login\n  mobilerun auth login openai --no-browser',
+    epilog=examples(
+        'mobilerun auth login',
+        'mobilerun auth login openai --no-browser',
+    ),
 )
 @service_argument
 @verbose_option
 @auth_url_option
-@model_option(help="LLM model (openai, gemini, xai).")
+@click.option("-m", "--model", help="LLM model (openai, gemini, xai).")
 @click.option("--client-id", default=None, help="Mobilerun device authorization client id.")
 @click.option(
-    "--credential-path", type=click.Path(dir_okay=False), help="Provider credential file (openai, anthropic, gemini, xai)."
+    "--credential-path", type=click.Path(dir_okay=False),
+    help="Provider credential file (openai, anthropic, gemini, xai)."
 )
 @click.option(
     "--timeout",
@@ -192,16 +196,22 @@ def auth_cli(verbose):
     callback=_validate_oauth_timeout,
     help="Provider login timeout in seconds (openai, anthropic, gemini, xai).",
 )
-@click.option("--no-browser", is_flag=True, help="Do not open a provider login browser (openai, anthropic, gemini, xai).")
+@click.option(
+    "--no-browser", is_flag=True,
+    help="Do not open a provider login browser (openai, anthropic, gemini, xai).",
+)
 @click.option("--no-qr", is_flag=True, help="Do not display the Mobilerun sign-in QR code.")
 @click.option("--callback-host", help="OAuth callback host (openai, anthropic, gemini).")
-@click.option("--callback-port", type=click.IntRange(0, 65535), help="OAuth callback port (openai, anthropic, gemini).")
+@click.option(
+    "--callback-port", type=click.IntRange(0, 65535),
+    help="OAuth callback port (openai, anthropic, gemini).",
+)
 @click.option("--callback-path", help="OAuth callback path (openai, anthropic, gemini).")
 @click.option("--device-code", is_flag=True, help="Use xAI device-code login.")
 @no_input_option
 @click.option(
     "--token", callback=read_secret,
-    help="Anthropic setup-token; prefer '-' for stdin or ANTHROPIC_API_KEY with configure, "
+    help="Anthropic setup-token; prefer '-' for stdin, "
          "because flag values end up in shell history.",
 )
 @click.pass_context
@@ -232,7 +242,9 @@ def login(
             raise click.UsageError(f"--{name.replace('_', '-')} is not supported for {service}")
     if not input_allowed(no_input) and login_requires_input(service):
         if service == "anthropic" and not token:
-            raise click.UsageError("Missing option '--token'; pass --token - to read a setup-token from stdin.")
+            raise click.UsageError(
+                "Missing option '--token'; pass --token - to read a setup-token from stdin."
+            )
         if service == "gemini":
             raise click.UsageError(
                 "Gemini login needs a code; omit --no-input and run "
@@ -240,12 +252,12 @@ def login(
             )
     if service == "mobilerun":
         _login_mobilerun(
-            auth_url or DEFAULT_AUTH_URL, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr
+            auth_url, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr
         )
         return
     kwargs = {
         "credential_path": credential_path or str(SERVICES[service][0]),
-        "timeout": timeout or 300.0,
+        "timeout": timeout,
         "open_browser": not no_browser,
     }
     if service in {"openai", "gemini", "anthropic"}:

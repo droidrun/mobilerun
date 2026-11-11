@@ -11,6 +11,7 @@ from rich.table import Table
 
 from mobilerun.agent.utils.trajectory import Trajectory
 from mobilerun.cli.options import (
+    examples,
     Group,
     coro,
     device_options,
@@ -58,7 +59,10 @@ def macro_cli(verbose):
 
 
 @macro_cli.command(
-    epilog='\b\nExamples:\n  mobilerun macro replay MACRO.json -n\n  mobilerun macro replay TRAJECTORY -d DEVICE',
+    epilog=examples(
+        'mobilerun macro replay MACRO.json -n',
+        'mobilerun macro replay TRAJECTORY -d DEVICE',
+    ),
 )
 @click.argument("path", type=click.Path(exists=True))
 @device_options

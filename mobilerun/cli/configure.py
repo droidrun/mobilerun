@@ -15,9 +15,9 @@ from mobilerun.cli.configure_wizard import (
     run_configure_wizard,
 )
 from mobilerun.cli.options import (
-    CONTEXT_SETTINGS,
     Command,
     config_option,
+    examples,
     input_allowed,
     llm_url_option,
     model_option,
@@ -29,8 +29,11 @@ from mobilerun.cli.providers import PROVIDERS, configure_provider_option
 
 
 @click.command(
-    cls=Command, context_settings=CONTEXT_SETTINGS,
-    epilog='\b\nExamples:\n  mobilerun configure\n  mobilerun configure -p openai -m MODEL',
+    cls=Command,
+    epilog=examples(
+        'mobilerun configure',
+        'mobilerun configure -p openai -m MODEL',
+    ),
 )
 @configure_provider_option
 @model_option
@@ -48,8 +51,6 @@ def configure(provider, model, llm_url, verbose, config_path, api_key, auth_mode
     """Configure provider, authentication and model with the wizard."""
     spec = PROVIDERS.get(provider)
     if spec:
-        if spec.family is None:
-            raise click.UsageError(f"Provider {provider} is supported by run only")
         auth_mode = auth_mode or spec.auth_mode
     if not input_allowed(no_input):
         _validate_non_interactive(provider, model, api_key, llm_url, auth_mode)
@@ -87,7 +88,8 @@ def _validate_non_interactive(provider, model, api_key, base_url, auth_mode):
     slot = VARIANT_ENV_KEY_SLOT.get(variant.id)
     if variant.requires_api_key and not (api_key or (slot and resolve_env_key(slot, "auto"))):
         raise click.UsageError(
-            "Missing option '-k / --api-key'; pass -k - to read stdin, or set the provider's environment variable."
+            "Missing option '-k / --api-key'; pass -k - to read stdin, "
+            "or set the provider's environment variable."
         )
     if variant.requires_base_url and not (base_url or variant.base_url):
         raise click.UsageError("Missing option '-u / --llm-url'; specify the provider endpoint.")

@@ -4,7 +4,6 @@ import asyncio
 import base64
 import json
 import tempfile
-import unicodedata
 from collections.abc import Mapping
 from contextlib import contextmanager
 
@@ -13,9 +12,11 @@ import click
 from mobilerun.agent.utils.android_device import is_portal_http_url
 from mobilerun.cli.options import (
     Group,
+    _ui_cell,
     device_options,
     emit,
     emit_rows,
+    examples,
     json_option,
     verbose_option,
 )
@@ -60,7 +61,11 @@ def probe_device(params, *, selection=None):
 
 @click.group(
     cls=Group,
-    epilog='\b\nExamples:\n  mobilerun device list\n  mobilerun device pair\n  mobilerun device ui -d DEVICE',
+    epilog=examples(
+        'mobilerun device list',
+        'mobilerun device pair',
+        'mobilerun device ui -d DEVICE',
+    ),
 )
 @verbose_option
 def device_cli(verbose):
@@ -82,13 +87,6 @@ def screenshot(json_output, **params):
                 file.write(base64.b64decode(image))
                 path = file.name
         emit({"path": path} if json_output else path, json_output=json_output)
-
-
-def _ui_cell(value):
-    return "".join(
-        " " if unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} else char
-        for char in str(value if value is not None else "")
-    )
 
 
 def _field(node, *keys):
@@ -136,7 +134,10 @@ def ui_lines(state, all_elements=False):
 
 
 @device_cli.command(
-    epilog='\b\nExamples:\n  mobilerun device ui -d DEVICE\n  mobilerun device ui -d DEVICE -j',
+    epilog=examples(
+        'mobilerun device ui -d DEVICE',
+        'mobilerun device ui -d DEVICE -j',
+    ),
 )
 @json_option
 @click.option("--all", "all_elements", is_flag=True, help="Include empty layout containers.")
@@ -233,7 +234,8 @@ def apps(system, json_output, **params):
             emit(result, json_output=True)
         else:
             emit_rows(("APP_ID", "LABEL", "VERSION", "VERSION_CODE", "SYSTEM"), (
-                (_field(app, "app_id", "package_name", "bundle_id", "package"), app.get("label", ""), app.get("version_name", ""),
+                (_field(app, "app_id", "package_name", "bundle_id", "package"),
+                 app.get("label", ""), app.get("version_name", ""),
                  app.get("version_code", ""), str(app.get("is_system_app", False)).lower())
                 for app in result
             ))

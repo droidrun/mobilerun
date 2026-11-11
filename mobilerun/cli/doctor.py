@@ -652,23 +652,32 @@ async def run_doctor(
     device_serial: str | None = None,
     debug: bool = False,
     config_path: str | None = None,
-    *, target="local", platform=None, api_url=None,
+    *, target="local", platform=None, api_url=None, render_results=True,
 ) -> list[CheckResult]:
     """Run all doctor checks and auto-fix where possible."""
     debug = debug or False
 
-    console.print("\n[bold]Mobilerun Doctor[/]\n")
+    if render_results:
+        console.print("\n[bold]Mobilerun Doctor[/]\n")
+
+    def report(result, debug):
+        if render_results:
+            _print_result(result, debug)
+
+    def summary(results):
+        if render_results:
+            _print_summary(results)
 
     results: list[CheckResult] = []
 
     # 1. SDK Version
     r = await check_sdk_version(debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
 
     # 2. Config
     r_config, config = await check_config(debug, config_path)
-    _print_result(r_config, debug)
+    report(r_config, debug)
     results.append(r_config)
 
     # Load serial from config if not provided
@@ -688,10 +697,10 @@ async def run_doctor(
 
     # 3. ADB
     r = await check_adb(debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
     if r_config.status == Status.FAIL or (r.status == Status.FAIL and not non_adb):
-        _print_summary(results)
+        summary(results)
         return results
 
     if non_adb:
@@ -704,22 +713,22 @@ async def run_doctor(
         except Exception as exc:
             result = CheckResult("Device", Status.FAIL, str(exc))
         results.append(result)
-        _print_result(result, debug)
-        _print_summary(results)
+        report(result, debug)
+        summary(results)
         return results
 
     # 5. Device
     r_device, device = await check_device(device_serial, debug)
-    _print_result(r_device, debug)
+    report(r_device, debug)
     results.append(r_device)
     if device is None:
         console.print("\n  [dim]Skipping device-dependent checks (no device)[/]")
-        _print_summary(results)
+        summary(results)
         return results
 
     # 6. Portal Installed
     r_portal, is_installed = await check_portal_installed(device, debug)
-    _print_result(r_portal, debug)
+    report(r_portal, debug)
     if not is_installed:
         # Auto-fix: run setup
         from mobilerun.cli.setup import _setup_portal
@@ -729,13 +738,13 @@ async def run_doctor(
         r_portal, is_installed = await check_portal_installed(device, debug)
         if not is_installed:
             results.append(r_portal)
-            _print_summary(results)
+            summary(results)
             return results
     results.append(r_portal)
 
     # 7. Portal Version
     r_version, installed_ver, _, _ = await check_portal_version(device, debug)
-    _print_result(r_version, debug)
+    report(r_version, debug)
     if r_version.status == Status.WARN and installed_ver:
         # Auto-fix: run setup to install compatible version
         console.print("  [blue]→ Updating portal...[/]")
@@ -758,55 +767,55 @@ async def run_doctor(
     # 8. Accessibility
     r_a11y, a11y_enabled = await check_accessibility(device, debug)
     if not a11y_enabled:
-        _print_result(r_a11y, debug)
+        report(r_a11y, debug)
         # Auto-fix: enable accessibility
         success = await fix_enable_accessibility(device, debug)
         if success:
             r_a11y = CheckResult("Accessibility", Status.PASS, "enabled (auto-fixed)")
-            _print_result(r_a11y, debug)
+            report(r_a11y, debug)
     else:
-        _print_result(r_a11y, debug)
+        report(r_a11y, debug)
     results.append(r_a11y)
 
     # 9. Content Provider — connectivity, state, screenshot
     r = await check_content_provider(device, debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
 
     r_cp_state, cp_portal = await check_portal_state(device, False, debug)
     r_cp_state.name = "State (content)"
-    _print_result(r_cp_state, debug)
+    report(r_cp_state, debug)
     results.append(r_cp_state)
 
     if cp_portal and r_cp_state.status == Status.PASS:
         r = await check_screenshot(cp_portal, debug)
         r.name = "Screenshot (content)"
-        _print_result(r, debug)
+        report(r, debug)
         results.append(r)
 
     # 10. TCP — connectivity, state, screenshot
     r = await check_tcp(device, debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
 
     if r.status == Status.PASS:
         r_tcp_state, tcp_portal = await check_portal_state(device, True, debug)
         r_tcp_state.name = "State (tcp)"
-        _print_result(r_tcp_state, debug)
+        report(r_tcp_state, debug)
         results.append(r_tcp_state)
 
         if tcp_portal and r_tcp_state.status == Status.PASS:
             r = await check_screenshot(tcp_portal, debug)
             r.name = "Screenshot (tcp)"
-            _print_result(r, debug)
+            report(r, debug)
             results.append(r)
 
     # 12. Keyboard
     r = await check_keyboard(device, debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
 
-    _print_summary(results)
+    summary(results)
     return results
 
 
