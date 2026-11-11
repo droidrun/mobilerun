@@ -164,7 +164,6 @@ def test_mdns_parser_reads_services_and_ignores_header():
         ("legacy", "_adb._tcp", "192.0.2.1:5555"),
         ("ipv6", "_adb-tls-connect._tcp", "[2001:db8::1]:30004"),
     ]
-    assert services[-1].ip == "[2001:db8::1]"
 
 
 @pytest.mark.parametrize("address", [
@@ -194,9 +193,10 @@ def pairing(monkeypatch):
             "mobilerun-a1b2c3-extra\t_adb-tls-pairing._tcp\t192.0.2.2:31002", ""),
         (0, "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t192.0.2.1:32001", ""),
         (0, "Enter pairing code: Successfully paired to 192.0.2.1:32001 [guid=adb-device]", ""),
-        (0, "unrelated\t_adb-tls-connect._tcp\t192.0.2.2:33001", ""),
+        (0, "List of devices attached\n", ""),
+        (0, "adb-device._adb-tls-connect._tcp\tdevice", ""),
         (0, "adb-device\t_adb-tls-connect._tcp\t192.0.2.1:33002", ""),
-        (0, "connected to 192.0.2.1:33002", ""),
+        (0, "adb-device._adb-tls-connect._tcp\tdevice", ""),
     ]
     calls = []
 
@@ -209,17 +209,43 @@ def pairing(monkeypatch):
     return SimpleNamespace(responses=responses, calls=calls, printed=printed, clock=clock)
 
 
-def test_pair_sequences_discovery_pair_and_connect_without_exposing_password(pairing):
+@pytest.fixture
+def fallback(pairing):
+    pairing.responses[4:] = [(0, "List of devices attached\n", "")] * 16 + [
+        (0, "other-device\t_adb-tls-connect._tcp\t192.0.2.2:33001\n"
+            "adb-device\t_adb-tls-connect._tcp\t[2001:db8::1]:33002\n"
+            "adb-device\t_adb-tls-connect._tcp\t192.0.2.1:33002", ""),
+        (0, "List of devices attached\n", ""),
+        (0, "connected to 192.0.2.1:33002", ""),
+        (0, "192.0.2.1:33002\tdevice", ""),
+    ]
+    return pairing
+
+
+def test_adb_devices_parser_ignores_header_and_retains_states():
+    assert device_pair.parse_adb_devices(
+        "List of devices attached\n\n"
+        "adb-device._adb-tls-connect._tcp\tdevice\n"
+        "192.0.2.2:5555\toffline\n"
+        "usb-device\tunauthorized\n"
+        "other-device\tconnecting\n"
+    ) == {
+        "adb-device._adb-tls-connect._tcp": "device", "192.0.2.2:5555": "offline",
+        "usb-device": "unauthorized", "other-device": "connecting",
+    }
+
+
+def test_pair_waits_for_auto_connect_without_exposing_password(pairing):
     result = TerminalRunner().invoke(cli, ["device", "pair", "-v"])
     assert result.exit_code == 0, result.output
-    assert result.stdout == "192.0.2.1:33002\n"
+    assert result.stdout == "adb-device._adb-tls-connect._tcp\n"
     assert "Paired and connected" in result.stderr
-    assert "mobilerun device setup -d 192.0.2.1:33002" in result.stderr
+    assert "mobilerun device setup -d adb-device._adb-tls-connect._tcp" in result.stderr
     assert pairing.printed.call_args.args == ("WIFI:T:ADB;S:mobilerun-a1b2c3;P:Ab12Cd34Ef;;",)
     assert [args for args, _ in pairing.calls] == [
         ("mdns", "check"), ("mdns", "services"), ("mdns", "services"),
-        ("pair", "192.0.2.1:32001"), ("mdns", "services"), ("mdns", "services"),
-        ("connect", "192.0.2.1:33002"),
+        ("pair", "192.0.2.1:32001"), ("devices",), ("devices",),
+        ("mdns", "services"), ("devices",),
     ]
     assert pairing.calls[3][1]["input"] == "Ab12Cd34Ef\n"
     assert all("Ab12Cd34Ef" not in " ".join(args) for args, _ in pairing.calls)
@@ -228,30 +254,109 @@ def test_pair_sequences_discovery_pair_and_connect_without_exposing_password(pai
     assert pairing.clock.now == 2
 
 
-def test_pair_prefers_ipv4_when_ipv6_is_listed_first(pairing):
-    pairing.responses[2] = (0,
-        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t[2001:db8::1]:32001\n"
-        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t192.0.2.1:32001", "")
-    pairing.responses[5] = (0,
-        "adb-device\t_adb-tls-connect._tcp\t[2001:db8::1]:33002\n"
-        "adb-device\t_adb-tls-connect._tcp\t192.0.2.1:33002", "")
+@pytest.mark.parametrize("state", ["offline", "unauthorized", "connecting"])
+def test_pair_waits_for_guid_transport_to_be_ready(pairing, state):
+    pairing.responses[4] = (0, "unrelated\tdevice\n"
+        f"adb-device._adb-tls-connect._tcp\t{state}", "")
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "adb-device._adb-tls-connect._tcp\n"
+    assert pairing.clock.now == 2
+    assert not any(args[0] == "connect" for args, _ in pairing.calls)
+
+
+def test_pair_fallback_uses_guid_ipv4_service_after_fifteen_seconds(fallback):
     result = TerminalRunner().invoke(cli, ["device", "pair"])
     assert result.exit_code == 0, result.output
     assert result.stdout == "192.0.2.1:33002\n"
-    assert pairing.calls[3][0] == ("pair", "192.0.2.1:32001")
-    assert pairing.calls[-1][0] == ("connect", "192.0.2.1:33002")
+    assert "mobilerun device setup -d 192.0.2.1:33002" in result.stderr
+    assert fallback.calls[20][0] == ("mdns", "services")
+    assert fallback.calls[21][0] == ("devices",)
+    assert fallback.calls[22][0] == ("connect", "192.0.2.1:33002")
+    assert fallback.clock.now == 17
 
 
-def test_pair_accepts_bracketed_global_ipv6_when_no_ipv4_exists(pairing):
-    pairing.responses[2] = (0,
-        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t[2001:db8::1]:32001", "")
-    pairing.responses[5] = (0,
-        "adb-device\t_adb-tls-connect._tcp\t[2001:db8::1]:33002", "")
+@pytest.mark.parametrize("state", ["device", "offline", "unauthorized", "connecting"])
+def test_pair_fallback_rechecks_auto_connect_before_connecting(fallback, state):
+    fallback.responses[21:] = [
+        (0, f"adb-device._adb-tls-connect._tcp\t{state}", ""),
+        (0, "adb-device._adb-tls-connect._tcp\tdevice", ""),
+        (0, "adb-device\t_adb-tls-connect._tcp\t192.0.2.1:33002", ""),
+        (0, "adb-device._adb-tls-connect._tcp\tdevice", ""),
+    ]
     result = TerminalRunner().invoke(cli, ["device", "pair"])
     assert result.exit_code == 0, result.output
-    assert result.stdout == "[2001:db8::1]:33002\n"
+    assert result.stdout == "adb-device._adb-tls-connect._tcp\n"
+    assert not any(args[0] == "connect" for args, _ in fallback.calls)
+
+
+def test_pair_fallback_needs_ipv4_and_keeps_overall_deadline(fallback):
+    ipv6 = "adb-device\t_adb-tls-connect._tcp\t[2001:db8::1]:33002"
+    fallback.responses[20:] = [
+        (0, ipv6, ""), (0, "List of devices attached\n", ""), (0, ipv6, ""),
+    ]
+    result = TerminalRunner().invoke(cli, ["device", "pair", "--timeout", "18"])
+    assert result.exit_code == 1
+    assert "Timed out" in result.stderr
+    assert result.stdout == ""
+    assert not any(args[0] == "connect" for args, _ in fallback.calls)
+    assert fallback.clock.now == 18
+
+
+def test_pair_disconnects_duplicate_ip_and_keeps_guid(pairing):
+    pairing.responses[7] = (0, "adb-device._adb-tls-connect._tcp\tdevice\n"
+        "192.0.2.1:33002\tdevice\n192.0.2.2:33001\tdevice", "")
+    pairing.responses.append((0, "disconnected 192.0.2.1:33002", ""))
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "adb-device._adb-tls-connect._tcp\n"
+    assert "Disconnected duplicate transport 192.0.2.1:33002" in result.stderr
+    assert [args for args, _ in pairing.calls if args[0] == "disconnect"] == [
+        ("disconnect", "192.0.2.1:33002"),
+    ]
+
+
+def test_pair_cleans_up_late_auto_connect_after_fallback(fallback):
+    duplicates = "adb-device._adb-tls-connect._tcp\tdevice\n192.0.2.1:33002\tdevice"
+    fallback.responses[23:] = [
+        (0, duplicates, ""),
+        (0, "adb-device\t_adb-tls-connect._tcp\t192.0.2.1:33002", ""),
+        (0, duplicates, ""),
+        (0, "disconnected 192.0.2.1:33002", ""),
+    ]
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "adb-device._adb-tls-connect._tcp\n"
+    assert fallback.calls[-1][0] == ("disconnect", "192.0.2.1:33002")
+    assert "Disconnected duplicate transport" in result.stderr
+
+
+def test_pair_requires_guid_in_success_reply(pairing):
+    pairing.responses[3] = (0, "Enter pairing code: Successfully paired to 192.0.2.1:32001", "")
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 1
+    assert "Successfully paired to 192.0.2.1:32001" in result.stderr
+    assert result.stdout == ""
+    assert pairing.calls[-1][0] == ("pair", "192.0.2.1:32001")
+
+
+def test_pair_prefers_ipv4_pairing_when_ipv6_is_listed_first(pairing):
+    pairing.responses[2] = (0,
+        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t[2001:db8::1]:32001\n"
+        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t192.0.2.1:32001", "")
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "adb-device._adb-tls-connect._tcp\n"
+    assert pairing.calls[3][0] == ("pair", "192.0.2.1:32001")
+
+
+def test_pair_accepts_bracketed_global_ipv6_pairing_when_no_ipv4_exists(pairing):
+    pairing.responses[2] = (0,
+        "mobilerun-a1b2c3\t_adb-tls-pairing._tcp\t[2001:db8::1]:32001", "")
+    result = TerminalRunner().invoke(cli, ["device", "pair"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "adb-device._adb-tls-connect._tcp\n"
     assert pairing.calls[3][0] == ("pair", "[2001:db8::1]:32001")
-    assert pairing.calls[-1][0] == ("connect", "[2001:db8::1]:33002")
 
 
 CONNECT_REPLIES = [
@@ -264,8 +369,8 @@ CONNECT_REPLIES = [
 
 
 @pytest.mark.parametrize("reply,exit_code", CONNECT_REPLIES)
-def test_pair_connect_reply(reply, exit_code, pairing):
-    pairing.responses[-1] = (0, reply, "")
+def test_pair_connect_reply(reply, exit_code, fallback):
+    fallback.responses[22] = (0, reply, "")
     result = TerminalRunner().invoke(cli, ["device", "pair"])
     assert result.exit_code == exit_code, result.output
 
@@ -297,12 +402,13 @@ def test_pair_timeout(pairing, response_count, limit):
     assert pairing.clock.now == limit
 
 
-@pytest.mark.parametrize("stage,index,message,expected", [
-    ("pair", 3, "Failed pair: Ab12Cd34Ef", "Failed pair: [redacted]"),
-    ("connect", 6, "Failed connect: refused", "Failed connect: refused"),
+@pytest.mark.parametrize("scenario,stage,index,message,expected", [
+    ("pairing", "pair", 3, "Failed pair: Ab12Cd34Ef", "Failed pair: [redacted]"),
+    ("fallback", "connect", 22, "Failed connect: refused", "Failed connect: refused"),
 ])
 @pytest.mark.parametrize("returncode", [0, 1])
-def test_pair_adb_failure_redacts_password(pairing, stage, index, message, expected, returncode):
+def test_pair_adb_failure_redacts_password(request, scenario, stage, index, message, expected, returncode):
+    pairing = request.getfixturevalue(scenario)
     pairing.responses[index] = (returncode, message, "")
     result = TerminalRunner().invoke(cli, ["device", "pair", "-v"])
     assert result.exit_code == 1

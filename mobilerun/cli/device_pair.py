@@ -1,5 +1,6 @@
 """Pair and connect a local Android device through adb wireless debugging."""
 
+import re
 import secrets
 import shutil
 import string
@@ -20,10 +21,6 @@ class MdnsService(NamedTuple):
     name: str
     service_type: str
     address: str
-
-    @property
-    def ip(self) -> str:
-        return self.address.rsplit(":", 1)[0]
 
 
 def parse_mdns_services(output: str) -> list[MdnsService]:
@@ -47,6 +44,16 @@ def parse_mdns_services(output: str) -> list[MdnsService]:
         if not ip.is_link_local:
             services.append(MdnsService(name, service_type, address))
     return sorted(services, key=lambda service: service.address.startswith("["))
+
+
+def parse_adb_devices(output: str) -> dict[str, str]:
+    """Read the serial and state columns, ignoring adb's header."""
+    devices = {}
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) == 2:
+            devices[fields[0]] = fields[1]
+    return devices
 
 
 def _run_adb(
@@ -88,17 +95,58 @@ def _adb(*args: str, deadline: float, input: str | None = None):
     return result
 
 
-def _wait_for_service(
-    service_type: str, deadline: float, *, name: str | None = None,
-    ip: str | None = None,
-) -> MdnsService:
+def _wait_for_service(service_type: str, deadline: float, *, name: str) -> MdnsService:
     while True:
         result = _adb("mdns", "services", deadline=deadline)
         for service in parse_mdns_services(result.stdout):
-            if (service.service_type == service_type
-                    and (name is None or service.name == name)
-                    and (ip is None or service.ip == ip)):
+            if service.service_type == service_type and service.name == name:
                 return service
+        time.sleep(1)
+
+
+def _guid_transport(devices: dict[str, str], guid: str) -> str | None:
+    return next((serial for serial, state in devices.items()
+                 if serial.startswith(guid) and state == "device"), None)
+
+
+def _connect_addresses(guid: str, deadline: float) -> list[str]:
+    result = _adb("mdns", "services", deadline=deadline)
+    return [service.address for service in parse_mdns_services(result.stdout)
+            if service.name == guid and service.service_type == "_adb-tls-connect._tcp"]
+
+
+def _wait_for_transport(guid: str, deadline: float) -> str:
+    fallback_at = time.monotonic() + 15
+    fallback = None
+    while True:
+        devices = parse_adb_devices(_adb("devices", deadline=deadline).stdout)
+        serial = _guid_transport(devices, guid)
+        if serial:
+            addresses = _connect_addresses(guid, deadline)
+            # Recheck at completion so a late auto-connect wins over TCP.
+            devices = parse_adb_devices(_adb("devices", deadline=deadline).stdout)
+            serial = _guid_transport(devices, guid)
+            if serial:
+                for address in dict.fromkeys([*addresses, fallback]):
+                    if address and address in devices:
+                        _adb("disconnect", address, deadline=deadline)
+                        click.echo(f"Disconnected duplicate transport {address}; keeping {serial}.",
+                                   err=True)
+                return serial
+        elif (fallback and devices.get(fallback) == "device"
+              and not any(serial.startswith(guid) for serial in devices)):
+            return fallback
+        elif fallback is None and time.monotonic() >= fallback_at:
+            address = next((address for address in _connect_addresses(guid, deadline)
+                            if not address.startswith("[")), None)
+            if address:
+                # The transport may have appeared during mDNS discovery.
+                devices = parse_adb_devices(_adb("devices", deadline=deadline).stdout)
+                if not any(serial.startswith(guid) for serial in devices):
+                    result = _adb("connect", address, deadline=deadline)
+                    if not adb_connect_succeeded(result.stdout):
+                        raise _adb_failure(result, "adb connection failed.")
+                    fallback = address
         time.sleep(1)
 
 
@@ -137,14 +185,12 @@ def pair(timeout: int, verbose: bool | None):
                   deadline=deadline)
     if "successfully paired to" not in result.stdout.lower():
         raise _adb_failure(result, "adb pairing failed.")
-    connection = _wait_for_service(
-        "_adb-tls-connect._tcp", deadline, ip=pairing.ip
-    )
-    result = _adb("connect", connection.address, deadline=deadline)
-    if not adb_connect_succeeded(result.stdout):
-        raise _adb_failure(result, "adb connection failed.")
-    emit(connection.address)
+    identity = re.search(r"\[guid=([^\]\s]+)\]", result.stdout)
+    if not identity:
+        raise _adb_failure(result, "adb pairing did not return a device GUID.")
+    serial = _wait_for_transport(identity.group(1), deadline)
+    emit(serial)
     click.echo(
-        f"Paired and connected. Run `mobilerun device setup -d {connection.address}`.",
+        f"Paired and connected. Run `mobilerun device setup -d {serial}`.",
         err=True,
     )

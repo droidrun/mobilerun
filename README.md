@@ -159,7 +159,7 @@ mobilerun env
 ```
 
 `mobilerun auth login` shows a sign-in QR code in the terminal; `--no-qr` suppresses it.
-`mobilerun device pair` pairs and connects an Android device by scanning its QR code under Developer options → Wireless debugging → "Pair device with QR code" on the same Wi-Fi.
+`mobilerun device pair` pairs and connects an Android device by scanning its QR code under Developer options → Wireless debugging → "Pair device with QR code" on the same Wi-Fi, then prints the device serial.
 
 Use `-h` or `--help` on any command, and `-V` or `--version` for the version.
 Read commands and `run` accept `-j`/`--json`; stdout contains one JSON document,
