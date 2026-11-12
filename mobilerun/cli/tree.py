@@ -14,12 +14,21 @@ __all__ = ["cli", "run_command"]
 
 @click.group(
     cls=Group,
-    command_order=["run", "device", "configure", "auth", "doctor", "env", "macro", "completion"],
+    command_order=[
+        "run",
+        "device",
+        "configure",
+        "auth",
+        "doctor",
+        "env",
+        "macro",
+        "completion",
+    ],
     epilog=examples(
-        'mobilerun device list',
-        'mobilerun configure -p openai',
+        "mobilerun device list",
+        "mobilerun configure -p openai",
         'mobilerun run "Open Settings"',
-        docs='https://docs.mobilerun.ai/framework/guides/cli',
+        docs="https://docs.mobilerun.ai/framework/guides/cli",
     ),
 )
 @click.version_option(version("mobilerun"), "-V", "--version")

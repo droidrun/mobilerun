@@ -5,7 +5,7 @@ if TYPE_CHECKING:
     from mobilerun.agent.droid.events import ResultEvent
 
 _EXPORTS = {
-    'ResultEvent': ('mobilerun.agent.droid.events', 'ResultEvent'),
+    "ResultEvent": ("mobilerun.agent.droid.events", "ResultEvent"),
 }
 
 __all__ = ["ResultEvent"]

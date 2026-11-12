@@ -36,7 +36,12 @@ PUBLIC_EXPORTS = {
         "LLMProfile",
     ],
     "mobilerun.agent": ["ResultEvent"],
-    "mobilerun.agent.droid": ["MobileAgent", "MobileAgentState", "DroidAgent", "DroidAgentState"],
+    "mobilerun.agent.droid": [
+        "MobileAgent",
+        "MobileAgentState",
+        "DroidAgent",
+        "DroidAgentState",
+    ],
     "mobilerun.agent.utils": [
         "to_chat_messages",
         "has_content",
@@ -67,7 +72,13 @@ PUBLIC_EXPORTS = {
         "PromptLoader",
     ],
 }
-BANNED = ("llama_index", "mobilerun.agent.droid", "mobilerun_sdk", "mobilerun_core", "segno")
+BANNED = (
+    "llama_index",
+    "mobilerun.agent.droid",
+    "mobilerun_sdk",
+    "mobilerun_core",
+    "segno",
+)
 IMPORTS = (
     "from mobilerun import MobileAgent",
     "from mobilerun import MobileConfig",
@@ -104,7 +115,8 @@ def fresh(code, *args, env=None):
 
 
 @pytest.mark.parametrize(
-    "module,name", [(mod, name) for mod, names in PUBLIC_EXPORTS.items() for name in names]
+    "module,name",
+    [(mod, name) for mod, names in PUBLIC_EXPORTS.items() for name in names],
 )
 def test_public_export_imports_in_isolation(module, name):
     fresh(f"from {module} import {name}; assert {name} is not None")
@@ -171,7 +183,9 @@ assert not loaded,loaded
     )
 
 
-@pytest.mark.parametrize("module", ["mobilerun", "droidrun", "mobilerun.macro", "droidrun.macro"])
+@pytest.mark.parametrize(
+    "module", ["mobilerun", "droidrun", "mobilerun.macro", "droidrun.macro"]
+)
 def test_module_entrypoint_help(module):
     fresh(
         f"import runpy,sys; sys.argv=[{module!r},'--help']; runpy.run_module({module!r},run_name='__main__')"
@@ -179,4 +193,6 @@ def test_module_entrypoint_help(module):
 
 
 def test_compat_cli_entrypoint():
-    fresh("import sys; from droidrun.cli_shim import main; sys.argv=['droidrun','--help']; main()")
+    fresh(
+        "import sys; from droidrun.cli_shim import main; sys.argv=['droidrun','--help']; main()"
+    )
