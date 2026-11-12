@@ -48,32 +48,3 @@ cli.add_command(doctor)
 cli.add_command(env)
 
 cli.add_command(completion)
-
-_EXAMPLES = {
-    "device screenshot": "mobilerun device screenshot -d emulator-5554",
-    "device tap": "mobilerun device tap 100 200",
-    "device swipe": "mobilerun device swipe 100 500 100 100",
-    "device long-press": "mobilerun device long-press 100 200",
-    "device type": 'mobilerun device type "Hello"',
-    "device press": "mobilerun device press home",
-    "device apps": "mobilerun device apps -j",
-    "device start": "mobilerun device start com.android.settings",
-    "device connect": "mobilerun device connect 192.0.2.1:5555",
-    "device disconnect": "mobilerun device disconnect 192.0.2.1:5555",
-    "device setup": "mobilerun device setup -d emulator-5554",
-    "device ping": "mobilerun device ping -d emulator-5554",
-    "auth": "mobilerun auth status",
-    "auth status": "mobilerun auth status -j",
-    "auth logout": "mobilerun auth logout",
-    "doctor": "mobilerun doctor -j",
-    "env": "mobilerun env -j",
-    "macro": "mobilerun macro list ./macros",
-    "macro list": "mobilerun macro list ./macros",
-    "completion": "mobilerun completion bash",
-}
-for _path, _example in _EXAMPLES.items():
-    _command = cli
-    for _name in _path.split():
-        _command = _command.commands[_name]
-    if not _command.epilog:
-        _command.epilog = examples(_example)

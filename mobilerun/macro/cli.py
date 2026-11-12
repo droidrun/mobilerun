@@ -50,7 +50,7 @@ def configure_logging(debug: bool = False):
     return logger
 
 
-@click.group(cls=Group)
+@click.group(cls=Group, epilog=examples('mobilerun macro list ./macros'))
 @verbose_option
 def macro_cli(verbose):
     """Replay recorded automation sequences."""
@@ -290,7 +290,7 @@ async def _show_dry_run(
     emit(console_render(table))
 
 
-@macro_cli.command()
+@macro_cli.command(epilog=examples("mobilerun macro list ./macros"))
 @click.argument("directory", type=click.Path(exists=True), default="trajectories")
 @verbose_option
 @json_option

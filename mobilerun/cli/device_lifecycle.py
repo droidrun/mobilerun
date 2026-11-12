@@ -87,7 +87,7 @@ def _list_target(api_url, scope):
             resource.close()
 
 
-@device_cli.command()
+@device_cli.command( epilog=examples('mobilerun device connect 192.0.2.1:5555'))
 @click.argument("serial", metavar="HOST:PORT")
 @verbose_option
 @coro
@@ -100,7 +100,7 @@ async def connect(serial, verbose):
     click.echo(f"Successfully connected to {serial}", err=True)
 
 
-@device_cli.command()
+@device_cli.command( epilog=examples('mobilerun device disconnect 192.0.2.1:5555'))
 @click.argument("serial", metavar="HOST:PORT")
 @verbose_option
 @coro
@@ -114,7 +114,7 @@ async def disconnect(serial, verbose):
     )
 
 
-@device_cli.command(removed_flags={**Command.removed_flags, "--path": "--apk"})
+@device_cli.command(removed_flags={**Command.removed_flags, "--path": "--apk"}, epilog=examples('mobilerun device setup -d emulator-5554'))
 @device_option
 @config_option
 @verbose_option
@@ -135,7 +135,7 @@ async def setup(device, config_path, verbose, apk, portal_version, latest):
         raise click.ClickException("Portal setup failed; run `mobilerun doctor` for diagnostics")
 
 
-@device_cli.command()
+@device_cli.command( epilog=examples('mobilerun device ping -d emulator-5554'))
 @device_option
 @target_option
 @config_option

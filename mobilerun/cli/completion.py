@@ -3,10 +3,10 @@
 import click
 from click.shell_completion import get_completion_class
 
-from mobilerun.cli.options import Command, emit, verbose_option
+from mobilerun.cli.options import Command, emit, examples, verbose_option
 
 
-@click.command(cls=Command)
+@click.command(cls=Command, epilog=examples("mobilerun completion bash"))
 @click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
 @verbose_option
 def completion(shell, verbose):

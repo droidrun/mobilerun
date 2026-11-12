@@ -72,7 +72,7 @@ def device_cli(verbose):
     """Discover, pair, set up, inspect, and control devices."""
 
 
-@device_cli.command()
+@device_cli.command( epilog=examples('mobilerun device screenshot -d emulator-5554'))
 @json_option
 @device_options
 def screenshot(json_output, **params):
@@ -165,7 +165,7 @@ def ui(json_output, all_elements, **params):
         click.echo(f"App: {_ui_cell(app)}; screen: {_ui_cell(width)}x{_ui_cell(height)}", err=True)
 
 
-@device_cli.command(dash_hint=True)
+@device_cli.command(dash_hint=True, epilog=examples('mobilerun device tap 100 200'))
 @click.argument("x", type=int)
 @click.argument("y", type=int)
 @device_options
@@ -176,7 +176,7 @@ def tap(x, y, **params):
     click.echo(f"Tapped ({x}, {y})", err=True)
 
 
-@device_cli.command("swipe", dash_hint=True)
+@device_cli.command("swipe", dash_hint=True, epilog=examples('mobilerun device swipe 100 500 100 100'))
 @click.argument("x1", type=int)
 @click.argument("y1", type=int)
 @click.argument("x2", type=int)
@@ -190,7 +190,7 @@ def swipe_cmd(x1, y1, x2, y2, duration, **params):
     click.echo(f"Swiped ({x1}, {y1}) -> ({x2}, {y2})", err=True)
 
 
-@device_cli.command("long-press", dash_hint=True)
+@device_cli.command("long-press", dash_hint=True, epilog=examples('mobilerun device long-press 100 200'))
 @click.argument("x", type=int)
 @click.argument("y", type=int)
 @device_options
@@ -201,7 +201,7 @@ def long_press(x, y, **params):
     click.echo(f"Long pressed ({x}, {y})", err=True)
 
 
-@device_cli.command("type", dash_hint=True)
+@device_cli.command("type", dash_hint=True, epilog=examples('mobilerun device type "Hello"'))
 @click.argument("text")
 @click.option("--clear", is_flag=True, help="Clear field before typing.")
 @device_options
@@ -212,7 +212,7 @@ def type_text(text, clear, **params):
     click.echo("Text typed.", err=True)
 
 
-@device_cli.command()
+@device_cli.command( epilog=examples('mobilerun device press home'))
 @click.argument("button", type=click.Choice(["back", "home", "enter"], case_sensitive=False))
 @device_options
 def press(button, **params):
@@ -222,7 +222,7 @@ def press(button, **params):
     click.echo(f"Pressed {button}", err=True)
 
 
-@device_cli.command()
+@device_cli.command( epilog=examples('mobilerun device apps -j'))
 @click.option("--system", is_flag=True, help="Include system apps.")
 @json_option
 @device_options
@@ -241,7 +241,7 @@ def apps(system, json_output, **params):
             ))
 
 
-@device_cli.command()
+@device_cli.command( epilog=examples('mobilerun device start com.android.settings'))
 @click.argument("package")
 @device_options
 def start(package, **params):

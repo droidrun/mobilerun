@@ -9,12 +9,13 @@ from mobilerun.cli.options import (
     coro,
     device_options,
     emit,
+    examples,
     json_option,
     local_device_hint,
 )
 
 
-@click.command(cls=Command)
+@click.command(cls=Command, epilog=examples('mobilerun doctor -j'))
 @device_options
 @json_option
 @coro

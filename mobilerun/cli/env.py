@@ -13,6 +13,7 @@ from mobilerun.cli.options import (
     Command,
     config_option,
     emit,
+    examples,
     json_option,
     verbose_option,
 )
@@ -95,7 +96,7 @@ def resolved_environment(config_path=None):
     return rows
 
 
-@click.command(cls=Command)
+@click.command(cls=Command, epilog=examples('mobilerun env -j'))
 @config_option
 @verbose_option
 @json_option

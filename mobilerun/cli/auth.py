@@ -178,7 +178,7 @@ service_argument = click.argument(
 )
 
 
-@click.group(cls=Group)
+@click.group(cls=Group, epilog=examples('mobilerun auth status'))
 @verbose_option
 def auth_cli(verbose):
     """Sign in, sign out, and inspect saved credentials."""
@@ -307,7 +307,7 @@ def login(
         }[service](**kwargs)
 
 
-@auth_cli.command()
+@auth_cli.command( epilog=examples('mobilerun auth logout'))
 @service_argument
 @verbose_option
 def logout(service, verbose):
@@ -330,7 +330,7 @@ def logout(service, verbose):
             console.print(f"{credential.env_var} stays active; unset it to stop using the env key.")
 
 
-@auth_cli.command()
+@auth_cli.command( epilog=examples('mobilerun auth status -j'))
 @verbose_option
 @json_option
 def status(verbose, json_output):
