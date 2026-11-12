@@ -24,7 +24,8 @@ def resolve_cloud_api_key():
 
     credentials = deviceauth.load_credentials() or {}
     return (
-        os.environ.get("MOBILERUN_CLOUD_API_KEY")
+        os.environ.get("MOBILERUN_API_KEY")
+        or os.environ.get("MOBILERUN_CLOUD_API_KEY")
         or credentials.get("api_key")
         or credentials.get("access_token")
     )
@@ -90,7 +91,7 @@ def require_cloud_api_key():
     key = resolve_cloud_api_key()
     if not key:
         raise click.ClickException(
-            "No cloud API key found. Set MOBILERUN_CLOUD_API_KEY or run `mobilerun auth login`."
+            "No cloud API key found. Set MOBILERUN_API_KEY or run `mobilerun auth login`."
         )
     return key
 
