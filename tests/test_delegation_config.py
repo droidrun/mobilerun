@@ -90,6 +90,22 @@ def test_loader_resolves_both_model_families_and_only_overrides_llms(
     assert llm_selector.llm is llm
 
 
+@pytest.mark.parametrize(
+    ("data", "expected"), [({}, 0.4), ({"min_confidence": 0.25}, 0.25)]
+)
+def test_hand_off_confidence_round_trips_and_reaches_the_selector(
+    monkeypatch, data, expected
+):
+    config = MobileConfig.from_dict({"agent": {"delegation": data}})
+    restored = MobileConfig.from_dict(config.to_dict())
+    assert restored.agent.delegation.min_confidence == expected
+
+    config = _config()
+    config.agent.delegation.min_confidence = expected
+    _mock_models(monkeypatch)
+    assert selector_loader.load_delegating_selector(config).min_confidence == expected
+
+
 def test_loader_supports_explicit_primary_profile_name(monkeypatch):
     config = _config()
     config.decision_profiles["custom"] = config.decision_profiles.pop("fast_agent")

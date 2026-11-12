@@ -397,6 +397,20 @@ def test_decision_rejects_invalid_indices(index):
         asyncio.run(DecisionSelector(_model(Decision(index))).select(request))
 
 
+@pytest.mark.parametrize(
+    "decision",
+    [Decision(0, confidence=0.3), Decision(success=True, confidence=0.3)],
+)
+def test_decision_selection_reports_the_model_confidence(decision):
+    request = SelectionRequest(
+        "Select",
+        tools={"click": {}, "complete": {}},
+        options=(ActionCandidate(ToolCall("click", {"index": 2}), "Click Bob"),),
+    )
+    selection = asyncio.run(DecisionSelector(_model(decision)).select(request))
+    assert selection.confidence == 0.3
+
+
 @pytest.mark.parametrize("decision", [None, Decision()])
 def test_decision_can_abstain(decision):
     assert asyncio.run(DecisionSelector(_model(decision)).select(_request())) is None

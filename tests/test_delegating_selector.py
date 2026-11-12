@@ -169,9 +169,9 @@ def test_delegation_is_one_step_and_returns_to_primary_on_next_selection():
 @pytest.mark.parametrize(
     "result",
     [
-        None,
         ActionSelection(),
         ActionSelection([ToolCall("click", {"index": 2})]),
+        ActionSelection([ToolCall("click", {"index": 2})], confidence=0.4),
         ActionSelection(action_json='{"action":"click","index":2}'),
         ActionSelection(action_json="not JSON"),
         ActionSelection(action_json='["delegate"]'),
@@ -184,6 +184,65 @@ def test_no_implicit_fallback_when_primary_does_not_delegate(result):
         asyncio.run(DelegatingSelector(primary, delegate).select(_request())) is result
     )
     delegate.select.assert_not_called()
+
+
+def test_abstaining_primary_hands_the_step_to_the_delegate():
+    chosen = ActionSelection([ToolCall("type", {"text": "Tea"})])
+    delegate = _selector(chosen)
+    selection = asyncio.run(
+        DelegatingSelector(_selector(None), delegate).select(_request())
+    )
+    assert selection is chosen
+    delegate.select.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("confidence", "min_confidence", "delegated"),
+    [(0.39, 0.4, True), (0.4, 0.4, False), (0.2, None, False), (0.2, 0.1, False)],
+)
+def test_unsure_primary_choices_go_to_the_delegate(
+    confidence, min_confidence, delegated
+):
+    unsure = ActionSelection([ToolCall("click", {"index": 2})], confidence=confidence)
+    chosen = ActionSelection([ToolCall("click", {"index": 5})])
+    delegate = _selector(chosen)
+    selection = asyncio.run(
+        DelegatingSelector(
+            _selector(unsure), delegate, min_confidence=min_confidence
+        ).select(_request())
+    )
+    assert selection.actions == (chosen if delegated else unsure).actions
+    assert delegate.select.await_count == int(delegated)
+
+
+def test_unsure_choice_is_kept_when_the_delegate_abstains():
+    unsure = ActionSelection([ToolCall("click", {"index": 2})], confidence=0.3)
+    assert (
+        asyncio.run(
+            DelegatingSelector(_selector(unsure), _selector(None)).select(_request())
+        )
+        is unsure
+    )
+
+
+def test_unsure_completion_also_goes_to_the_delegate():
+    unsure = ActionSelection(
+        [ToolCall("complete", {"success": True, "message": "Goal achieved."})],
+        confidence=0.13,
+    )
+    chosen = ActionSelection([ToolCall("click", {"index": 5})])
+    assert (
+        asyncio.run(
+            DelegatingSelector(_selector(unsure), _selector(chosen)).select(_request())
+        ).actions
+        == chosen.actions
+    )
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.5])
+def test_min_confidence_must_be_a_fraction(value):
+    with pytest.raises(ValueError, match="min_confidence"):
+        DelegatingSelector(_selector(None), _selector(None), min_confidence=value)
 
 
 @pytest.mark.parametrize(

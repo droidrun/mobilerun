@@ -35,12 +35,17 @@ LLM_DELEGATE_DESCRIPTION = (
 )
 
 
+DEFAULT_MIN_CONFIDENCE = 0.4
+
+
 class DelegatingSelector(BaseActionSelector):
     """Offer the primary a virtual ``delegate`` action, not an error fallback.
 
-    The delegate receives the original request without the virtual action. Only
-    its final selection is returned for execution; the next step starts with
-    the primary again. Neither selector executes tools here.
+    The delegate also takes the step when the primary abstains or reports a
+    confidence below ``min_confidence``. It receives the original request
+    without the virtual action. Only its final selection is returned for
+    execution; the next step starts with the primary again. Neither selector
+    executes tools here.
     """
 
     def __init__(
@@ -48,12 +53,17 @@ class DelegatingSelector(BaseActionSelector):
         primary: ActionSelector,
         delegate: ActionSelector,
         description: str | None = None,
+        min_confidence: float | None = DEFAULT_MIN_CONFIDENCE,
     ):
+        if min_confidence is not None and not 0 <= min_confidence <= 1:
+            raise ValueError("min_confidence must be between 0 and 1")
         self.primary = primary
         self.delegate = delegate
         self.description = description or (
             LLM_DELEGATE_DESCRIPTION if delegate.llms else DEFAULT_DESCRIPTION
         )
+        # The primary's own choices below this confidence go to the delegate.
+        self.min_confidence = min_confidence
 
     @property
     def supports_native_tool_calls(self) -> bool:
@@ -149,25 +159,38 @@ class DelegatingSelector(BaseActionSelector):
         primary_request.instructions = f"{instructions}\n\n{guidance}".strip()
 
         selection = await self.primary.select(primary_request)
-        if selection is None or not self._calls_delegate(selection):
-            return selection
-        actions = selection.actions
-        if not actions:
-            action = json.loads(selection.action_json)
-            actions = [
-                ToolCall(
-                    action["action"],
-                    {key: value for key, value in action.items() if key != "action"},
-                )
-            ]
-        if len(actions) > 1 or any(
-            action.name != "delegate" or action.parameters for action in actions
-        ):
-            return self._invalid(
-                selection,
-                request,
-                "Delegation must be the only selected action and takes no parameters",
+        if selection is None:
+            logger.info("The primary selector abstained; delegating this step")
+        elif self._unsure(selection):
+            logger.info(
+                "Primary confidence %.2f is below %.2f; delegating this step",
+                selection.confidence,
+                self.min_confidence,
             )
+        elif not self._calls_delegate(selection):
+            return selection
+        else:
+            actions = selection.actions
+            if not actions:
+                action = json.loads(selection.action_json)
+                actions = [
+                    ToolCall(
+                        action["action"],
+                        {
+                            key: value
+                            for key, value in action.items()
+                            if key != "action"
+                        },
+                    )
+                ]
+            if len(actions) > 1 or any(
+                action.name != "delegate" or action.parameters for action in actions
+            ):
+                return self._invalid(
+                    selection,
+                    request,
+                    "Delegation must be the only selected action and takes no parameters",
+                )
 
         logger.info("Delegating action selection to %s", type(self.delegate).__name__)
         delegated = await self.delegate.select(request)
@@ -178,8 +201,13 @@ class DelegatingSelector(BaseActionSelector):
                 "The delegate must select a real action, not delegate again",
             )
         if delegated is None:
+            if selection is not None and self._unsure(selection):
+                logger.info("The delegate abstained; keeping the primary's choice")
+                return selection
             return None
 
+        if selection is None:
+            return delegated
         usage = sum_usage(selection.usage, delegated.usage)
         memory_update = "\n".join(
             filter(
@@ -192,6 +220,13 @@ class DelegatingSelector(BaseActionSelector):
             )
         )
         return replace(delegated, usage=usage, memory_update=memory_update)
+
+    def _unsure(self, selection: ActionSelection) -> bool:
+        return (
+            self.min_confidence is not None
+            and selection.confidence is not None
+            and selection.confidence < self.min_confidence
+        )
 
     @staticmethod
     def _invalid(

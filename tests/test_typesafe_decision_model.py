@@ -211,6 +211,7 @@ def test_confidence_threshold_and_explicit_abstention(
         assert decision is None
     else:
         assert decision.option_index == expected_index
+        assert decision.confidence == confidence
 
 
 @pytest.mark.parametrize(

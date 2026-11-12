@@ -26,6 +26,8 @@ class Decision:
     # Located tap as (x, y) fractions of the screenshot, for options that
     # leave their point to the model.
     point: tuple[float, float] | None = None
+    # The model's confidence in this choice, from 0 to 1, when it reports one.
+    confidence: float | None = None
 
 
 class DecisionModel(Protocol):
@@ -139,6 +141,7 @@ class DecisionSelector(BaseActionSelector):
                 ],
                 thought=decision.thought,
                 description=decision.message,
+                confidence=decision.confidence,
             )
         index = decision.option_index
         if index is None:
@@ -155,4 +158,5 @@ class DecisionSelector(BaseActionSelector):
             actions=[action],
             thought=decision.thought,
             description=description,
+            confidence=decision.confidence,
         )

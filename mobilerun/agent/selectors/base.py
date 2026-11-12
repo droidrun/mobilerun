@@ -99,6 +99,8 @@ class ActionSelection:
     action_json: str | None = None
     # Why this selection cannot run; reported to the model instead of executing.
     failure: str | None = None
+    # The selector's confidence in this choice, from 0 to 1, when it reports one.
+    confidence: float | None = None
 
 
 class ActionSelector(ABC):

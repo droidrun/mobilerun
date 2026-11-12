@@ -261,6 +261,7 @@ class TypeSafeDecisionModel:
         if answer.choice in {"complete_success", "complete_failure"}:
             success = answer.choice == "complete_success"
             return Decision(
+                confidence=confidence,
                 success=success,
                 message=(
                     "Goal achieved."
@@ -270,7 +271,7 @@ class TypeSafeDecisionModel:
             )
         index = indices[answer.choice]
         if request.options[index].point_space is None:
-            return Decision(option_index=index)
+            return Decision(option_index=index, confidence=confidence)
         if target is None:
             raise ValueError("TypeSafe did not locate the on-screen tap")
         if target.confidence is not None and not (
@@ -281,6 +282,7 @@ class TypeSafeDecisionModel:
         box = target.box
         return Decision(
             option_index=index,
+            confidence=confidence,
             point=(
                 min(1.0, (box.left + box.right) / 2 / coverage[0]),
                 min(1.0, (box.top + box.bottom) / 2 / coverage[1]),

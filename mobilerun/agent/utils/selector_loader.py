@@ -48,4 +48,5 @@ def load_delegating_selector(
         primary=_load_selector(config, primary, **llm_kwargs),
         delegate=_load_selector(config, delegation.delegate, **llm_kwargs),
         description=delegation.description,
+        min_confidence=delegation.min_confidence,
     )
