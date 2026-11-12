@@ -20,7 +20,6 @@ from mobilerun.config_manager.config_manager import DeviceConfig
 
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("mobilerun.cli.options.require_adb", lambda: "/fake/adb")
     monkeypatch.setattr(ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml")
     for name in (
         "MOBILERUN_ANDROID_PORTAL_TOKEN", "MOBILERUN_IOS_PORTAL_TOKEN",

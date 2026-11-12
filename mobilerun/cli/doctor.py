@@ -24,7 +24,6 @@ from mobilerun_core_local.transport.android.portal_client import PortalClient
 from rich.console import Console
 
 from mobilerun import __version__
-from mobilerun.cli import options
 
 console = Console(stderr=True)
 
@@ -165,23 +164,19 @@ async def check_config(debug: bool, config_path: str | None = None) -> tuple[Che
 
 async def check_adb(debug: bool) -> CheckResult:
     """Check ADB is available and list devices."""
-    adb_path = ""
     try:
-        adb_path = options.require_adb()
         devices = await adb.list()
         count = len(devices)
         return CheckResult(
             "ADB",
             Status.PASS,
             f"found, {count} device(s)",
-            detail=adb_path,
         )
     except Exception as e:
         return CheckResult(
             "ADB",
             Status.FAIL,
-            e.message if isinstance(e, options.click.ClickException) else f"adb found but server error: {e}",
-            detail=adb_path,
+            str(e),
         )
 
 

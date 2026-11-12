@@ -305,7 +305,7 @@ was used, or `"credential":"login"` when the saved sign-in was used.
 without Android SDK Platform-Tools (the Config path varies by platform):
 
 ```json
-{"ok":false,"checks":[{"name":"SDK Version","status":"warn","detail":"0.8.0 (could not check latest); GitHub API unreachable"},{"name":"Config","status":"pass","detail":"/home/user/.config/droidrun/config.yaml"},{"name":"ADB","status":"fail","detail":"adb was not found or is not running. Install Android SDK Platform-Tools (https://developer.android.com/studio/releases/platform-tools) and check `mobilerun doctor`."}]}
+{"ok":false,"checks":[{"name":"SDK Version","status":"warn","detail":"0.8.0 (could not check latest); GitHub API unreachable"},{"name":"Config","status":"pass","detail":"/home/user/.config/droidrun/config.yaml"},{"name":"ADB","status":"fail","detail":"No adb exe could be found. Install adb on your system"}]}
 ```
 
 `device list --all` lists local devices first, then cloud devices. If either

@@ -12,7 +12,6 @@ run_module = importlib.import_module("mobilerun.cli.run")
 
 @pytest.fixture(autouse=True)
 def config(monkeypatch):
-    monkeypatch.setattr("mobilerun.cli.options.require_adb", lambda: "/fake/adb")
     monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
 
 

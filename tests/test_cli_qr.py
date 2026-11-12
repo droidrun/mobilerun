@@ -3,7 +3,7 @@
 import io
 import subprocess
 import sys
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -180,8 +180,6 @@ def test_mdns_parser_skips_unsafe_addresses(address):
 
 @pytest.fixture
 def pairing(monkeypatch):
-    monkeypatch.setattr(device_pair.options.shutil, "which", lambda _: "/fake/adb")
-    monkeypatch.setattr(device_pair.options.socket, "create_connection", Mock(return_value=nullcontext()))
     printed = Mock(return_value=True)
     monkeypatch.setattr(device_pair, "print_qr", printed)
     clock = SimpleNamespace(now=0.0)
@@ -447,7 +445,7 @@ def test_pair_bounds_adb_calls_by_timeout(monkeypatch, pairing):
 
 
 def test_pair_requires_adb(monkeypatch, pairing):
-    monkeypatch.setattr(device_pair.options.shutil, "which", lambda _: None)
+    monkeypatch.setattr(device_pair, "_run_adb", Mock(side_effect=FileNotFoundError(2, "missing", "/fake/adb")))
     result = TerminalRunner().invoke(cli, ["device", "pair"])
     assert result.exit_code == 1
     assert "adb was not found or is not running" in result.stderr

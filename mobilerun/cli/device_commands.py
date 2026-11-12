@@ -11,7 +11,6 @@ from contextlib import contextmanager
 
 import click
 
-from mobilerun.cli import options
 from mobilerun.cli.options import (
     Group,
     _ui_cell,
@@ -22,7 +21,7 @@ from mobilerun.cli.options import (
     json_option,
     verbose_option,
 )
-from mobilerun.cli.selection import core_client, portal_token, select_device
+from mobilerun.cli.selection import core_client, local_adb_errors, portal_token, select_device
 
 UI_FLAGS = ("clickable", "checkable", "checked", "editable", "focused", "scrollable", "selected")
 
@@ -38,22 +37,21 @@ def device_driver(params=None, *, selection=None):
             device=params.get("device"), config_path=params.get("config_path"),
             platform=params.get("platform"), target=params.get("target", "local"),
         ))
-    if selection.backend == "local-android-adb":
-        options.require_adb()
     token = portal_token(selection)
     client = core_client(params["api_url"], cloud=selection.backend == "cloud")
-    try:
-        connected = client.connect(
-            selection.device, backend=selection.backend, platform=selection.platform,
-            url=selection.device if is_portal_http_url(selection.device) else None,
-            token=token,
-        )
+    with local_adb_errors(selection.backend == "local-android-adb"):
         try:
-            yield connected
+            connected = client.connect(
+                selection.device, backend=selection.backend, platform=selection.platform,
+                url=selection.device if is_portal_http_url(selection.device) else None,
+                token=token,
+            )
+            try:
+                yield connected
+            finally:
+                connected.close()
         finally:
-            connected.close()
-    finally:
-        client.close()
+            client.close()
 
 
 def probe_device(params, *, selection=None):

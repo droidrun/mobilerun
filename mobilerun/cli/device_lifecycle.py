@@ -5,7 +5,6 @@ from __future__ import annotations
 import click
 from async_adbutils import adb
 
-from mobilerun.cli import options
 from mobilerun.cli.device_commands import device_cli, probe_device
 from mobilerun.cli.device_pair import adb_connect_succeeded
 from mobilerun.cli.options import (
@@ -25,7 +24,7 @@ from mobilerun.cli.options import (
     target_option,
     verbose_option,
 )
-from mobilerun.cli.selection import core_client, select_device
+from mobilerun.cli.selection import core_client, local_adb_errors, select_device
 
 
 @device_cli.command(
@@ -68,12 +67,11 @@ def list_devices(target, api_url, verbose, json_output, all_devices):
 
 
 def _list_target(api_url, scope):
-    if scope == "local":
-        options.require_adb()
     client = core_client(api_url, cloud=scope == "cloud")
     devices = []
     try:
-        devices = client.list_devices(filters={"state": None}, scope=scope)
+        with local_adb_errors(scope == "local"):
+            devices = client.list_devices(filters={"state": None}, scope=scope)
         rows = []
         for device in devices:
             rows.append({
@@ -94,8 +92,8 @@ def _list_target(api_url, scope):
 @coro
 async def connect(serial, verbose):
     """Connect to an Android device over TCP/IP."""
-    options.require_adb()
-    result = await adb.connect(serial)
+    with local_adb_errors():
+        result = await adb.connect(serial)
     if not adb_connect_succeeded(result):
         raise click.ClickException(f"Failed to connect to {serial}: {result}")
     click.echo(f"Successfully connected to {serial}", err=True)
@@ -107,8 +105,8 @@ async def connect(serial, verbose):
 @coro
 async def disconnect(serial, verbose):
     """Disconnect an Android TCP/IP device."""
-    options.require_adb()
-    success = await adb.disconnect(serial, raise_error=True)
+    with local_adb_errors():
+        success = await adb.disconnect(serial, raise_error=True)
     click.echo(
         f"Successfully disconnected from {serial}"
         if success else f"Device {serial} was not connected", err=True,

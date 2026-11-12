@@ -11,10 +11,10 @@ from typing import NamedTuple
 
 import click
 
-from mobilerun.cli import options
 from mobilerun.cli.device_commands import device_cli
 from mobilerun.cli.options import emit, examples, verbose_option
 from mobilerun.cli.qr import print_qr
+from mobilerun.cli.selection import local_adb_errors
 
 
 class MdnsService(NamedTuple):
@@ -165,9 +165,9 @@ def pair(timeout: int, verbose: bool | None):
     """Pair a local Android device by scanning a wireless debugging QR code."""
     if not sys.stderr.isatty():
         raise click.UsageError("This command needs a terminal.")
-    options.require_adb()
     deadline = time.monotonic() + timeout
-    check = _adb("mdns", "check", deadline=deadline)
+    with local_adb_errors():
+        check = _adb("mdns", "check", deadline=deadline)
     if "mdns daemon version" not in check.stdout.lower():
         raise click.ClickException("adb mDNS is unavailable; enable adb mDNS discovery.")
 

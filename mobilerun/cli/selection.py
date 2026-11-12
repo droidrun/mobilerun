@@ -2,12 +2,36 @@
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import click
 
-from mobilerun.cli import options
-from mobilerun.cli.options import DEFAULT_API_URL
+from mobilerun.cli.options import ADB_HINT, DEFAULT_API_URL
+
+
+@contextmanager
+def local_adb_errors(enabled=True):
+    """Translate local ADB startup failures after the library tries to start it."""
+    from async_adbutils import AdbError
+
+    try:
+        yield
+    except (AdbError, ConnectionRefusedError, FileNotFoundError) as exc:
+        message = str(exc).lower()
+        missing_binary = isinstance(exc, FileNotFoundError) and exc.filename and (
+            str(exc.filename).rsplit("/", 1)[-1] in {"adb", "adb.exe"}
+            or exc.filename == os.environ.get("ADBUTILS_ADB_PATH")
+        )
+        unavailable = isinstance(exc, ConnectionRefusedError) or missing_binary or (
+            isinstance(exc, AdbError) and any(text in message for text in (
+                "no adb exe", "cannot connect", "can't connect", "connection refused",
+            ))
+        )
+        if enabled and unavailable:
+            raise click.ClickException(ADB_HINT) from None
+        raise
 
 
 @dataclass(frozen=True)
@@ -92,14 +116,13 @@ async def select_device(
                 "Cloud device required: pass -d <id>; find ids with `mobilerun device list -t cloud`."
             )
         if not discover and selected_platform != "ios":
-            options.require_adb()
             return Selection(config, None, selected_platform, "local-android-adb")
         if selected_platform == "ios":
             selected = await discover_ios_device()
         else:
-            options.require_adb()
             try:
-                selected = await resolve_android_serial()
+                with local_adb_errors():
+                    selected = await resolve_android_serial()
             except AndroidDeviceSelectionError as exc:
                 raise click.ClickException(str(exc)) from exc
     url = selected if is_portal_http_url(selected) else None
@@ -112,8 +135,6 @@ async def select_device(
         url=url,
         backend="local-android-adb" if not url and not is_uuid(selected) else None,
     )
-    if backend == "local-android-adb":
-        options.require_adb()
     return Selection(config, selected, selected_platform, backend)
 
 
@@ -148,21 +169,21 @@ async def _native_driver(selection, config, api_url):
     from mobilerun.agent.utils.android_device import create_android_portal_http_driver
     from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 
-    if selection.backend == "cloud":
-        driver = CloudDriver(device_id=selection.device, api_key=require_cloud_api_key(), base_url=api_url)
-    elif selection.backend == "local-ios-http":
-        driver = await create_ios_driver(selection.device, token=portal_token(selection))
-    elif selection.backend == "local-android-http":
-        driver = create_android_portal_http_driver(selection.device, portal_token(selection))
-    else:
-        options.require_adb()
-        if config.device.auto_setup and config.device.portal_mode != "disabled":
-            device = await adb.device(serial=selection.device)
-            await ensure_portal_ready(device, debug=False, **portal_version_kwargs(ensure_portal_ready))
-        driver = AndroidDriver(serial=selection.device, use_tcp=config.device.use_tcp,
-                               portal_mode=config.device.portal_mode)
-    await driver.connect()
-    return driver
+    with local_adb_errors(selection.backend == "local-android-adb"):
+        if selection.backend == "cloud":
+            driver = CloudDriver(device_id=selection.device, api_key=require_cloud_api_key(), base_url=api_url)
+        elif selection.backend == "local-ios-http":
+            driver = await create_ios_driver(selection.device, token=portal_token(selection))
+        elif selection.backend == "local-android-http":
+            driver = create_android_portal_http_driver(selection.device, portal_token(selection))
+        else:
+            if config.device.auto_setup and config.device.portal_mode != "disabled":
+                device = await adb.device(serial=selection.device)
+                await ensure_portal_ready(device, debug=False, **portal_version_kwargs(ensure_portal_ready))
+            driver = AndroidDriver(serial=selection.device, use_tcp=config.device.use_tcp,
+                                   portal_mode=config.device.portal_mode)
+        await driver.connect()
+        return driver
 
 
 async def teardown_native_driver(driver):

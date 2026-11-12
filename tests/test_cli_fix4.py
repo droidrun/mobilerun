@@ -6,10 +6,9 @@ import logging
 import os
 import select
 import signal
-import socket
 import subprocess
 import sys
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -33,37 +32,58 @@ def isolated(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
 
 
-@pytest.mark.parametrize("available", [False, True])
+@pytest.mark.parametrize("error", [
+    FileNotFoundError(2, "binary missing", "/fake/adb"),
+    ConnectionRefusedError("server unavailable after startup"),
+])
 @pytest.mark.parametrize("args", [
     ["device", "list"], ["device", "ui"], ["device", "ping"],
     ["device", "apps"], ["device", "tap", "1", "2", "-d", "serial"],
     ["device", "setup"], ["device", "connect", "127.0.0.1:5555"],
     ["device", "disconnect", "127.0.0.1:5555"],
 ])
-def test_local_adb_missing_or_server_unreachable(monkeypatch, tmp_path, available, args):
-    # Hold an unused port without listening: connection deterministically fails.
-    with socket.socket() as reserved:
-        reserved.bind(("127.0.0.1", 0))
-        monkeypatch.setenv("ANDROID_ADB_SERVER_HOST", "127.0.0.1")
-        monkeypatch.setenv("ANDROID_ADB_SERVER_PORT", str(reserved.getsockname()[1]))
-        if available:
-            binary = tmp_path / "adb"
-            binary.write_text("#!/bin/sh\nexit 99\n")
-            binary.chmod(0o755)
-        monkeypatch.setenv("PATH", str(tmp_path))
-        result = CliRunner().invoke(cli, args)
+def test_local_adb_missing_or_server_unreachable(monkeypatch, error, args):
+    import mobilerun_core
+
+    monkeypatch.setattr("mobilerun.cli.selection.resolve_cloud_api_key", lambda: None)
+    monkeypatch.setattr("mobilerun.agent.utils.android_device.resolve_android_serial",
+                        AsyncMock(side_effect=error))
+    client = SimpleNamespace(list_devices=Mock(side_effect=error),
+                             connect=Mock(side_effect=error), close=Mock())
+    monkeypatch.setattr(mobilerun_core, "Mobilerun", lambda **kwargs: client)
+    monkeypatch.setattr(device_lifecycle.adb, "connect", AsyncMock(side_effect=error))
+    monkeypatch.setattr(device_lifecycle.adb, "disconnect", AsyncMock(side_effect=error))
+    result = CliRunner().invoke(cli, args)
     assert result.exit_code == 1, result.output
-    assert result.stdout == ""
     assert result.stderr == "Error: " + options.ADB_HINT + "\n"
-    assert "adbutils" not in result.output
+
+
+def test_local_adb_server_can_start_on_first_use(monkeypatch, tmp_path):
+    import asyncio
+
+    binary = tmp_path / "adb"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("ANDROID_ADB_SERVER_PORT", "5999")
+    # The library owns startup: reaching list() must be allowed on a closed port.
+    listing = AsyncMock(return_value=[])
+    monkeypatch.setattr(device_lifecycle.adb, "list", listing)
+    client = SimpleNamespace(list_devices=lambda **kwargs: asyncio.run(listing()), close=Mock())
+    monkeypatch.setattr(device_lifecycle, "core_client", lambda *args, **kwargs: client)
+    result = CliRunner().invoke(cli, ["device", "list"])
+    assert result.exit_code == 0, result.output
+    assert options.ADB_HINT not in result.output
+    listing.assert_awaited_once()
+
 
 
 def test_all_keeps_cloud_when_adb_fails(monkeypatch):
-    monkeypatch.setenv("PATH", "")
     row = SimpleNamespace(device_id="cloud-id", name="phone", state="running",
                           device_type="android", close=Mock())
     monkeypatch.setattr(device_lifecycle, "core_client", lambda *a, **k: SimpleNamespace(
-        list_devices=lambda **kwargs: [row], close=Mock(),
+        list_devices=Mock(side_effect=lambda **kwargs: [row] if kwargs["scope"] == "cloud"
+                          else (_ for _ in ()).throw(ConnectionRefusedError())), close=Mock(),
     ))
     result = CliRunner().invoke(cli, ["device", "list", "--all", "-j"])
     assert result.exit_code == 0, result.output
@@ -220,25 +240,14 @@ def test_readme_real_error_examples():
     assert '`"credential":"env"`' in readme and '`"credential":"login"`' in readme
     document = json.loads(readme.split("`doctor -j`", 1)[1].split("```json\n", 1)[1].split("\n```", 1)[0])
     assert [check["name"] for check in document["checks"]] == ["SDK Version", "Config", "ADB"]
-    assert document["checks"][-1]["detail"] == options.ADB_HINT
+    assert document["checks"][-1]["detail"] == "No adb exe could be found. Install adb on your system"
 
 
-def test_doctor_and_pair_share_adb_check(monkeypatch):
-    doctor = importlib.import_module("mobilerun.cli.doctor")
-    from mobilerun.cli import device_pair
-
-    monkeypatch.setattr(options.shutil, "which", lambda _: "/fake/adb")
-    monkeypatch.setattr(options.socket, "create_connection", Mock(return_value=nullcontext()))
-    check = Mock(return_value="/fake/adb")
-    monkeypatch.setattr(options, "require_adb", check)
-    monkeypatch.setattr(doctor.adb, "list", AsyncMock(return_value=[]))
+def test_doctor_reports_library_adb_error(monkeypatch):
     import asyncio
 
+    doctor = importlib.import_module("mobilerun.cli.doctor")
+    monkeypatch.setattr(doctor.adb, "list", AsyncMock(side_effect=RuntimeError("library startup failed")))
     result = asyncio.run(doctor.check_adb(False))
-    assert result.message == "found, 0 device(s)"
-    check.assert_called_once()
-    monkeypatch.setattr(device_pair.sys.stderr, "isatty", lambda: True)
-    monkeypatch.setattr(device_pair, "_adb", Mock(side_effect=click.ClickException("mdns stop")))
-    with pytest.raises(click.ClickException, match="mdns stop"):
-        device_pair.pair.callback(timeout=1, verbose=False)
-    assert check.call_count == 2
+    assert result.status == doctor.Status.FAIL
+    assert result.message == "library startup failed"

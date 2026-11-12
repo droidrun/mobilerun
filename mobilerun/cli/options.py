@@ -7,8 +7,6 @@ import difflib
 import json
 import logging
 import os
-import shutil
-import socket
 import sys
 import traceback
 import unicodedata
@@ -34,22 +32,6 @@ ADB_HINT = (
     "(https://developer.android.com/studio/releases/platform-tools) "
     "and check `mobilerun doctor`."
 )
-
-
-def require_adb():
-    """Check local tooling without invoking the library's binary fallback."""
-    path = shutil.which("adb")
-    try:
-        if not path:
-            raise OSError("missing adb")
-        with socket.create_connection((
-            os.environ.get("ANDROID_ADB_SERVER_HOST", "127.0.0.1"),
-            int(os.environ.get("ANDROID_ADB_SERVER_PORT", "5037")),
-        ), timeout=1):
-            pass
-    except (OSError, ValueError):
-        raise click.ClickException(ADB_HINT) from None
-    return path
 
 
 def config_debug(path):
