@@ -171,7 +171,7 @@ def test_delegation_is_one_step_and_returns_to_primary_on_next_selection():
     [
         ActionSelection(),
         ActionSelection([ToolCall("click", {"index": 2})]),
-        ActionSelection([ToolCall("click", {"index": 2})], confidence=0.5),
+        ActionSelection([ToolCall("click", {"index": 2})], confidence=0.7),
         ActionSelection(action_json='{"action":"click","index":2}'),
         ActionSelection(action_json="not JSON"),
         ActionSelection(action_json='["delegate"]'),
@@ -223,6 +223,13 @@ def test_unsure_choice_is_kept_when_the_delegate_abstains():
         )
         is unsure
     )
+
+
+def test_default_threshold_matches_the_config_default():
+    from mobilerun.config_manager.config_manager import DelegationConfig
+
+    selector = DelegatingSelector(_selector(None), _selector(None))
+    assert selector.min_confidence == DelegationConfig().min_confidence == 0.7
 
 
 def test_unsure_completion_also_goes_to_the_delegate():

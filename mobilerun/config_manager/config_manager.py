@@ -160,7 +160,7 @@ class DelegationConfig:
     delegate: str = "delegate"
     description: str | None = None  # None derives it from the delegate's type.
     # Primary choices below this confidence go to the delegate; None disables.
-    min_confidence: float | None = 0.5
+    min_confidence: float | None = 0.7
 
 
 @dataclass
