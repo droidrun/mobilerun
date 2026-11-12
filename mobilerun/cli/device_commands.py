@@ -51,13 +51,9 @@ def device_driver(params=None, *, selection=None):
         try:
             yield connected
         finally:
-            close = getattr(connected, "close", None)
-            if close:
-                close()
+            connected.close()
     finally:
-        close = getattr(client, "close", None)
-        if close:
-            close()
+        client.close()
 
 
 def probe_device(params, *, selection=None):

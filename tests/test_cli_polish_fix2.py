@@ -303,7 +303,7 @@ def invoke_api_error(monkeypatch, error, *flags):
     monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", ENV_KEY)
     monkeypatch.setattr(deviceauth, "load_credentials", lambda: None)
     monkeypatch.setattr(device_lifecycle, "core_client", lambda *a, **kw: SimpleNamespace(
-        list_devices=Mock(side_effect=error),
+        list_devices=Mock(side_effect=error), close=Mock(),
     ))
     result = CliRunner().invoke(cli, ["device", "list", "-t", "cloud", "-v", *flags])
     assert result.exit_code == 1, result.output

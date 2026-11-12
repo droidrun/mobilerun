@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 
 def run(coro):
@@ -116,6 +117,9 @@ def test_device_commands_ui_returns_core_state(monkeypatch):
 
     from mobilerun.cli.main import cli
     class Device:
+        def close(self):
+            pass
+
         def ui_json(self):
             return json.dumps(LOCAL_PORTAL_STATE)
     monkeypatch.setattr(Mobilerun, "connect", lambda *a, **kw: Device())
@@ -132,7 +136,7 @@ def test_device_commands_route_ios_through_facade(tmp_path, monkeypatch):
     created = {}
     def connect(self, device_id, **kwargs):
         created.update(kwargs)
-        return object()
+        return SimpleNamespace(close=lambda: None)
     monkeypatch.setattr(Mobilerun, "connect", connect)
     monkeypatch.setenv("MOBILERUN_IOS_PORTAL_TOKEN", "sekret")
     cfg = tmp_path / "config.yaml"
@@ -155,7 +159,7 @@ def test_device_commands_discover_when_no_device(tmp_path, monkeypatch):
         return "http://127.0.0.1:8081"
     def connect(self, device_id, **kwargs):
         created.update(kwargs)
-        return object()
+        return SimpleNamespace(close=lambda: None)
     monkeypatch.setattr("mobilerun_core_local.driver.ios.discover_ios_device", discover)
     monkeypatch.setattr(Mobilerun, "connect", connect)
     cfg = tmp_path / "config.yaml"

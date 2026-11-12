@@ -97,6 +97,9 @@ def test_ping_driver_error(monkeypatch):
 
 def test_device_list_core_error_is_failure(monkeypatch):
     class FakeCore:
+        def close(self):
+            pass
+
         def list_devices(self, **kwargs):
             raise RuntimeError("adb broke")
 

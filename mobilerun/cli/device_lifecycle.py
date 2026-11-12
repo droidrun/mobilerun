@@ -76,21 +76,16 @@ def _list_target(api_url, scope):
         devices = client.list_devices(filters={"state": None}, scope=scope)
         rows = []
         for device in devices:
-            # Core seeds this model from the list response, but has no public
-            # metadata accessor for name/state/type on Device yet.
-            metadata = getattr(device._conn, "_device_cache", None)
             rows.append({
                 "device_id": device.device_id,
-                "name": metadata.name if metadata else None,
-                "state": metadata.state if metadata else "connected",
-                "type": metadata.type if metadata else device.capabilities["backend"],
+                "name": device.name,
+                "state": "connected" if scope == "local" else device.state,
+                "type": device.capabilities["backend"] if scope == "local" else device.device_type,
             })
         return rows
     finally:
         for resource in [*devices, client]:
-            close = getattr(resource, "close", None)
-            if close:
-                close()
+            resource.close()
 
 
 @device_cli.command()

@@ -182,7 +182,7 @@ def test_device_command_uses_single_online_device(adb_devices, monkeypatch):
     serials = []
     def connect(self, serial, **kwargs):
         serials.append(serial)
-        return object()
+        return SimpleNamespace(close=lambda: None)
     monkeypatch.setattr(mobilerun_core.Mobilerun, "connect", connect)
     with device_driver({"api_url": DEFAULT_API_URL}):
         pass

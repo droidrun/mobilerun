@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from click.testing import CliRunner
 
@@ -62,11 +63,14 @@ def test_cloud_facade_receives_url_key_and_id(monkeypatch):
 
     calls = []
     class FakeCore:
+        def close(self):
+            pass
+
         def __init__(self, **kwargs):
             calls.append(kwargs)
         def connect(self, device_id, **kwargs):
             calls.append({"device_id": device_id, **kwargs})
-            return object()
+            return SimpleNamespace(close=Mock())
 
     monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
     monkeypatch.setattr(selection.mobilerun_core, "Mobilerun", FakeCore)
@@ -83,6 +87,9 @@ def test_cloud_listing_errors_are_failures(monkeypatch):
     from mobilerun.cli import device_lifecycle
 
     class FakeCore:
+        def close(self):
+            pass
+
         def list_devices(self, **kwargs):
             assert kwargs["scope"] in {"cloud", "all"}
             raise RuntimeError("cloud broke")
@@ -98,9 +105,12 @@ def test_local_listing_uses_local_scope(monkeypatch):
     from mobilerun.cli import device_lifecycle
 
     class FakeCore:
+        def close(self):
+            pass
+
         def list_devices(self, **kwargs):
             assert kwargs["scope"] == "local"
-            return [SimpleNamespace(device_id="serial", capabilities={"backend": "local-android-adb"}, _conn=object())]
+            return [SimpleNamespace(device_id="serial", capabilities={"backend": "local-android-adb"}, name=None, state=None, device_type=None, close=Mock())]
 
     monkeypatch.setattr(device_lifecycle, "core_client", lambda *_, **kw: FakeCore())
     result = CliRunner().invoke(cli, ["device", "list", "-j"])

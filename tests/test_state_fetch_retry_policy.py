@@ -221,6 +221,9 @@ def test_device_ui_shows_info_progress_on_stderr(monkeypatch):
     from mobilerun.cli.main import cli
 
     class Device:
+        def close(self):
+            pass
+
         def ui_json(self):
             logging.getLogger("mobilerun").info("Waiting for the UI state from the device...")
             return '{"a11y_tree": {}}'

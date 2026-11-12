@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from mobilerun_core_local.driver.android import AndroidPortalHttpDriver
@@ -104,7 +105,7 @@ def test_device_commands_route_url_to_portal_http(tmp_path, monkeypatch, no_adb)
     created = {}
     def connect(self, device_id, **kwargs):
         created.update(kwargs)
-        return object()
+        return SimpleNamespace(close=lambda: None)
 
     monkeypatch.setattr(Mobilerun, "connect", connect)
     monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")

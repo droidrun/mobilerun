@@ -324,7 +324,8 @@ def all_devices_case(request, monkeypatch):
         scope = "cloud" if cloud else "local"
         failure = cloud_failure if cloud else local_failure
         device = SimpleNamespace(
-            device_id=scope, _conn=object(), capabilities={"backend": scope}, close=Mock()
+            device_id=scope, name=None, state=None, device_type=None,
+            capabilities={"backend": scope}, close=Mock()
         )
         devices.append(device)
 

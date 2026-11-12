@@ -11,6 +11,7 @@ import subprocess
 import sys
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import click
@@ -59,12 +60,11 @@ def test_local_adb_missing_or_server_unreachable(monkeypatch, tmp_path, availabl
 
 def test_all_keeps_cloud_when_adb_fails(monkeypatch):
     monkeypatch.setenv("PATH", "")
-    row = type("Device", (), {"device_id": "cloud-id", "_conn": type("Conn", (), {
-        "_device_cache": type("Metadata", (), {"name": "phone", "state": "running", "type": "android"})()
-    })()})()
-    monkeypatch.setattr(device_lifecycle, "core_client", lambda *a, **k: type("Client", (), {
-        "list_devices": lambda *a, **k: [row]
-    })())
+    row = SimpleNamespace(device_id="cloud-id", name="phone", state="running",
+                          device_type="android", close=Mock())
+    monkeypatch.setattr(device_lifecycle, "core_client", lambda *a, **k: SimpleNamespace(
+        list_devices=lambda **kwargs: [row], close=Mock(),
+    ))
     result = CliRunner().invoke(cli, ["device", "list", "--all", "-j"])
     assert result.exit_code == 0, result.output
     body = json.loads(result.stdout)

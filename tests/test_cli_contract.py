@@ -165,7 +165,7 @@ def test_cloud_target_without_device_does_not_touch_adb(monkeypatch):
 def test_read_commands_emit_one_document(monkeypatch, args):
     import mobilerun_core
 
-    core = SimpleNamespace(device_id="id", capabilities={"backend": "local-android-adb"}, _conn=object())
+    core = SimpleNamespace(device_id="id", capabilities={"backend": "local-android-adb"}, name=None, state=None, device_type=None, close=Mock())
     monkeypatch.setattr(mobilerun_core.Mobilerun, "list_devices", lambda *a, **kw: [core])
     driver = Mock()
     driver.screenshot.return_value = "cG5n"
@@ -369,8 +369,8 @@ def test_cloud_list_includes_every_state_and_metadata(monkeypatch, scope):
     import mobilerun_core
 
     monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "fake-key")
-    rows = [SimpleNamespace(device_id=f"id-{state}", _conn=SimpleNamespace(
-        _device_cache=SimpleNamespace(name=f"device-{state}", state=state, type="android")))
+    rows = [SimpleNamespace(device_id=f"id-{state}",
+        name=f"device-{state}", state=state, device_type="android", close=Mock())
         for state in ("ready", "stopped", "provisioning")]
     list_call = Mock(side_effect=lambda *a, **kw: rows if kw["scope"] == "cloud" else [])
     monkeypatch.setattr(mobilerun_core.Mobilerun, "list_devices", list_call)
