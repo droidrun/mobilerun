@@ -171,7 +171,7 @@ def test_delegation_is_one_step_and_returns_to_primary_on_next_selection():
     [
         ActionSelection(),
         ActionSelection([ToolCall("click", {"index": 2})]),
-        ActionSelection([ToolCall("click", {"index": 2})], confidence=0.4),
+        ActionSelection([ToolCall("click", {"index": 2})], confidence=0.5),
         ActionSelection(action_json='{"action":"click","index":2}'),
         ActionSelection(action_json="not JSON"),
         ActionSelection(action_json='["delegate"]'),
@@ -198,7 +198,7 @@ def test_abstaining_primary_hands_the_step_to_the_delegate():
 
 @pytest.mark.parametrize(
     ("confidence", "min_confidence", "delegated"),
-    [(0.39, 0.4, True), (0.4, 0.4, False), (0.2, None, False), (0.2, 0.1, False)],
+    [(0.49, 0.5, True), (0.5, 0.5, False), (0.2, None, False), (0.2, 0.1, False)],
 )
 def test_unsure_primary_choices_go_to_the_delegate(
     confidence, min_confidence, delegated

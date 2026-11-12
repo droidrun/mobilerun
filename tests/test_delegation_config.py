@@ -91,7 +91,7 @@ def test_loader_resolves_both_model_families_and_only_overrides_llms(
 
 
 @pytest.mark.parametrize(
-    ("data", "expected"), [({}, 0.4), ({"min_confidence": 0.25}, 0.25)]
+    ("data", "expected"), [({}, 0.5), ({"min_confidence": 0.25}, 0.25)]
 )
 def test_hand_off_confidence_round_trips_and_reaches_the_selector(
     monkeypatch, data, expected

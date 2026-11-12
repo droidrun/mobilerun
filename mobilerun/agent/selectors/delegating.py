@@ -35,7 +35,7 @@ LLM_DELEGATE_DESCRIPTION = (
 )
 
 
-DEFAULT_MIN_CONFIDENCE = 0.4
+DEFAULT_MIN_CONFIDENCE = 0.5
 
 
 class DelegatingSelector(BaseActionSelector):
