@@ -19,6 +19,9 @@ DEFAULT_API_URL = "https://api.mobilerun.ai/v1"
 DEFAULT_AUTH_URL = "https://cloud.mobilerun.ai/api/auth"
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"], "show_default": True}
 SECRETS_KEY = "cli_secrets"
+INPUT_CLOSED = "Input closed; run the command again in a terminal."
+# Short secrets would also redact ordinary words in diagnostics.
+MIN_REDACTABLE_SECRET = 8
 NO_LOCAL_DEVICES_HINT = (
     "Connect a device over USB or run `mobilerun device pair`; "
     "use `-t cloud` for cloud devices."
@@ -41,8 +44,9 @@ def config_debug(path):
     try:
         with path.open(encoding="utf-8") as stream:
             data = yaml.safe_load(stream)
-        return data.get("logging", {}).get("debug") is True if isinstance(data, dict) else False
-    except (OSError, ValueError, AttributeError, yaml.YAMLError):
+        logging_config = data.get("logging") if isinstance(data, dict) else None
+        return isinstance(logging_config, dict) and logging_config.get("debug") is True
+    except (OSError, ValueError, yaml.YAMLError):
         return False
 
 
@@ -59,6 +63,12 @@ def local_device_hint(message, target="local"):
     return message
 
 
+def _caused_by_interrupt(exc):
+    return isinstance(exc, KeyboardInterrupt) or isinstance(
+        exc.__cause__ or exc.__context__, KeyboardInterrupt,
+    )
+
+
 def read_secret(ctx, param, value):
     """Accept one secret line from stdin, without echoing it."""
     if ctx.resilient_parsing:
@@ -70,11 +80,9 @@ def read_secret(ctx, param, value):
                                   default="", show_default=False)
                      if stream.isatty() else stream.readline()).rstrip("\r\n")
         except (KeyboardInterrupt, click.Abort) as exc:
-            if isinstance(exc, KeyboardInterrupt) or isinstance(
-                exc.__cause__ or exc.__context__, KeyboardInterrupt
-            ):
+            if _caused_by_interrupt(exc):
                 raise click.exceptions.Exit(130) from None
-            raise click.ClickException("Input closed; run the command again in a terminal.") from None
+            raise click.ClickException(INPUT_CLOSED) from None
         if not value.strip():
             raise click.BadParameter("stdin is empty; provide one secret line.", ctx=ctx, param=param)
     if value:
@@ -83,7 +91,7 @@ def read_secret(ctx, param, value):
 
 
 def redact(text, secrets):
-    for secret in sorted({value for value in secrets if value and len(value) >= 8}, key=len, reverse=True):
+    for secret in sorted({value for value in secrets if value and len(value) >= MIN_REDACTABLE_SECRET}, key=len, reverse=True):
         text = text.replace(secret, "[redacted]")
     return text
 
@@ -278,9 +286,9 @@ class Command(HelpLayout, click.Command):
         except (KeyboardInterrupt, asyncio.CancelledError):
             ctx.exit(130)
         except (EOFError, click.Abort) as exc:
-            if isinstance(exc.__cause__ or exc.__context__, KeyboardInterrupt):
+            if _caused_by_interrupt(exc):
                 ctx.exit(130)
-            raise click.ClickException("Input closed; run the command again in a terminal.") from None
+            raise click.ClickException(INPUT_CLOSED) from None
         except click.exceptions.Exit:
             raise
         except Exception as exc:

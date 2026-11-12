@@ -75,20 +75,26 @@ def resolved_environment(config_path=None):
         values[name] = (source.saved, "credential file" if source.saved else "default", True)
     for name in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
         values[name] = (None, "default", True)
+    not_from_env = {"MOBILERUN_API_KEY"}
+    if path_source == "flag":
+        not_from_env.add("MOBILERUN_CONFIG")
+    for name in values.keys() - not_from_env:
+        if os.environ.get(name):
+            values[name] = (os.environ[name], "env", values[name][2])
+    if ctx and any(
+        parent.get_parameter_source("verbose") == click.core.ParameterSource.COMMANDLINE
+        for parent in (ctx, ctx.find_root())
+    ):
+        values["MOBILERUN_DEBUG"] = (ctx.params.get("verbose"), "flag", False)
+    values["MOBILERUN_TELEMETRY_ENABLED"] = (
+        is_telemetry_enabled(config_enabled=config.telemetry.enabled),
+        values["MOBILERUN_TELEMETRY_ENABLED"][1], False,
+    )
     rows = []
     for name, (value, source, secret) in values.items():
-        if (name != "MOBILERUN_API_KEY" and os.environ.get(name)
-                and not (name == "MOBILERUN_CONFIG" and path_source == "flag")):
-            value, source = os.environ[name], "env"
-        if (name == "MOBILERUN_DEBUG" and ctx and
-                any(parent.get_parameter_source("verbose") == click.core.ParameterSource.COMMANDLINE
-                    for parent in (ctx, ctx.find_root()))):
-            value, source = ctx.params.get("verbose"), "flag"
-        if name == "MOBILERUN_TELEMETRY_ENABLED":
-            value = is_telemetry_enabled(config_enabled=config.telemetry.enabled)
         if name in BOOLEAN_VARIABLES and isinstance(value, str):
             value = value.lower() in TRUTHY
-        if secret and not value and name != "MOBILERUN_API_KEY":
+        if secret and not value and source is not None:
             source = "not set"
         if secret:
             value = "set" if value else "not set"
