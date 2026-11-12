@@ -103,7 +103,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         with (
             patch(
-                "mobilerun.cli.mobilerun.config_manager.ConfigLoader.load",
+                "mobilerun.config_manager.ConfigLoader.load",
                 return_value=MobileConfig(),
             ),
             patch("mobilerun.MobileAgent", FakeAgent),
@@ -156,7 +156,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         with (
             patch(
-                "mobilerun.cli.mobilerun.config_manager.ConfigLoader.load",
+                "mobilerun.config_manager.ConfigLoader.load",
                 return_value=MobileConfig(),
             ),
             patch("mobilerun.MobileAgent", FakeAgent),
@@ -211,7 +211,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         )
 
         with (
-            patch("mobilerun.cli.mobilerun.config_manager.ConfigLoader.load", return_value=config),
+            patch("mobilerun.config_manager.ConfigLoader.load", return_value=config),
             patch("mobilerun.MobileAgent", FakeAgent),
             patch("mobilerun.cli.run.adb.device", AsyncMock()) as adb_device,
         ):

@@ -44,7 +44,7 @@ def _serials(devices):
 
 
 def _run_cli(monkeypatch, config, agent_factory, **kwargs):
-    monkeypatch.setattr(cli_main.ConfigLoader, "load", lambda _: config)
+    monkeypatch.setattr("mobilerun.config_manager.ConfigLoader.load", lambda _: config)
     monkeypatch.setattr(cli_main, "_setup_cli_logging", lambda _: None)
     monkeypatch.setattr("mobilerun.telemetry.print_telemetry_message", lambda **_: None)
     monkeypatch.setattr(cli_main.console, "print", lambda *a, **kw: None)
