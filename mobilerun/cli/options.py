@@ -156,14 +156,14 @@ def convert_api_error(exc):
     text = f"{message} (HTTP {status})" if status is not None else message
     hint = None
     if status in {401, 403}:
-        from mobilerun.cli.selection import resolve_cloud_credential
+        from mobilerun.cli.selection import CLOUD_CREDENTIAL_LABELS, resolve_cloud_credential
 
         credential = resolve_cloud_credential()
         document["credential"] = credential.source
         if credential.source is None:
             hint = "Run `mobilerun auth login` or set MOBILERUN_API_KEY."
         elif status == 403:
-            label = "env key" if credential.source == "env" else "saved sign-in"
+            label = CLOUD_CREDENTIAL_LABELS[credential.source]
             hint = (f"The {label} is valid but not allowed to do this; "
                     "check its scopes or the device owner.")
         elif credential.source == "env":

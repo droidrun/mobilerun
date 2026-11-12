@@ -1127,7 +1127,7 @@ def test_cloud_status_json_names_active_credential(cloud_status, cloud_credentia
         "signed_in": cloud_credential_case.has_login,
         "credential_path": str(tmp_path / "cloud.json"),
         "email": "user@example.test" if cloud_credential_case.has_login else None,
-        "cloud_credential": cloud_credential_case.label,
+        "cloud_credential": cloud_credential_case.source,
         "env_overrides_login": cloud_credential_case.overrides,
     }
     assert "planted-env-key" not in result.output
@@ -1153,7 +1153,7 @@ def test_env_json_uses_cloud_credential_source(cloud_credential_case):
     assert row == {
         "variable": "MOBILERUN_API_KEY",
         "value": "set",
-        "source": cloud_credential_case.env_source,
+        "source": cloud_credential_case.source,
     }
     assert "planted-env-key" not in result.output
     assert "planted-saved-token" not in result.output
@@ -1162,7 +1162,7 @@ def test_env_json_uses_cloud_credential_source(cloud_credential_case):
 def test_env_text_uses_cloud_credential_source(cloud_credential_case):
     result = CliRunner().invoke(cli, ["env"])
     assert result.exit_code == 0, result.output
-    assert f"MOBILERUN_API_KEY=set  ({cloud_credential_case.env_source})\n" in result.stdout
+    assert f"MOBILERUN_API_KEY=set  ({cloud_credential_case.label})\n" in result.stdout
     assert "planted-env-key" not in result.output
     assert "planted-saved-token" not in result.output
 

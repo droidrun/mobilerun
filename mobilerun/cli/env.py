@@ -16,7 +16,7 @@ from mobilerun.cli.options import (
     json_option,
     verbose_option,
 )
-from mobilerun.cli.selection import resolve_cloud_credential
+from mobilerun.cli.selection import CLOUD_CREDENTIAL_LABELS, resolve_cloud_credential
 from mobilerun.config_manager.env_keys import API_KEY_ENV_VARS, load_env_key_sources
 
 TRUTHY = {"1", "true", "yes", "on"}
@@ -45,7 +45,7 @@ def resolved_environment(config_path=None):
         "MOBILERUN_DEVICE": (config.device.serial, config_source if config.device.serial else "not set", False),
         "MOBILERUN_API_KEY": (
             cloud_credential.value,
-            {"env": "env", "login": "credential file", None: "not set"}[cloud_credential.source],
+            cloud_credential.source,
             True,
         ),
         "MOBILERUN_API_BASE_URL": (DEFAULT_API_URL, "default", False),
@@ -87,7 +87,7 @@ def resolved_environment(config_path=None):
             value = is_telemetry_enabled(config_enabled=config.telemetry.enabled)
         if name in BOOLEAN_VARIABLES and isinstance(value, str):
             value = value.lower() in TRUTHY
-        if secret and not value:
+        if secret and not value and name != "MOBILERUN_API_KEY":
             source = "not set"
         if secret:
             value = "set" if value else "not set"
@@ -111,6 +111,8 @@ def env(config_path, verbose, json_output):
                 value = str(value).lower()
             elif value is None:
                 value = ""
-            show_source = not (value == "not set" and row["source"] == "not set")
-            source = f"  ({row['source']})" if show_source else ""
+            label = (CLOUD_CREDENTIAL_LABELS[row["source"]]
+                     if row["variable"] == "MOBILERUN_API_KEY" else row["source"])
+            show_source = not (value == "not set" and label == "not set")
+            source = f"  ({label})" if show_source else ""
             emit(f"{row['variable']}={value}{source}")

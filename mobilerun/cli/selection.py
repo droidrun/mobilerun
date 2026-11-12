@@ -38,6 +38,9 @@ def local_adb_errors(enabled=True):
         raise
 
 
+CLOUD_CREDENTIAL_LABELS = {"env": "env key", "login": "saved sign-in", None: "not set"}
+
+
 @dataclass(frozen=True)
 class CloudCredential:
     value: str | None = field(repr=False)

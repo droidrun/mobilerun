@@ -24,7 +24,7 @@ from mobilerun.cli.options import (
     verbose_option,
 )
 from mobilerun.cli.qr import print_qr
-from mobilerun.cli.selection import resolve_cloud_credential
+from mobilerun.cli.selection import CLOUD_CREDENTIAL_LABELS, resolve_cloud_credential
 from mobilerun.config_manager.auth_profile_store import AuthProfileStore
 from mobilerun.config_manager.credential_paths import (
     ANTHROPIC_OAUTH_CREDENTIAL_PATH,
@@ -339,14 +339,13 @@ def status(verbose, json_output):
     credentials = deviceauth.load_credentials() or {}
     token = credentials.get("access_token")
     credential = resolve_cloud_credential()
-    cloud_label = {"env": "env key", "login": "saved sign-in", None: "not set"}[credential.source]
     rows = [
         {
             "service": "mobilerun",
             "signed_in": bool(token),
             "credential_path": str(deviceauth.credential_path()),
             "email": None,
-            "cloud_credential": cloud_label,
+            "cloud_credential": credential.source,
             "env_overrides_login": credential.source == "env" and credential.saved_sign_in,
         }
     ]
@@ -377,17 +376,16 @@ def status(verbose, json_output):
     if json_output:
         emit(rows, json_output=True)
     else:
+        cloud_note = (
+            "; cloud commands have no credential; run `mobilerun auth login` "
+            "or set MOBILERUN_API_KEY"
+            if credential.source is None
+            else f"; cloud commands use {CLOUD_CREDENTIAL_LABELS[credential.source]}"
+        )
+        if credential.source == "env" and credential.saved_sign_in:
+            cloud_note += " (overrides saved sign-in)"
         for row in rows:
             label = "signed in" if row["signed_in"] else "not signed in"
             email = f" ({row['email']})" if row.get("email") else ""
-            cloud = ""
-            if row["service"] == "mobilerun":
-                cloud = (
-                    "; cloud commands have no credential; run `mobilerun auth login` "
-                    "or set MOBILERUN_API_KEY"
-                    if row["cloud_credential"] == "not set"
-                    else f"; cloud commands use {row['cloud_credential']}"
-                )
-                if row["env_overrides_login"]:
-                    cloud += " (overrides saved sign-in)"
+            cloud = cloud_note if row["service"] == "mobilerun" else ""
             emit(f"{row['service']}: {label}{email}  {row['credential_path']}{cloud}")
