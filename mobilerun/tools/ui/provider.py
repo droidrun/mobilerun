@@ -234,9 +234,10 @@ class StateProvider:
         options = []
         seen = set()
         elements = UIState._collect_all(state.elements)
-        borrowed = _borrowed_texts(
+        borrowed = _borrowed_details(
             elements, (state.screen_width or 0) * (state.screen_height or 0)
         )
+        focused = _focused_element(state.phone_state, elements)
         for element in elements:
             index = element.get("index")
             if (
@@ -263,7 +264,9 @@ class StateProvider:
                 UIState._avoid_tap_blockers(state, element, center)
             except (KeyError, TypeError, ValueError):
                 continue
-            label = _candidate_label(element, borrowed)
+            label = _candidate_label(
+                element, borrowed, focused, center[1], state.screen_height
+            )
             if element.get("isClickable", True):
                 options.append(
                     ActionCandidate(
@@ -497,6 +500,62 @@ class StateProvider:
 
 _MAX_BORROWED_TEXTS = 3
 _MAX_OWNER_SCREEN_SHARE = 0.5
+# Share of the screen height that counts as its top or bottom edge.
+_EDGE_SHARE = 0.1
+
+_KINDS = {
+    "switch": "switch",
+    "switchcompat": "switch",
+    "switchmaterial": "switch",
+    "materialswitch": "switch",
+    "toggle": "switch",
+    "togglebutton": "switch",
+    "checkbox": "checkbox",
+    "materialcheckbox": "checkbox",
+    # Used for both multi-choice and single-choice (radio) list rows.
+    "checkedtextview": "option",
+    "radiobutton": "radio button",
+    "materialradiobutton": "radio button",
+    "button": "button",
+    "imagebutton": "button",
+    "materialbutton": "button",
+    "appcompatbutton": "button",
+    "appcompatimagebutton": "button",
+    "floatingactionbutton": "button",
+    "extendedfloatingactionbutton": "button",
+    "edittext": "text field",
+    "appcompatedittext": "text field",
+    "textinputedittext": "text field",
+    "autocompletetextview": "text field",
+    "textfield": "text field",
+    "securetextfield": "text field",
+    "searchfield": "search field",
+    "searchview": "search field",
+    "seekbar": "slider",
+    "slider": "slider",
+    "spinner": "dropdown",
+    "tab": "tab",
+}
+
+
+def _kind(element: dict) -> str:
+    """A plain word for widget types a model can act on, or ""."""
+    name = str(element.get("className") or element.get("type") or "")
+    return _KINDS.get(name.rsplit(".", 1)[-1].lower(), "")
+
+
+def _check_state(element: dict) -> str:
+    """ "on"/"off" for switches, "checked"/"unchecked" for other checkables."""
+    state = str(element.get("checkedState") or "")
+    if state.startswith("isChecked="):
+        checked = state == "isChecked=True"
+    elif _kind(element) == "switch" and str(element.get("value")) in {"0", "1"}:
+        checked = str(element.get("value")) == "1"  # iOS switches report a value.
+    else:
+        return ""
+    if _kind(element) == "switch":
+        return "on" if checked else "off"
+    return "checked" if checked else "unchecked"
 
 
 def _own_text(element: dict) -> str:
@@ -520,12 +579,30 @@ def _parse_bounds(element: dict) -> tuple[int, int, int, int] | None:
     return left, top, right, bottom
 
 
-def _borrowed_texts(elements: list[dict], screen_area: int) -> dict[int, list[str]]:
-    """Texts of non-clickable elements, keyed by their innermost clickable container.
+def _focused_element(phone_state: Any, elements: list[dict]) -> int | None:
+    """id() of the one element that is the focused editable field, if known."""
+    if not isinstance(phone_state, dict) or not phone_state.get("isEditable"):
+        return None
+    focused = phone_state.get("focusedElement")
+    if not isinstance(focused, dict) or not (resource := focused.get("resourceId")):
+        return None
+    matches = [element for element in elements if element.get("resourceId") == resource]
+    if len(matches) > 1 and focused.get("text"):
+        # Rows often reuse one id; the focused field's text tells them apart.
+        matches = [
+            element for element in matches if element.get("text") == focused["text"]
+        ]
+    return id(matches[0]) if len(matches) == 1 else None
 
-    The flattened tree drops hierarchy, and list rows are often text-less
-    containers whose title is a separate element within their bounds. Screen
-    roots, scrims and overlays are not rows, so they borrow nothing.
+
+def _borrowed_details(elements: list[dict], screen_area: int) -> dict[int, dict]:
+    """Texts and widget states of non-clickable elements, keyed by their
+    innermost clickable container.
+
+    The flattened tree drops hierarchy: list rows are often text-less
+    containers whose title, and switch, are separate elements within their
+    bounds. Screen roots, scrims and overlays are not rows, so they borrow
+    nothing.
     """
     clickables = []
     for element in elements:
@@ -534,13 +611,12 @@ def _borrowed_texts(elements: list[dict], screen_area: int) -> dict[int, list[st
                 area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
                 if not screen_area or area <= screen_area * _MAX_OWNER_SCREEN_SHARE:
                     clickables.append((area, bounds, element))
-    borrowed: dict[int, list[str]] = {}
+    borrowed: dict[int, dict] = {}
     for element in elements:
         if element.get("isClickable", True) or element.get("isLongClickable", False):
-            continue  # A clickable element names itself.
-        if not (text := _own_text(element)):
-            continue
-        if (bounds := _parse_bounds(element)) is None:
+            continue  # A clickable element describes itself.
+        text, state = _own_text(element), _check_state(element)
+        if not (text or state) or (bounds := _parse_bounds(element)) is None:
             continue
         left, top, right, bottom = bounds
         owner = min(
@@ -555,22 +631,50 @@ def _borrowed_texts(elements: list[dict], screen_area: int) -> dict[int, list[st
             key=lambda item: item[0],
             default=None,
         )
-        if owner is not None:
-            texts = borrowed.setdefault(id(owner[1]), [])
-            if text not in texts and len(texts) < _MAX_BORROWED_TEXTS:
-                texts.append(text)
+        if owner is None:
+            continue
+        details = borrowed.setdefault(id(owner[1]), {"texts": [], "widget": None})
+        texts = details["texts"]
+        if text and text not in texts and len(texts) < _MAX_BORROWED_TEXTS:
+            texts.append(text)
+        if state and details["widget"] is None:
+            details["widget"] = (_kind(element), state)
     return borrowed
 
 
-def _candidate_label(element: dict, borrowed: dict[int, list[str]]) -> str:
-    """Name an element by its text, or by the texts it contains."""
-    if text := _own_text(element):
-        return text
-    if texts := borrowed.get(id(element)):
-        resource = str(element.get("resourceId") or "").rsplit("/", 1)[-1]
-        joined = ", ".join(texts)
-        return f"{resource}: {joined}" if resource else joined
-    return element.get("text") or element.get("resourceId") or str(element["index"])
+def _candidate_label(
+    element: dict,
+    borrowed: dict[int, dict],
+    focused: int | None,
+    center_y: int,
+    screen_height: int | None,
+) -> str:
+    """Describe an element: its kind, its name, and its state and position."""
+    details = borrowed.get(id(element)) or {"texts": [], "widget": None}
+    if not (name := _own_text(element)):
+        if texts := details["texts"]:
+            resource = str(element.get("resourceId") or "").rsplit("/", 1)[-1]
+            joined = ", ".join(texts)
+            name = f"{resource}: {joined}" if resource else joined
+        else:
+            name = str(
+                element.get("text") or element.get("resourceId") or element["index"]
+            )
+    kind, state = _kind(element), _check_state(element)
+    if details["widget"] is not None:
+        # A row whose switch or checkbox is a separate element toggles it.
+        inner_kind, inner_state = details["widget"]
+        kind, state = kind or inner_kind, state or inner_state
+    notes = [state] if state else []
+    if focused is not None and id(element) == focused:
+        notes.append("focused")
+    if screen_height:
+        if center_y < screen_height * _EDGE_SHARE:
+            notes.append("top of screen")
+        elif center_y > screen_height * (1 - _EDGE_SHARE):
+            notes.append("bottom of screen")
+    label = f'{kind} "{name}"' if kind else name
+    return f"{label} ({', '.join(notes)})" if notes else label
 
 
 def should_resize_model_screenshot(state_provider: Any) -> bool:

@@ -370,7 +370,9 @@ def test_elements_with_off_screen_centres_are_not_clickable_candidates():
 
     options = ctx.state_provider.get_action_candidates(ctx.ui)
 
-    assert [option.description for option in options] == ["Click Visible"]
+    assert [option.description for option in options] == [
+        "Click Visible (bottom of screen)"
+    ]
 
 
 def _node(index, text, bounds, clickable=False, resource_id="", class_name="X"):
@@ -408,7 +410,7 @@ def test_text_less_rows_are_named_by_the_text_inside_them():
         ]
     ) == [
         "Click Adaptive Battery, Battery saver",
-        "Click search_action_bar: Search Settings",
+        "Click search_action_bar: Search Settings (top of screen)",
         "Click android:id/icon",
         "Click OK",
     ]
@@ -450,7 +452,126 @@ def test_screen_roots_do_not_borrow_page_text():
             _node(3, "Email", "84,600,400,660"),
             _node(4, email, "84,680,996,800", True, email, "EditText"),
         ]
-    ) == ["Click android.widget.FrameLayout", "Click com.app:id/email"]
+    ) == ["Click android.widget.FrameLayout", 'Click text field "com.app:id/email"']
+
+
+def test_labels_name_the_widget_kind_and_its_state():
+    def node(index, text, bounds, clickable, class_name, checked="", rid=""):
+        return {
+            **_node(index, text, bounds, clickable, rid, class_name),
+            "checkedState": checked,
+        }
+
+    switch_id = "android:id/switch_widget"
+    ctx = _context(
+        elements=[
+            # A row whose title and switch are separate, non-clickable elements.
+            node(
+                1, "android.widget.FrameLayout", "0,384,1080,657", True, "FrameLayout"
+            ),
+            node(2, "Use Battery Saver", "126,492,454,549", False, "TextView"),
+            node(
+                3,
+                switch_id,
+                "848,457,985,583",
+                False,
+                "Switch",
+                "isChecked=True",
+                switch_id,
+            ),
+            node(4, "M", "200,1000,300,1100", True, "CheckBox", "isChecked=False"),
+            node(5, "Vibrate", "0,1200,1080,1300", True, "Switch", "isChecked=False"),
+            node(
+                6,
+                "Search settings",
+                "100,700,980,800",
+                True,
+                "EditText",
+                rid="app:id/q",
+            ),
+            node(7, "Save", "800,1950,1000,2090", True, "Button"),
+        ],
+        phone_state={
+            "packageName": "com.android.settings",
+            "isEditable": True,
+            "focusedElement": {"resourceId": "app:id/q"},
+        },
+    )
+    assert [
+        option.description
+        for option in ctx.state_provider.get_action_candidates(ctx.ui)
+    ] == [
+        'Click switch "Use Battery Saver" (on)',
+        'Click checkbox "M" (unchecked)',
+        'Click switch "Vibrate" (off)',
+        'Click text field "Search settings" (focused)',
+        'Click button "Save"',
+    ]
+
+
+@pytest.mark.parametrize(
+    ("focused_text", "expected"), [("", []), ("2", ["2"])], ids=["ambiguous", "by-text"]
+)
+def test_focus_is_marked_only_on_the_one_focused_field(focused_text, expected):
+    fields = [
+        _node(
+            i,
+            str(i),
+            f"0,{300 * i},1080,{300 * i + 200}",
+            True,
+            "shop:id/qty",
+            "EditText",
+        )
+        for i in (1, 2, 3)
+    ]
+    ctx = _context(
+        elements=fields,
+        phone_state={
+            "isEditable": True,
+            "focusedElement": {"resourceId": "shop:id/qty", "text": focused_text},
+        },
+    )
+    focused = [
+        option.description.split('"')[1]
+        for option in ctx.state_provider.get_action_candidates(ctx.ui)
+        if "focused" in option.description
+    ]
+    assert focused == expected
+
+
+def test_single_choice_rows_are_not_called_checkboxes():
+    assert _labels(
+        [
+            {
+                **_node(
+                    1, "1 minute", "0,600,1080,700", True, class_name="CheckedTextView"
+                ),
+                "checkedState": "isChecked=False",
+            },
+        ]
+    ) == ['Click option "1 minute" (unchecked)']
+
+
+def test_ios_switch_state_comes_from_its_value():
+    assert _labels(
+        [
+            {
+                "index": 1,
+                "type": "Switch",
+                "className": "Switch",
+                "text": "Wi-Fi",
+                "value": "1",
+                "bounds": "0,600,1080,700",
+            },
+            {
+                "index": 2,
+                "type": "TextField",
+                "className": "TextField",
+                "text": "Search",
+                "bounds": "0,800,1080,900",
+            },
+        ]
+    ) == ['Click switch "Wi-Fi" (on)', 'Click text field "Search"']
 
 
 def test_borrowed_text_keeps_the_resource_name():
@@ -460,7 +581,7 @@ def test_borrowed_text_keeps_the_resource_name():
             _node(1, cart, "900,100,1040,240", True, cart, "FrameLayout"),
             _node(2, "3", "980,110,1030,150"),
         ]
-    ) == ["Click menu_cart: 3"]
+    ) == ["Click menu_cart: 3 (top of screen)"]
 
 
 def test_llm_in_the_chain_keeps_name_based_app_launching(monkeypatch):
