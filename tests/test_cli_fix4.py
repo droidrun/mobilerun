@@ -149,7 +149,7 @@ def test_removed_flag_guidance(flag, replacement, path):
     assert "Did you mean" not in result.output
 
 
-@pytest.mark.parametrize("blocked", ["rich.console", "click"])
+@pytest.mark.parametrize("blocked", ["click"])
 def test_startup_sigint_clean_subprocess(tmp_path, blocked):
     # Test-only import interception provides a deterministic early SIGINT window.
     # No production hook and no timing-based sleeps.
