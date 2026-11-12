@@ -160,7 +160,11 @@ def convert_api_error(exc):
 
         credential = resolve_cloud_credential()
         document["credential"] = credential.source or "login"
-        if credential.source == "env":
+        if status == 403:
+            label = "env key" if credential.source == "env" else "saved sign-in"
+            hint = (f"The {label} is valid but not allowed to do this; "
+                    "check its scopes or the device owner.")
+        elif credential.source == "env":
             hint = f"The key in {credential.env_var} was rejected. "
             if credential.saved_sign_in:
                 hint += "A saved sign-in exists; unset the variable to use it."

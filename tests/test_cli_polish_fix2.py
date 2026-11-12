@@ -261,7 +261,7 @@ def sdk_error_cases():
     for kind, status, body, message, code, hint in [
         ("status", 401, {"detail": "Not authorized", "title": "Unauthorized", "code": "unauthorized"},
          "Not authorized", "unauthorized", "mobilerun auth login"),
-        ("status", 403, {"title": "Forbidden"}, "Forbidden", None, "MOBILERUN_CLOUD_API_KEY"),
+        ("status", 403, {"title": "Forbidden"}, "Forbidden", None, "valid but not allowed"),
         ("status", 404, {"detail": "Device not found"},
          "Device not found", None, "mobilerun device list -t cloud"),
         ("status", 422, {"errors": [{"message": "Invalid device id", "code": "validation_error"}]},

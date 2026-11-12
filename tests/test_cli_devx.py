@@ -1041,10 +1041,13 @@ def test_cloud_rejection_text_names_used_credential(
     cloud_credential_case, rejected_cloud_command, status
 ):
     result = rejected_cloud_command(status, [])
+    hint = (f"The {cloud_credential_case.label} is valid but not allowed to do this; "
+            "check its scopes or the device owner."
+            if status == 403 else cloud_credential_case.hint)
     assert result.stdout == ""
     assert (
         result.stderr
-        == f"Error: Rejected [redacted] (HTTP {status})\n{cloud_credential_case.hint}\n"
+        == f"Error: Rejected [redacted] (HTTP {status})\n{hint}\n"
     )
 
 
@@ -1053,6 +1056,9 @@ def test_cloud_rejection_json_names_used_credential(
     cloud_credential_case, rejected_cloud_command, status
 ):
     result = rejected_cloud_command(status, ["-j"])
+    hint = (f"The {cloud_credential_case.label} is valid but not allowed to do this; "
+            "check its scopes or the device owner."
+            if status == 403 else cloud_credential_case.hint)
     assert json.loads(result.stdout) == {
         "error": "Rejected [redacted]",
         "status": status,
@@ -1061,7 +1067,7 @@ def test_cloud_rejection_json_names_used_credential(
     }
     assert (
         result.stderr
-        == f"Error: Rejected [redacted] (HTTP {status})\n{cloud_credential_case.hint}\n"
+        == f"Error: Rejected [redacted] (HTTP {status})\n{hint}\n"
     )
 
 
