@@ -138,6 +138,8 @@ def __getattr__(name):
         value = getattr(import_module(module), attribute)
         globals()[name] = value
         return value
+    if name in {"agent", "tools", "macro", "config_manager"}:
+        return import_module(f"{__name__}.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

@@ -17,6 +17,8 @@ def __getattr__(name):
         value = getattr(import_module(module), attribute)
         globals()[name] = value
         return value
+    if name in {"droid", "utils"}:
+        return import_module(f"{__name__}.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

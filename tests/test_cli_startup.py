@@ -72,6 +72,7 @@ IMPORTS = (
     "from mobilerun import MobileAgent",
     "from mobilerun import MobileConfig",
     "import mobilerun.config_manager",
+    "import mobilerun; mobilerun.tools.AndroidDriver",
     "from mobilerun.agent import ResultEvent",
     "from mobilerun.agent.droid import MobileAgent",
     "import mobilerun.macro",
