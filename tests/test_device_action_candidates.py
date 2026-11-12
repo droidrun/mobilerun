@@ -372,6 +372,96 @@ def test_elements_with_off_screen_centres_are_not_clickable_candidates():
     assert [option.description for option in options] == ["Click Visible"]
 
 
+def _node(index, text, bounds, clickable=False, resource_id="", class_name="X"):
+    return {
+        "index": index,
+        "text": text,
+        "resourceId": resource_id,
+        "className": class_name,
+        "bounds": bounds,
+        "isClickable": clickable,
+    }
+
+
+def _labels(elements):
+    ctx = _context(elements=elements)
+    return [
+        option.description
+        for option in ctx.state_provider.get_action_candidates(ctx.ui)
+    ]
+
+
+def test_text_less_rows_are_named_by_the_text_inside_them():
+    search_id = "com.android.settings:id/search_action_bar"
+    row = "android.widget.LinearLayout"
+    assert _labels(
+        [
+            _node(1, row, "0,942,1080,1129", True, class_name="LinearLayout"),
+            _node(2, "Adaptive Battery", "84,974,400,1038"),
+            _node(3, "Adaptive Battery", "84,1038,400,1097"),
+            _node(4, "Battery saver", "84,1060,400,1100"),
+            _node(5, search_id, "0,100,1080,256", True, search_id),
+            _node(6, "Search Settings", "120,140,600,220"),
+            _node(7, "android:id/icon", "0,1500,100,1600", True, "android:id/icon"),
+            _node(8, "OK", "500,1500,700,1600", clickable=True),
+        ]
+    ) == [
+        "Click Adaptive Battery, Battery saver",
+        "Click search_action_bar: Search Settings",
+        "Click android:id/icon",
+        "Click OK",
+    ]
+
+
+def test_rows_do_not_borrow_text_owned_by_a_smaller_clickable():
+    scrim = "com.google.android.material:id/touch_outside"
+    assert _labels(
+        [
+            _node(1, scrim, "0,0,1080,2400", True, scrim),
+            _node(2, "Delete photo?", "100,1500,980,1600"),
+            _node(3, "Delete", "100,1700,500,1800", clickable=True),
+            _node(
+                4,
+                "android.widget.LinearLayout",
+                "0,300,1080,500",
+                True,
+                "",
+                "LinearLayout",
+            ),
+            _node(5, "T-Mobile", "84,320,600,380"),
+            _node(6, "Settings", "900,320,1000,420", clickable=True),
+        ]
+    ) == [
+        "Click com.google.android.material:id/touch_outside",
+        "Click Delete",
+        "Click T-Mobile",
+        "Click Settings",
+    ]
+
+
+def test_screen_roots_do_not_borrow_page_text():
+    root = "android.widget.FrameLayout"
+    email = "com.app:id/email"
+    assert _labels(
+        [
+            _node(1, root, "0,0,1080,2400", True, class_name="FrameLayout"),
+            _node(2, "Welcome back", "84,300,900,400"),
+            _node(3, "Email", "84,600,400,660"),
+            _node(4, email, "84,680,996,800", True, email, "EditText"),
+        ]
+    ) == ["Click android.widget.FrameLayout", "Click com.app:id/email"]
+
+
+def test_borrowed_text_keeps_the_resource_name():
+    cart = "com.shop:id/menu_cart"
+    assert _labels(
+        [
+            _node(1, cart, "900,100,1040,240", True, cart, "FrameLayout"),
+            _node(2, "3", "980,110,1030,150"),
+        ]
+    ) == ["Click menu_cart: 3"]
+
+
 def test_llm_in_the_chain_keeps_name_based_app_launching(monkeypatch):
     from mobilerun.agent.droid import droid_agent
     from mobilerun.agent.selectors import DelegatingSelector, LlamaIndexLLMSelector

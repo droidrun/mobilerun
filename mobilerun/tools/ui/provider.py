@@ -233,7 +233,11 @@ class StateProvider:
 
         options = []
         seen = set()
-        for element in UIState._collect_all(state.elements):
+        elements = UIState._collect_all(state.elements)
+        borrowed = _borrowed_texts(
+            elements, (state.screen_width or 0) * (state.screen_height or 0)
+        )
+        for element in elements:
             index = element.get("index")
             if (
                 type(index) is not int
@@ -259,7 +263,7 @@ class StateProvider:
                 UIState._avoid_tap_blockers(state, element, center)
             except (KeyError, TypeError, ValueError):
                 continue
-            label = element.get("text") or element.get("resourceId") or str(index)
+            label = _candidate_label(element, borrowed)
             if element.get("isClickable", True):
                 options.append(
                     ActionCandidate(
@@ -489,6 +493,84 @@ class StateProvider:
             for app in apps
             if app.identifier != current_app
         ]
+
+
+_MAX_BORROWED_TEXTS = 3
+_MAX_OWNER_SCREEN_SHARE = 0.5
+
+
+def _own_text(element: dict) -> str:
+    """Element text, or "" when it only repeats the resource id or class name."""
+    text = str(element.get("text") or "").strip()
+    class_name = str(element.get("className") or "")
+    if (
+        text == element.get("resourceId")
+        or text == class_name
+        or (class_name and text.endswith(f".{class_name}"))
+    ):
+        return ""
+    return text
+
+
+def _parse_bounds(element: dict) -> tuple[int, int, int, int] | None:
+    try:
+        left, top, right, bottom = map(int, element["bounds"].split(","))
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return None
+    return left, top, right, bottom
+
+
+def _borrowed_texts(elements: list[dict], screen_area: int) -> dict[int, list[str]]:
+    """Texts of non-clickable elements, keyed by their innermost clickable container.
+
+    The flattened tree drops hierarchy, and list rows are often text-less
+    containers whose title is a separate element within their bounds. Screen
+    roots, scrims and overlays are not rows, so they borrow nothing.
+    """
+    clickables = []
+    for element in elements:
+        if element.get("isClickable", True) or element.get("isLongClickable", False):
+            if (bounds := _parse_bounds(element)) is not None:
+                area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
+                if not screen_area or area <= screen_area * _MAX_OWNER_SCREEN_SHARE:
+                    clickables.append((area, bounds, element))
+    borrowed: dict[int, list[str]] = {}
+    for element in elements:
+        if element.get("isClickable", True) or element.get("isLongClickable", False):
+            continue  # A clickable element names itself.
+        if not (text := _own_text(element)):
+            continue
+        if (bounds := _parse_bounds(element)) is None:
+            continue
+        left, top, right, bottom = bounds
+        owner = min(
+            (
+                (area, container)
+                for area, (c_left, c_top, c_right, c_bottom), container in clickables
+                if c_left <= left
+                and c_top <= top
+                and right <= c_right
+                and bottom <= c_bottom
+            ),
+            key=lambda item: item[0],
+            default=None,
+        )
+        if owner is not None:
+            texts = borrowed.setdefault(id(owner[1]), [])
+            if text not in texts and len(texts) < _MAX_BORROWED_TEXTS:
+                texts.append(text)
+    return borrowed
+
+
+def _candidate_label(element: dict, borrowed: dict[int, list[str]]) -> str:
+    """Name an element by its text, or by the texts it contains."""
+    if text := _own_text(element):
+        return text
+    if texts := borrowed.get(id(element)):
+        resource = str(element.get("resourceId") or "").rsplit("/", 1)[-1]
+        joined = ", ".join(texts)
+        return f"{resource}: {joined}" if resource else joined
+    return element.get("text") or element.get("resourceId") or str(element["index"])
 
 
 def should_resize_model_screenshot(state_provider: Any) -> bool:
