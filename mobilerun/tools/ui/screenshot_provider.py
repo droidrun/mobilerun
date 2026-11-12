@@ -87,6 +87,8 @@ class ScreenshotOnlyStateProvider(StateProvider):
                 use_normalized=True,
                 model_screenshot_width=screen_width,
                 model_screenshot_height=screen_height,
+                device_width=input_width,
+                device_height=input_height,
             )
 
         max_x = max(screen_width - 1, 0)
@@ -113,4 +115,6 @@ class ScreenshotOnlyStateProvider(StateProvider):
             coordinate_scale_y=input_height / screen_height,
             model_screenshot_width=screen_width,
             model_screenshot_height=screen_height,
+            device_width=input_width,
+            device_height=input_height,
         )

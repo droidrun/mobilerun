@@ -33,6 +33,8 @@ class UIState:
         coordinate_contract_active: bool = False,
         model_screenshot_width: Optional[int] = None,
         model_screenshot_height: Optional[int] = None,
+        device_width: Optional[int] = None,
+        device_height: Optional[int] = None,
     ) -> None:
         self.elements = elements
         self.formatted_text = formatted_text
@@ -54,6 +56,9 @@ class UIState:
         # coordinate guards read it from here so they match the space this
         # snapshot's convert_point uses.
         self.coordinate_contract_active = coordinate_contract_active
+        # Size of the space convert_point returns (what the device taps in).
+        self.device_width = screen_width if device_width is None else device_width
+        self.device_height = screen_height if device_height is None else device_height
 
     # -- element lookup ------------------------------------------------------
 
