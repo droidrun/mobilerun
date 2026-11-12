@@ -431,3 +431,57 @@ def test_chat_history_roles_are_plain_strings(sdk):
 
     history = sdk.client.system_one.call_args.kwargs["state"]["history"]
     assert [item["role"] for item in history] == ["user", "assistant"]
+
+
+def test_history_keeps_native_tool_calls_and_their_results(sdk):
+    from llama_index.core.base.llms.types import (
+        ChatMessage,
+        TextBlock,
+        ToolCallBlock,
+    )
+
+    request = _request(
+        history=[
+            ChatMessage(
+                role="assistant",
+                blocks=[
+                    TextBlock(text="Open Wi-Fi"),
+                    ToolCallBlock(
+                        tool_call_id="call_1",
+                        tool_name="click",
+                        tool_kwargs={"index": 4},
+                    ),
+                    ToolCallBlock(
+                        tool_call_id="call_2",
+                        tool_name="type",
+                        tool_kwargs='{"text": "home", "index": 7}',
+                    ),
+                ],
+            ),
+            ChatMessage(
+                role="tool",
+                content="Clicked Wi-Fi",
+                additional_kwargs={"tool_call_id": "call_1"},
+            ),
+            ChatMessage(role="user", content="Continue."),
+        ]
+    )
+    asyncio.run(TypeSafeDecisionModel(api_key="test-only").decide(request))
+
+    history = sdk.client.system_one.call_args.kwargs["state"]["history"]
+    assert history == [
+        {
+            "role": "assistant",
+            "content": "Open Wi-Fi",
+            "tool_calls": [
+                {"id": "call_1", "name": "click", "parameters": {"index": 4}},
+                {
+                    "id": "call_2",
+                    "name": "type",
+                    "parameters": {"text": "home", "index": 7},
+                },
+            ],
+        },
+        {"role": "tool", "content": "Clicked Wi-Fi", "tool_call_id": "call_1"},
+        {"role": "user", "content": "Continue."},
+    ]

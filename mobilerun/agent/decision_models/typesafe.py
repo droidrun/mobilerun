@@ -1,6 +1,7 @@
 """Native TypeSafe Jev decisions, without a chat/LLM compatibility layer."""
 
 import asyncio
+import json
 import logging
 import math
 import time
@@ -8,7 +9,7 @@ from contextlib import suppress
 from io import BytesIO
 from typing import Any
 
-from llama_index.core.base.llms.types import ChatMessage
+from llama_index.core.base.llms.types import ChatMessage, ToolCallBlock
 from PIL import Image as PILImage
 from PIL import ImageOps, UnidentifiedImageError
 
@@ -82,6 +83,33 @@ _LOCATE_UI = (
 )
 
 
+def _history_item(item: Any) -> Any:
+    """Serialize a history message, keeping native tool calls and their ids."""
+    if not isinstance(item, ChatMessage):
+        return item
+    entry: dict[str, Any] = {"role": item.role.value, "content": item.content or ""}
+    calls = []
+    for block in item.blocks:
+        if isinstance(block, ToolCallBlock):
+            arguments = block.tool_kwargs
+            if isinstance(arguments, str):
+                with suppress(ValueError):
+                    arguments = json.loads(arguments) if arguments.strip() else {}
+            calls.append(
+                {
+                    "id": block.tool_call_id,
+                    "name": block.tool_name,
+                    "parameters": arguments,
+                }
+            )
+    if calls:
+        entry["tool_calls"] = calls
+    call_id = item.additional_kwargs.get("tool_call_id")
+    if call_id:
+        entry["tool_call_id"] = call_id
+    return entry
+
+
 class TypeSafeDecisionModel:
     """Choose only among supplied actions; abstain on low-confidence answers.
 
@@ -149,14 +177,7 @@ class TypeSafeDecisionModel:
         state: dict[str, Any] = {
             "goal": request.goal,
             "memory": request.memory,
-            "history": [
-                (
-                    {"role": item.role.value, "content": item.content or ""}
-                    if isinstance(item, ChatMessage)
-                    else item
-                )
-                for item in request.history
-            ],
+            "history": [_history_item(item) for item in request.history],
             "variables": request.variables,
         }
         locating = request.screenshot is not None and any(
