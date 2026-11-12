@@ -50,7 +50,7 @@ def test_every_command_has_help(path, command, flag):
 
 
 def test_tree_and_short_options():
-    assert set(cli.commands) == {"run", "device", "auth", "configure", "macro", "doctor", "env", "completion"}
+    assert set(cli.commands) == {"run", "device", "auth", "configure", "macro", "doctor", "env", "completion", "script"}
     assert set(cli.commands["device"].commands) == {
         "list", "connect", "disconnect", "setup", "ping", "tap", "swipe", "long-press",
         "type", "press", "screenshot", "ui", "apps", "start", "pair",
