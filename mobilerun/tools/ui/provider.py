@@ -599,7 +599,13 @@ class AndroidStateProvider(StateProvider):
         """Return Portal recovery, or None when there is no ADB device."""
         from mobilerun_core_local.driver.android import AndroidDriver
 
-        if isinstance(self.driver, AndroidDriver) and self.driver.device is not None:
+        from mobilerun.tools.driver.secret_safe import SecretSafeDriver
+
+        # The redaction wrapper is transparent for the concrete-driver check.
+        driver = self.driver
+        if isinstance(driver, SecretSafeDriver):
+            driver = driver.inner
+        if isinstance(driver, AndroidDriver) and driver.device is not None:
             return self._recover_portal
         return None
 

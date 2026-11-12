@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from mobilerun.agent.utils import actions
 from mobilerun.agent.utils.actions import click, open_app, type_secret, type_text, wait
+from mobilerun.credential_manager.secret_gate import SecretRunState
 from mobilerun.macro.recorder import MacroRecorder
 
 
@@ -152,6 +153,7 @@ def test_type_secret_records_replayable_secret_action_not_placeholder():
         macro_recorder=recorder,
         credential_manager=FakeCredentialManager(),
         state_provider=SequencedStateProvider([first_ui, focused_ui]),
+        secret_run=SecretRunState(),
     )
 
     result = asyncio.run(type_secret("login_password", 7, ctx=ctx))

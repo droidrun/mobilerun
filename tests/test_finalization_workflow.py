@@ -16,6 +16,7 @@ from mobilerun.agent.droid.events import (
     ResultEvent,
 )
 from mobilerun.agent.trajectory import TrajectoryWriter
+from mobilerun.tools.driver.secret_safe import SecretRedactor
 
 
 class FinishingAgent(MobileAgent):
@@ -26,6 +27,7 @@ class FinishingAgent(MobileAgent):
             self, timeout=timeout, num_concurrent_runs=num_concurrent_runs
         )
         self.timeout = timeout
+        self._redactor = SecretRedactor()
 
     @step
     async def start_handler(

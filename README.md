@@ -230,6 +230,77 @@ Shows browsing, app navigation, and result extraction from a natural-language ta
 - Data extraction from native mobile apps
 - Testing the same flow across many devices and OS versions in parallel
 
+## 🔐 Approval for sensitive secrets
+
+`type_secret` types a value from your `CredentialManager`. Typed secrets are masked in UI trees, logs and saved macros: in every UI tree the agent sees (LLM prompts, trajectories, saved macros) and in the engine's log output. Screenshots keep showing ordinary typed secrets; only screenshots after approval-gated secrets are black.
+
+For secrets that need a human decision first (a payment card, for example), describe them with `SecretSpec` and pass an `ApprovalProvider` to the agent. The engine asks once per run, per secret group and target, and types only after the answer is `"approved"`. A `"denied"` or `"expired"` answer, a failing provider, or no provider at all ends the run as failed (`approval_denied`, `approval_expired`, `approval_unavailable`) and nothing is typed.
+
+```python
+from mobilerun import MobileAgent
+from mobilerun.credential_manager import (
+    ApprovalDecision,
+    ApprovalProvider,
+    CredentialManager,
+    SecretSpec,
+)
+
+
+class TerminalApproval(ApprovalProvider):
+    async def request(self, kind: str, details: dict[str, str]) -> ApprovalDecision:
+        target = details.get("targetHost") or details["targetPackage"]
+        answer = input(f"Allow '{details['label']}' ({kind}) to be typed into {target}? [y/N] ")
+        return "approved" if answer.strip().lower() == "y" else "denied"
+
+
+class MyCredentials(CredentialManager):
+    async def resolve_key(self, key: str) -> str:
+        return load_from_your_vault(key)
+
+    async def get_keys(self) -> list[str]:
+        return ["card_number", "card_cvc", "login_password"]
+
+    async def get_secret_specs(self) -> list[SecretSpec]:
+        card = dict(requires_approval=True, approval_kind="card", approval_label="Test card")
+        return [
+            SecretSpec("card_number", **card),
+            SecretSpec("card_cvc", **card, redact="input_only"),
+            SecretSpec("login_password"),
+        ]
+
+
+agent = MobileAgent(
+    "Pay the open invoice",
+    config=config,
+    credentials=MyCredentials(),
+    approval_provider=TerminalApproval(),
+)
+```
+
+`request()` receives `label`, `secretGroup` and `targetPackage`, plus `targetHost` in a browser. These are never secret values. One approval covers every field of the same kind, label and target, and nothing else. Who is asked, how the decision is authenticated and how it travels back are up to your provider.
+
+What the engine guarantees for approval-gated secrets:
+
+- The value is resolved only after approval, and typed only if the last observed state still shows the approved app (and, in a browser, the approved host), with the field you selected focused: the focused node must be that very element (resource id, class, tree position and bounds) and a text field, not an enclosing container or another node with the same bounds. The device offers no atomic "check and type", so this is a check of the last observed state; a focus change in the instant before typing cannot be excluded.
+- Approval-gated secrets need a structured accessibility tree (Android, iOS portal-http). On the iOS XCTest text tree they fail closed: nothing is typed.
+- Browser hosts are read only from the address bar of known browsers (Chrome, Samsung Internet, Firefox, Edge, Brave and DuckDuckGo on Android (the DuckDuckGo adapter and its address-bar id are not verified on a device); Safari on iOS only where a structured tree with a `URL` field exists in the path), and only from a text node outside web content. An unreadable or ambiguous host, or a visible address bar with a well-known id in a browser that is not on this list, means nothing is typed. A browser that is not on the list and shows no such address bar is bound to its package only, like a WebView inside an ordinary app. A host can deny approval requests that lack `targetHost` for browser packages.
+- From the first typed approval-gated secret on, screenshots from the engine's driver are black for the rest of the run. Typed ordinary secrets (passwords, tokens) are masked in UI trees only.
+- A macro never replays an approval-gated step; replay stops with `approval_required`.
+
+Limits to know about:
+
+- `redact="input_only"` masks a value only in focused or editable nodes, where the tree says which are which (Android). Without that information, including the iOS text tree, the value is masked everywhere. Digit-only values of at least 8 digits are always masked everywhere. Short values may remain visible in nodes that are not editable.
+- Whole-word matching cannot catch a value that an app glues to other characters. A value of at least four characters that an app spreads over adjacent text nodes (a code with one digit per node, a card number in group nodes) is masked in every contributing node, however large the screen is; each such node may only use characters of the value, so a PIN pad with other keys or letters is left alone. For `input_only` secrets only input nodes are joined. For a host-injected state provider, the pre-formatted text of its state is masked per string only.
+- If typing fails or is interrupted, every typed prefix of at least four characters is masked, in input nodes (prefixes of eight or more digits everywhere). Shorter prefixes stay unmasked.
+- The destination check refuses when the tap restructures the screen's ancestors (the focused node must keep the same tree position); that is fail closed.
+- A replay with `on_mismatch="agent"` that typed any secret returns `False` instead of handing off to the agent.
+- Target binding covers the typing step only; copy/paste by the app or the user can move a value elsewhere.
+- A token shown as plain text in a screenshot after typing an ordinary secret stays visible; only approval-gated secrets turn screenshots black.
+- Coverage is the built-in workflows and cooperating state providers (their `UIState` is masked at the engine boundary; the provider itself is not modified). A host that reads the raw driver itself, a live stream or screen recording of the device, host-side log handlers, telemetry exporters, and external agents with raw ADB access are outside this boundary.
+- Screenshot-only mode (`--vision-only` without accessibility data) has no `type_secret`, so approval-gated secrets are unavailable there. Hybrid vision with accessibility data is supported.
+- Apps whose card fields appear neither in the accessibility tree nor as focus cannot be filled; the field check fails and nothing is typed.
+- The black screenshots take the agent's sight for the rest of a vision run; after an approval-gated secret it should only submit.
+
 ## 🌐 Part of Mobilerun
 
 Mobilerun is one piece of a toolkit for driving real phones with AI agents:

@@ -20,11 +20,15 @@ from mobilerun.macro.state import (
     UNSUPPORTED_SCHEMA_MESSAGE,
     normalize_ui_state,
 )
+from mobilerun.credential_manager.secret_gate import SecretRunState, spec_for
+from mobilerun.tools.driver.secret_safe import SecretRedactor, SecretSafeDriver
 from mobilerun.tools.filters import DetailedFilter
 from mobilerun.tools.formatters import IndexedFormatter
 from mobilerun.tools.ui.provider import AndroidStateProvider
 
 logger = logging.getLogger("mobilerun-macro")
+
+APPROVAL_REQUIRED = "approval_required"
 
 # Reverse map for legacy key_press macro entries
 _KEYCODE_TO_BUTTON = {4: "back", 3: "home", 66: "enter"}
@@ -73,6 +77,13 @@ class MacroPlayer:
         self.driver: AndroidDriver | None = None
         self.credential_manager = None
         self._credential_load_error: Optional[str] = None
+        # Values typed during replay are masked from every state this player
+        # reads (matching, agent handoff). Cleared around each replay.
+        self._redactor = SecretRedactor()
+        # Set when a replay stopped on an approval-gated secret.
+        self.abort_reason: Optional[str] = None
+        # Secret specs, loaded once per replay.
+        self._secret_state = SecretRunState()
 
     async def _initialize_driver(self) -> AndroidDriver:
         """Initialize AndroidDriver for the target device."""
@@ -148,11 +159,44 @@ class MacroPlayer:
             )
         if self.state_provider is not None:
             try:
-                return normalize_ui_state(await self.state_provider.get_state())
+                state = await self.state_provider.get_state()
+                return normalize_ui_state(self._redactor.redact_ui_state(state))
             except Exception as e:
                 logger.debug("Falling back to raw driver state: %s", e)
         raw_state = await driver.get_ui_tree()
-        return normalize_ui_state(raw_state)
+        return normalize_ui_state(self._redactor.redact_ui_tree(raw_state))
+
+    async def _requires_approval(self, action: Dict[str, Any]) -> bool:
+        """True for a recorded secret step that may only run with host approval.
+
+        The recorded ``protected`` marker wins even if the credential manager
+        used here describes the secret differently. Unreadable policy counts
+        as protected.
+        """
+        action_type = action.get("action_type", action.get("type", "unknown"))
+        if action_type != "type_secret":
+            return False
+        if action.get("protected") is True:
+            return True
+        secret_id = action.get("secret_id")
+        credential_manager = self._load_credential_manager()
+        if not secret_id or credential_manager is None:
+            return False
+        try:
+            spec = await spec_for(self._secret_state, credential_manager, secret_id)
+        except Exception as e:
+            logger.error("Cannot read the approval policy: %s", type(e).__name__)
+            return True
+        return bool(spec is not None and spec.requires_approval)
+
+    def _stop_for_approval(self, step: Any) -> None:
+        self.abort_reason = APPROVAL_REQUIRED
+        logger.error(
+            "❌ Step %s types an approval-gated secret; replay cannot ask for "
+            "approval (%s)",
+            step,
+            APPROVAL_REQUIRED,
+        )
 
     async def wait_for_pre_state(
         self, pre_state: Optional[Dict[str, Any]], step_number: int
@@ -267,14 +311,25 @@ class MacroPlayer:
                     )
                     return False
 
+                if await self._requires_approval(action):
+                    self._stop_for_approval(secret_id)
+                    return False
+
                 try:
                     secret_value = await credential_manager.resolve_key(secret_id)
                 except Exception as e:
-                    logger.error("❌ Secret '%s' is not available: %s", secret_id, e)
+                    logger.error(
+                        "❌ Secret '%s' is not available: %s",
+                        secret_id,
+                        type(e).__name__,
+                    )
                     return False
 
                 logger.info("⌨️  Inputting secret: '%s'", secret_id)
-                await driver.input_text(secret_value, clear)
+                # Registered before typing, so every later state is masked.
+                await SecretSafeDriver(driver, self._redactor).input_secret(
+                    secret_id, secret_value, clear=clear
+                )
                 return True
 
             elif action_type == "key_press":
@@ -309,7 +364,9 @@ class MacroPlayer:
                 return False
 
         except Exception as e:
-            logger.error(f"❌ Error executing action {action_type}: {e}")
+            # A secret may be in the message of an input error: type only.
+            detail = type(e).__name__ if action_type == "type_secret" else e
+            logger.error(f"❌ Error executing action {action_type}: {detail}")
             return False
 
     async def replay_macro(
@@ -329,6 +386,20 @@ class MacroPlayer:
         Returns:
             True if all actions were executed successfully, False otherwise
         """
+        self.abort_reason = None
+        self._secret_state = SecretRunState()
+        self._redactor.clear()
+        try:
+            return await self._replay_macro(macro_data, start_from_step, max_steps)
+        finally:
+            self._redactor.clear()
+
+    async def _replay_macro(
+        self,
+        macro_data: Dict[str, Any],
+        start_from_step: int,
+        max_steps: Optional[int],
+    ) -> bool:
         if not macro_data or "actions" not in macro_data:
             logger.error("❌ Invalid macro data - no actions found")
             return False
@@ -347,6 +418,13 @@ class MacroPlayer:
         if max_steps is not None:
             actions = actions[:max_steps]
             logger.info(f"🎯 Limiting to {max_steps} steps")
+
+        # An approval-gated secret anywhere in the replayed range ends the
+        # replay before the first action, so it never navigates halfway.
+        for step, action in enumerate(actions, start=start_from_step + 1):
+            if await self._requires_approval(action):
+                self._stop_for_approval(step)
+                return False
 
         logger.info(f"🎬 Starting macro replay: '{description}'")
         logger.info(f"📊 Total actions to execute: {len(actions)} / {total_actions}")
@@ -373,6 +451,14 @@ class MacroPlayer:
                     "score": match_result.score if match_result else None,
                 }
                 if self.on_mismatch == "agent":
+                    if self._redactor.active:
+                        # The handoff agent runs on its own driver and would
+                        # observe the typed value unmasked.
+                        logger.error(
+                            "❌ Not handing off to the agent: this replay typed "
+                            "a secret"
+                        )
+                        return False
                     logger.warning("🤖 Handing off to agent after macro divergence")
                     return await self.handoff_runner(
                         goal=description,
@@ -388,6 +474,10 @@ class MacroPlayer:
 
             # Execute the action
             success = await self.replay_action(action, current_state=current_state)
+
+            # Ends the replay now: no further action, wait or agent handoff.
+            if self.abort_reason:
+                return False
 
             if success:
                 success_count += 1

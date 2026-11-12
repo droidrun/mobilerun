@@ -286,6 +286,7 @@ def test_droid_agent_validation_failure_never_reaches_the_executor():
     agent = object.__new__(MobileAgent)
     agent.shared_state = SimpleNamespace(
         step_number=0,
+        terminal_abort=None,
         drain_user_messages=lambda: [],
     )
     agent.config = SimpleNamespace(agent=SimpleNamespace(max_steps=5))
