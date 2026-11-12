@@ -21,6 +21,148 @@ T = TypeVar("T", bound=BaseModel)
 _RETRYABLE_HTTP_CLIENT_STATUS_CODES = {408, 409, 425, 429}
 
 
+_BLOCKED = {
+    "safety",
+    "recitation",
+    "blocklist",
+    "prohibited_content",
+    "content_filter",
+    "refusal",
+}
+_TRUNCATED = {"max_tokens", "length", "max_output_tokens"}
+
+
+def _as_dict(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    dump = getattr(value, "model_dump", None)
+    try:
+        dumped = dump() if callable(dump) else None
+        return dumped if isinstance(dumped, dict) else {}
+    except Exception:
+        return {}
+
+
+def _first_choice(mapping: dict, key: str) -> dict:
+    value = mapping.get(key)
+    if isinstance(value, list) and value:
+        return _as_dict(value[0])
+    return {}
+
+
+def _empty_response_diagnostics(
+    response: object, llm: object, *, stream: bool = False
+) -> dict[str, object]:
+    """Redacted metadata (types, key names, scalars) for an unusable response. Never content."""
+    message = getattr(response, "message", None)
+    raw = _as_dict(getattr(response, "raw", None))
+    extra = _as_dict(getattr(response, "additional_kwargs", None))
+    message_extra = _as_dict(getattr(message, "additional_kwargs", None))
+    # Gemini OAuth stores the generateContent payload under raw["response"].
+    nested = _as_dict(raw.get("response"))
+    # finish_reason lives at top level, under LiteLLM choices[0], Gemini
+    # candidates[0], or the nested Code Assist envelope.
+    sources = [
+        raw,
+        extra,
+        message_extra,
+        nested,
+        _first_choice(raw, "choices"),
+        _first_choice(raw, "candidates"),
+        _first_choice(nested, "choices"),
+        _first_choice(nested, "candidates"),
+    ]
+
+    def scalar(
+        *names: str, types: tuple[type, ...] = (str, int, float, bool)
+    ) -> object | None:
+        for src in sources:
+            for name in names:
+                value = src.get(name)
+                if isinstance(value, types) and not (
+                    isinstance(value, bool) and bool not in types
+                ):
+                    return value
+        return None
+
+    blocks = [type(b).__name__ for b in getattr(message, "blocks", None) or []]
+    content_blocks = message_extra.get("content_blocks")
+    block_types = [
+        b["type"]
+        for b in (content_blocks if isinstance(content_blocks, list) else [])
+        if isinstance(b, dict) and isinstance(b.get("type"), str)
+    ]
+    tool_calls = bool(
+        getattr(message, "tool_calls", None)
+        or extra.get("tool_calls")
+        or message_extra.get("tool_calls")
+        or "ToolCallBlock" in blocks
+        or "tool_use" in block_types
+    )
+    thinking = bool(
+        any("think" in b.lower() for b in blocks)
+        or message_extra.get("thinking")
+        or "thinking" in block_types
+    )
+    # OpenAI Responses reports truncation as status="incomplete" plus
+    # incomplete_details.reason instead of a finish_reason.
+    incomplete = _as_dict(raw.get("incomplete_details")) or _as_dict(
+        nested.get("incomplete_details")
+    )
+    incomplete_reason = incomplete.get("reason")
+    reason = str(
+        scalar("finish_reason", "finishReason", "stop_reason", "stopReason")
+        or (incomplete_reason if isinstance(incomplete_reason, str) else "")
+    ).lower()
+
+    if response is None:
+        category = "no_response"
+    elif message is None and not hasattr(response, "text"):
+        category = "no_message"
+    elif reason in _BLOCKED:
+        category = "provider_blocked"
+    elif reason in _TRUNCATED:
+        category = "truncated"
+    elif tool_calls:
+        category = "tool_calls_only"
+    elif thinking:
+        category = "thinking_only"
+    elif any(b != "TextBlock" for b in blocks):
+        category = "blocks_without_text"
+    else:
+        category = "empty_stream" if stream else "empty_content"
+
+    return {
+        "category": category,
+        "stream": stream,
+        "model": getattr(getattr(llm, "metadata", None), "model_name", None)
+        or getattr(llm, "model", None),
+        "response_type": type(response).__name__ if response is not None else None,
+        "finish_reason": reason or None,
+        "block_types": blocks,
+        "has_tool_calls": tool_calls,
+        "provider_request_id": scalar("request_id", "requestId", "id"),
+        # Responses "status" is a string like "incomplete", not an HTTP code.
+        "http_status": scalar("status_code", "statusCode", "status", types=(int,)),
+        "raw_keys": sorted(map(str, raw)),
+        "additional_kwargs_keys": sorted(map(str, extra)),
+    }
+
+
+def _log_empty_response(
+    response: object, llm: object, attempt: int, *, stream: bool = False
+) -> None:
+    try:
+        logger.warning(
+            "LLM response unusable: attempt=%s diagnostics=%s",
+            attempt,
+            _empty_response_diagnostics(response, llm, stream=stream),
+        )
+    except Exception:
+        # Diagnostics must never turn a retryable response into a hard error.
+        logger.warning("LLM response unusable: diagnostics unavailable")
+
+
 def _is_permanent_http_client_error(error: Exception) -> bool:
     """Return whether an HTTP client error should fail without another attempt."""
     status_code = _http_status_code(error)
@@ -83,7 +225,7 @@ async def acall_with_retries(
                     logger.info(f"{message.content}")
                 return response
             else:
-                logger.warning(f"Attempt {attempt} returned empty content")
+                _log_empty_response(response, llm, attempt, stream=stream)
                 last_exception = ValueError("Empty response content")
 
         except asyncio.TimeoutError:
@@ -192,7 +334,7 @@ async def acomplete_with_retries(
                     logger.info(f"{response.text}")
                 return response
             else:
-                logger.warning(f"Attempt {attempt} returned empty content")
+                _log_empty_response(response, llm, attempt, stream=stream)
                 last_exception = ValueError("Empty response content")
 
         except asyncio.TimeoutError:
@@ -294,6 +436,7 @@ async def astructured_predict_with_retries(
                 return result
             else:
                 logger.warning(f"Attempt {attempt} returned None")
+                _log_empty_response(None, llm, attempt)
                 last_exception = ValueError("Empty response")
 
         except asyncio.TimeoutError:
