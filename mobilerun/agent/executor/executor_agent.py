@@ -111,6 +111,7 @@ class ExecutorAgent(Workflow):
 
         # Build prompt variables
         variables = {
+            "vision": self.vision,
             "instruction": self.shared_state.instruction,
             "app_card": self.shared_state.app_card,
             "device_state": self.shared_state.formatted_device_state,

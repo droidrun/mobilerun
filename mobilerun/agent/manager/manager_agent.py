@@ -233,6 +233,7 @@ class ManagerAgent(Workflow):
             )
 
         variables = {
+            "vision": self.vision,
             "instruction": self.shared_state.instruction,
             "device_date": self.shared_state.device_date,
             "app_card": self.shared_state.app_card,

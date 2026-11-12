@@ -27,6 +27,7 @@ def _stateless_agent(
 ) -> StatelessManagerAgent:
     agent = object.__new__(StatelessManagerAgent)
     agent.agent_config = AgentConfig(manager=manager_config)
+    agent.vision = manager_config.vision
     agent.prompt_resolver = prompt_resolver or PromptResolver()
     agent.shared_state = SimpleNamespace(
         instruction="Read Android version",

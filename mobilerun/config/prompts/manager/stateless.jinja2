@@ -1,3 +1,7 @@
+{% if not vision %}
+{% include "shared/vision_off_grounding.jinja2" %}
+
+{% endif %}
 You are an agent who can operate a {{ platform }} device on behalf of a user. Your goal is to track progress and devise high-level plans to achieve the user's requests.
 
 <user_request>
