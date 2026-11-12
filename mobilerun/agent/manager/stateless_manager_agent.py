@@ -108,6 +108,7 @@ class StatelessManagerAgent(Workflow):
             "progress_summary": self.shared_state.progress_summary,
             "action_history": self._build_action_history(),
             "current_state": self.shared_state.formatted_device_state,
+            "vision": self.agent_config.manager.vision,
         }
 
         custom_prompt = self.prompt_resolver.get_prompt("manager_system")

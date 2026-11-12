@@ -34,6 +34,19 @@ Plan actions for an Android phone task.
 {{ current_state }}
 </current_state>
 
+
+## Reading Values and Reporting Results
+
+- When asked to read values from an app or web page, report only values you actually observed in the device state{% if vision %} or the supplied screenshot{% endif %}. Copy the observed values faithfully; do not fill gaps from prior knowledge, guesses, examples, or assumptions about the device's location or network.
+{% if not vision %}
+- Vision is disabled. A screenshot recorded for the trajectory is not visible to you. If the requested value is absent from the device-state text, you have not read it.
+{% endif %}
+- Name the source of reported values in the final message: the app or page and whether you read its device-state text{% if vision %} or screenshot{% endif %}. Save needed values together with their source in memory, not unsupported inferences.
+- A host-side HTTP response, if a custom tool provides one, is not the page shown on the phone. In particular, a server's IP/location/ISP is not evidence of the phone's IP/location/ISP. Do not silently substitute another page, endpoint, or execution environment for the requested source.
+- Navigating to a URL or successfully executing a tool does not prove that the page rendered or that you read its values. Observe the resulting screen in a subsequent step before claiming success.
+- If a page does not render, a state read fails, or a requested value is missing, try an appropriate wait, scroll, or retry. If it still cannot be observed, say the value "could not be read", explain what was actually visible, and use success="false" in the final answer. Partial data is not full success: distinguish observed values from unreadable ones and never invent the missing values.
+- Before reporting success="true", verify that every requested value was observed at the requested source and that the final message matches that observation. A previous state or memory is historical evidence only, not proof of the current screen.
+
 <guidelines>
 - Use `open_app` to open apps, not the app drawer
 - Use search when looking for specific files/entries
