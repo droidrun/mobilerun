@@ -21,6 +21,7 @@ from mobilerun.agent.selectors import (
     FallbackSelector,
     SelectionRequest,
 )
+from mobilerun.agent.utils import actions
 from mobilerun.agent.utils.signatures import build_tool_registry
 from mobilerun.tools.ui.provider import StateProvider
 from mobilerun.tools.ui.screenshot_provider import ScreenshotOnlyStateProvider
@@ -492,6 +493,15 @@ def test_llm_in_the_chain_keeps_name_based_app_launching(monkeypatch):
         assert ToolCall("open_app", {"text": "com.android.settings"}) in [
             option.action for option in options
         ]
+
+        def no_llm(**kwargs):
+            raise AssertionError("A chosen app id must not ask the app opener LLM")
+
+        monkeypatch.setattr(actions, "AppStarter", no_llm)
+        monkeypatch.setattr(actions.asyncio, "sleep", AsyncMock())
+        result = await actions.open_app("com.android.settings", ctx=ctx)
+        assert result.success
+        ctx.driver.start_app.assert_awaited_once_with("com.android.settings")
 
     asyncio.run(run())
 

@@ -82,3 +82,54 @@ def test_ios_open_app_tool_call_with_a_trailing_newline_launches_the_app() -> No
     assert call.parameters == {"bundle_id": "com.burbn.instagram\n"}
     assert result.success
     assert driver.started == ["com.burbn.instagram"]
+
+
+def test_name_based_open_app_starts_an_offered_app_id_without_the_llm(monkeypatch):
+    from mobilerun.agent.action_context import ActionCandidateApp
+
+    def no_llm(**kwargs):
+        raise AssertionError("An offered app id must not ask the app opener LLM")
+
+    monkeypatch.setattr(actions, "AppStarter", no_llm)
+    driver = _Driver()
+    ctx = SimpleNamespace(
+        driver=driver,
+        app_opener_llm=object(),
+        action_candidate_apps=(
+            ActionCandidateApp("com.google.android.deskclock", "Clock"),
+        ),
+    )
+
+    result = asyncio.run(actions.open_app("com.google.android.deskclock", ctx=ctx))
+
+    assert result.success
+    assert driver.started == ["com.google.android.deskclock"]
+
+
+def test_name_based_open_app_still_asks_the_llm_for_a_name(monkeypatch):
+    from mobilerun.agent.action_context import ActionCandidateApp
+
+    asked = []
+
+    class FakeAppStarter:
+        def __init__(self, **kwargs):
+            pass
+
+        async def run(self, app_description):
+            asked.append(app_description)
+            return "App started: com.google.android.deskclock"
+
+    monkeypatch.setattr(actions, "AppStarter", FakeAppStarter)
+    ctx = SimpleNamespace(
+        driver=_Driver(),
+        app_opener_llm=object(),
+        streaming=False,
+        action_candidate_apps=(
+            ActionCandidateApp("com.google.android.deskclock", "Clock"),
+        ),
+    )
+
+    result = asyncio.run(actions.open_app("Clock", ctx=ctx))
+
+    assert result.success
+    assert asked == ["Clock"]
