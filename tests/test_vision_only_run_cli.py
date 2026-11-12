@@ -1,3 +1,4 @@
+
 import asyncio
 import unittest
 from types import SimpleNamespace
@@ -102,7 +103,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         with (
             patch(
-                "mobilerun.cli.run.ConfigLoader.load",
+                "mobilerun.cli.mobilerun.config_manager.ConfigLoader.load",
                 return_value=MobileConfig(),
             ),
             patch("mobilerun.MobileAgent", FakeAgent),
@@ -155,7 +156,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         with (
             patch(
-                "mobilerun.cli.run.ConfigLoader.load",
+                "mobilerun.cli.mobilerun.config_manager.ConfigLoader.load",
                 return_value=MobileConfig(),
             ),
             patch("mobilerun.MobileAgent", FakeAgent),
@@ -210,7 +211,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         )
 
         with (
-            patch("mobilerun.cli.run.ConfigLoader.load", return_value=config),
+            patch("mobilerun.cli.mobilerun.config_manager.ConfigLoader.load", return_value=config),
             patch("mobilerun.MobileAgent", FakeAgent),
             patch("mobilerun.cli.run.adb.device", AsyncMock()) as adb_device,
         ):

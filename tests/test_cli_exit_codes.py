@@ -1,10 +1,12 @@
+
 import importlib
 from unittest.mock import AsyncMock
 
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import device_lifecycle, main, selection
+import mobilerun.config_manager
+from mobilerun.cli import device_lifecycle, main
 from mobilerun.config_manager import MobileConfig
 
 run_module = importlib.import_module("mobilerun.cli.run")
@@ -12,7 +14,7 @@ run_module = importlib.import_module("mobilerun.cli.run")
 
 @pytest.fixture(autouse=True)
 def config(monkeypatch):
-    monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
+    monkeypatch.setattr(mobilerun.config_manager.ConfigLoader, "load", lambda _: MobileConfig())
 
 
 def test_connect_fresh_success(monkeypatch):

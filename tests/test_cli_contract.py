@@ -12,6 +12,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
+import mobilerun.config_manager
 from mobilerun.cli import auth, device_lifecycle, deviceauth
 from mobilerun.cli.main import cli
 from mobilerun.cli.providers import PROVIDERS, llm_url_kwargs
@@ -396,7 +397,7 @@ def test_config_provider_url_never_crashes_with_stop_iteration(monkeypatch, runt
     config = MobileConfig()
     for profile in config.llm_profiles.values():
         profile.provider = runtime
-    monkeypatch.setattr(run_module.ConfigLoader, "load", lambda _: config)
+    monkeypatch.setattr(mobilerun.config_manager.ConfigLoader, "load", lambda _: config)
     monkeypatch.setattr("mobilerun.MobileAgent", fake_agent(SimpleNamespace(success=True, reason="done", steps=1)))
     result = CliRunner().invoke(cli, ["run", "task", "-u", "http://x", "-j"])
     assert "StopIteration" not in result.output

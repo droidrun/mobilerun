@@ -22,15 +22,3 @@ def print_qr(data: str, *, color: bool = True) -> bool:
     except Exception:
         return False
     return True
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'segno': ('segno', None),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    import segno as segno

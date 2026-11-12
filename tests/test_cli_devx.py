@@ -10,11 +10,13 @@ from unittest.mock import AsyncMock, Mock
 
 import click
 import httpx
+import mobilerun_core
 import pytest
 from click.shell_completion import BashComplete, get_completion_class
 from click.testing import CliRunner
 from mobilerun_sdk import APIConnectionError, APIStatusError
 
+import mobilerun.cli.configure_wizard
 from mobilerun.cli import (
     auth,
     device_commands,
@@ -632,7 +634,7 @@ def test_no_input_configure_never_starts_missing_oauth_login(monkeypatch):
 
 def test_click_prompt_eof_is_one_failure_sentence(monkeypatch, allow_input):
     monkeypatch.setattr(
-        configure, "run_configure_wizard", lambda *args, **kwargs: click.prompt("Value")
+        mobilerun.cli.configure_wizard, "run_configure_wizard", lambda *args, **kwargs: click.prompt("Value")
     )
     result = CliRunner().invoke(cli, ["configure"], input="")
     assert result.exit_code == 1, result.output
@@ -1019,7 +1021,7 @@ def rejected_cloud_command(monkeypatch, cloud_credential_case):
         listing = Mock(side_effect=error)
         client = SimpleNamespace(list_devices=listing, close=Mock())
         factory = Mock(return_value=client)
-        monkeypatch.setattr(selection.mobilerun_core, "Mobilerun", factory)
+        monkeypatch.setattr(mobilerun_core, "Mobilerun", factory)
         result = CliRunner().invoke(cli, ["device", "list", "-t", "cloud", *flags])
         assert result.exit_code == 1, result.output
         factory.assert_called_once_with(

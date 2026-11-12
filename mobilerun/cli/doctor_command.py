@@ -39,17 +39,3 @@ async def doctor(device, config_path, platform, target, api_url, verbose, json_o
             emit(f"{check['name']}: {check['status']}: {check['detail']}")
     if failed:
         click.get_current_context().exit(1)
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'Status': ('mobilerun.cli.doctor', 'Status'),
-    'run_doctor': ('mobilerun.cli.doctor', 'run_doctor'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.cli.doctor import Status as Status
-    from mobilerun.cli.doctor import run_doctor as run_doctor

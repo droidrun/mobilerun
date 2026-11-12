@@ -1,6 +1,8 @@
+
 import asyncio
 from types import SimpleNamespace
 
+import mobilerun.config_manager
 from mobilerun.cli import selection
 from mobilerun.config_manager.config_manager import DeviceConfig
 
@@ -34,7 +36,7 @@ def test_create_driver_passes_portal_mode(monkeypatch):
             pass
 
     monkeypatch.setattr(
-        selection.ConfigLoader,
+        mobilerun.config_manager.ConfigLoader,
         "load",
         lambda _path: SimpleNamespace(
             device=SimpleNamespace(
@@ -78,7 +80,7 @@ def test_create_driver_disabled_portal_mode_skips_auto_setup(monkeypatch):
         setup_calls.append((args, kwargs))
 
     monkeypatch.setattr(
-        selection.ConfigLoader,
+        mobilerun.config_manager.ConfigLoader,
         "load",
         lambda _path: SimpleNamespace(
             device=SimpleNamespace(

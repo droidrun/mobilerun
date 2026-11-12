@@ -114,23 +114,3 @@ def env(config_path, verbose, json_output):
             show_source = not (value == "not set" and row["source"] == "not set")
             source = f"  ({row['source']})" if show_source else ""
             emit(f"{row['variable']}={value}{source}")
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'ConfigLoader': ('mobilerun.config_manager', 'ConfigLoader'),
-    'MobileConfig': ('mobilerun.config_manager', 'MobileConfig'),
-    'PORTAL_TOKEN_ENV_VARS': ('mobilerun.config_manager.config_manager', 'PORTAL_TOKEN_ENV_VARS'),
-    'is_telemetry_enabled': ('mobilerun.telemetry.tracker', 'is_telemetry_enabled'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.config_manager import ConfigLoader as ConfigLoader
-    from mobilerun.config_manager import MobileConfig as MobileConfig
-    from mobilerun.config_manager.config_manager import (
-        PORTAL_TOKEN_ENV_VARS as PORTAL_TOKEN_ENV_VARS,
-    )
-    from mobilerun.telemetry.tracker import is_telemetry_enabled as is_telemetry_enabled

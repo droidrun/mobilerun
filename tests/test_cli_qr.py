@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+import segno
 from click.testing import CliRunner
 
 from mobilerun.cli import auth, device_lifecycle, device_pair, deviceauth, qr
@@ -42,9 +43,9 @@ def test_print_qr_uses_stderr_and_preserves_quiet_zone(monkeypatch):
     output.isatty = lambda: True
     monkeypatch.setattr(qr.sys, "stderr", output)
     payload = "https://example.test/verify?user_code=ABCD-EFGH"
-    code = qr.segno.make_qr(payload)
+    code = segno.make_qr(payload)
     make = Mock(return_value=code)
-    monkeypatch.setattr(qr.segno, "make_qr", make)
+    monkeypatch.setattr(segno, "make_qr", make)
     assert qr.print_qr(payload) is True
     make.assert_called_once_with(payload)
     lines = output.getvalue().splitlines()
@@ -59,7 +60,7 @@ def test_print_qr_encoding_failure_returns_false(monkeypatch, error):
     output = io.StringIO()
     output.isatty = lambda: True
     monkeypatch.setattr(qr.sys, "stderr", output)
-    monkeypatch.setattr(qr.segno, "make_qr", Mock(side_effect=error))
+    monkeypatch.setattr(segno, "make_qr", Mock(side_effect=error))
     assert qr.print_qr("https://example.test/verify") is False
     assert output.getvalue() == ""
 
@@ -130,7 +131,7 @@ def test_login_without_complete_link_skips_qr_and_browser(login):
 
 
 def test_login_continues_after_qr_render_failure(monkeypatch, login):
-    monkeypatch.setattr(qr.segno, "make_qr", Mock(side_effect=ValueError("cannot encode")))
+    monkeypatch.setattr(segno, "make_qr", Mock(side_effect=ValueError("cannot encode")))
     result = TerminalRunner().invoke(cli, ["auth", "login"])
     assert result.exit_code == 0, result.output
     assert result.stdout == ""
@@ -385,7 +386,7 @@ def test_device_connect_reply(monkeypatch, reply, exit_code):
 
 def test_pair_fails_if_qr_cannot_be_rendered(monkeypatch, pairing):
     monkeypatch.setattr(device_pair, "print_qr", qr.print_qr)
-    monkeypatch.setattr(qr.segno, "make_qr", Mock(side_effect=ValueError("cannot encode")))
+    monkeypatch.setattr(segno, "make_qr", Mock(side_effect=ValueError("cannot encode")))
     result = TerminalRunner().invoke(cli, ["device", "pair"])
     assert result.exit_code == 1
     assert "Could not display the pairing QR code." in result.stderr

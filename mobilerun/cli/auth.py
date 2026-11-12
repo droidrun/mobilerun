@@ -391,33 +391,3 @@ def status(verbose, json_output):
                 if row["env_overrides_login"]:
                     cloud += " (overrides saved sign-in)"
             emit(f"{row['service']}: {label}{email}  {row['credential_path']}{cloud}")
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    '_OAUTH_CREDENTIAL_SLOTS': ('mobilerun.cli.configure_wizard', '_OAUTH_CREDENTIAL_SLOTS'),
-    '_oauth_credentials_present': ('mobilerun.cli.configure_wizard', '_oauth_credentials_present'),
-    'login_requires_input': ('mobilerun.cli.oauth_actions', 'login_requires_input'),
-    'run_anthropic_setup_token_oauth': ('mobilerun.cli.oauth_actions', 'run_anthropic_setup_token_oauth'),
-    'run_gemini_oauth_login': ('mobilerun.cli.oauth_actions', 'run_gemini_oauth_login'),
-    'run_grok_oauth_login': ('mobilerun.cli.oauth_actions', 'run_grok_oauth_login'),
-    'run_openai_oauth_login': ('mobilerun.cli.oauth_actions', 'run_openai_oauth_login'),
-    'save_anthropic_setup_token': ('mobilerun.cli.oauth_actions', 'save_anthropic_setup_token'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.cli.configure_wizard import _OAUTH_CREDENTIAL_SLOTS as _OAUTH_CREDENTIAL_SLOTS
-    from mobilerun.cli.configure_wizard import (
-        _oauth_credentials_present as _oauth_credentials_present,
-    )
-    from mobilerun.cli.oauth_actions import login_requires_input as login_requires_input
-    from mobilerun.cli.oauth_actions import (
-        run_anthropic_setup_token_oauth as run_anthropic_setup_token_oauth,
-    )
-    from mobilerun.cli.oauth_actions import run_gemini_oauth_login as run_gemini_oauth_login
-    from mobilerun.cli.oauth_actions import run_grok_oauth_login as run_grok_oauth_login
-    from mobilerun.cli.oauth_actions import run_openai_oauth_login as run_openai_oauth_login
-    from mobilerun.cli.oauth_actions import save_anthropic_setup_token as save_anthropic_setup_token

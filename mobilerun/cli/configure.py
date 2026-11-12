@@ -111,21 +111,3 @@ def _validate_non_interactive(provider, model, api_key, base_url, auth_mode):
             f"Saved OAuth credentials required; run `mobilerun auth login {spec.family}` "
             "in a terminal first, or choose -p PROVIDER with API-key authentication."
         )
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'ConfigureWizardCallbacks': ('mobilerun.cli.configure_wizard', 'ConfigureWizardCallbacks'),
-    '_oauth_credentials_present': ('mobilerun.cli.configure_wizard', '_oauth_credentials_present'),
-    'run_configure_wizard': ('mobilerun.cli.configure_wizard', 'run_configure_wizard'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.cli.configure_wizard import ConfigureWizardCallbacks as ConfigureWizardCallbacks
-    from mobilerun.cli.configure_wizard import (
-        _oauth_credentials_present as _oauth_credentials_present,
-    )
-    from mobilerun.cli.configure_wizard import run_configure_wizard as run_configure_wizard

@@ -1,9 +1,12 @@
+
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import mobilerun_core
 import pytest
 from click.testing import CliRunner
 
+import mobilerun.config_manager
 from mobilerun.cli import device_commands, selection
 from mobilerun.cli.main import cli
 
@@ -51,7 +54,7 @@ def test_cloud_uuid_requires_credential_without_falling_back_to_adb(monkeypatch)
     from mobilerun.cli import selection
     from mobilerun.config_manager import MobileConfig
 
-    monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
+    monkeypatch.setattr(mobilerun.config_manager.ConfigLoader, "load", lambda _: MobileConfig())
     monkeypatch.setattr(selection, "resolve_cloud_api_key", lambda: None)
     with pytest.raises(click.ClickException, match="No cloud API key"):
         with device_commands.device_driver({"device": "123e4567-e89b-12d3-a456-426614174000", "api_url": "https://example.test/v1"}):
@@ -73,8 +76,8 @@ def test_cloud_facade_receives_url_key_and_id(monkeypatch):
             calls.append({"device_id": device_id, **kwargs})
             return SimpleNamespace(close=Mock())
 
-    monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
-    monkeypatch.setattr(selection.mobilerun_core, "Mobilerun", FakeCore)
+    monkeypatch.setattr(mobilerun.config_manager.ConfigLoader, "load", lambda _: MobileConfig())
+    monkeypatch.setattr(mobilerun_core, "Mobilerun", FakeCore)
     monkeypatch.setattr(selection, "resolve_cloud_api_key", lambda: "test-key")
     device_id = "123e4567-e89b-12d3-a456-426614174000"
     with device_commands.device_driver({"device": device_id, "api_url": "https://example.test/v1"}):

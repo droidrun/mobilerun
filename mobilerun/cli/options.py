@@ -501,34 +501,3 @@ def stdout():
 def examples(*lines, docs=None):
     text = "\b\nExamples:\n" + "\n".join("  " + line for line in lines)
     return text + (f"\n\nDocs: {docs}" if docs else "")
-
-
-
-def _lazy_imports(namespace, exports):
-    """Preserve module export paths while deferring optional dependencies."""
-    from importlib import import_module
-
-    def get_attribute(name):
-        if name not in exports:
-            raise AttributeError(f"module {namespace['__name__']!r} has no attribute {name!r}")
-        module, attribute = exports[name]
-        value = import_module(module)
-        if attribute is not None:
-            value = getattr(value, attribute)
-        namespace[name] = value
-        return value
-
-    return get_attribute
-
-__getattr__ = _lazy_imports(globals(), {
-    'APIConnectionError': ('mobilerun_sdk', 'APIConnectionError'),
-    'APIStatusError': ('mobilerun_sdk', 'APIStatusError'),
-    'APITimeoutError': ('mobilerun_sdk', 'APITimeoutError'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun_sdk import APIConnectionError as APIConnectionError
-    from mobilerun_sdk import APIStatusError as APIStatusError
-    from mobilerun_sdk import APITimeoutError as APITimeoutError

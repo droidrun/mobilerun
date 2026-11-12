@@ -59,17 +59,3 @@ def llm_url_kwargs(runtime, url):
     if runtime == "XAI":
         raise click.UsageError("-u/--llm-url is not supported for provider XAI")
     return {spec.url_keyword: {"base_url": url} if spec.url_keyword == "http_options" else url}
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'resolve_provider_variant': ('mobilerun.agent.providers.registry', 'resolve_provider_variant'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.agent.providers.registry import (
-        resolve_provider_variant as resolve_provider_variant,
-    )

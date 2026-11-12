@@ -249,15 +249,3 @@ def start(package, **params):
     with device_driver(params) as device:
         device.start_app(package)
     click.echo(f"Started {package}", err=True)
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'is_portal_http_url': ('mobilerun.agent.utils.android_device', 'is_portal_http_url'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.agent.utils.android_device import is_portal_http_url as is_portal_http_url

@@ -354,20 +354,3 @@ def console_render(table):
 
 if __name__ == "__main__":
     macro_cli()
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'Table': ('rich.table', 'Table'),
-    'Trajectory': ('mobilerun.agent.utils.trajectory', 'Trajectory'),
-    'MacroPlayer': ('mobilerun.macro.replay', 'MacroPlayer'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from rich.table import Table as Table
-
-    from mobilerun.agent.utils.trajectory import Trajectory as Trajectory
-    from mobilerun.macro.replay import MacroPlayer as MacroPlayer

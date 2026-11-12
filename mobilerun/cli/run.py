@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import click
 from async_adbutils import adb
@@ -29,6 +30,11 @@ from mobilerun.cli.selection import _native_driver, select_device
 from mobilerun.log_handlers import CLILogHandler, configure_logging
 
 console = Console(stderr=True)
+
+
+if TYPE_CHECKING:
+    from mobilerun import ResultEvent
+    from mobilerun.config_manager import MobileConfig
 
 
 def _force_screenshot_only_vision(config: MobileConfig) -> None:
@@ -398,34 +404,3 @@ async def run(
         emit({"success": success, "reason": reason, "steps": steps}, json_output=True)
     if not success:
         raise click.ClickException(reason or "Task failed")
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'VISUAL_REMOTE_CONNECTION': ('mobilerun_core_local.driver.visual_remote', 'VISUAL_REMOTE_CONNECTION'),
-    'MobileAgent': ('mobilerun', 'MobileAgent'),
-    'ResultEvent': ('mobilerun', 'ResultEvent'),
-    'is_portal_http_url': ('mobilerun.agent.utils.android_device', 'is_portal_http_url'),
-    'load_llm': ('mobilerun.agent.utils.llm_picker', 'load_llm'),
-    'EventHandler': ('mobilerun.cli.event_handler', 'EventHandler'),
-    'ConfigLoader': ('mobilerun.config_manager', 'ConfigLoader'),
-    'MobileConfig': ('mobilerun.config_manager', 'MobileConfig'),
-    'print_telemetry_message': ('mobilerun.telemetry', 'print_telemetry_message'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun_core_local.driver.visual_remote import (
-        VISUAL_REMOTE_CONNECTION as VISUAL_REMOTE_CONNECTION,
-    )
-
-    from mobilerun import MobileAgent as MobileAgent
-    from mobilerun import ResultEvent as ResultEvent
-    from mobilerun.agent.utils.android_device import is_portal_http_url as is_portal_http_url
-    from mobilerun.agent.utils.llm_picker import load_llm as load_llm
-    from mobilerun.cli.event_handler import EventHandler as EventHandler
-    from mobilerun.config_manager import ConfigLoader as ConfigLoader
-    from mobilerun.config_manager import MobileConfig as MobileConfig
-    from mobilerun.telemetry import print_telemetry_message as print_telemetry_message

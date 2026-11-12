@@ -145,15 +145,3 @@ def ping(**params):
     """Connect to a device and read its UI state once."""
     probe_device(params)
     click.echo("Device is reachable and serving the UI tree.", err=True)
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    '_setup_portal': ('mobilerun.cli.setup', '_setup_portal'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.cli.setup import _setup_portal as _setup_portal
