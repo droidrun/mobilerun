@@ -74,7 +74,9 @@ def test_failed_state_read_invalidates_current_evidence_and_recovers(native_tool
         first = _state("Philadelphia, Verizon Business, US")
         recovered = _state("New York, Example ISP, US")
         provider = SimpleNamespace(
-            get_state=AsyncMock(side_effect=[first, RuntimeError("read failed"), recovered])
+            get_state=AsyncMock(
+                side_effect=[first, RuntimeError("read failed"), recovered]
+            )
         )
         action_ctx = SimpleNamespace(driver=SimpleNamespace(), ui=None)
         agent = FastAgent(
@@ -92,12 +94,19 @@ def test_failed_state_read_invalidates_current_evidence_and_recovers(native_tool
 
         async def respond(_llm, messages, **kwargs):
             requests.append(messages)
-            return ChatResponse(message=ChatMessage(role="assistant", content="Continue"))
+            return ChatResponse(
+                message=ChatMessage(role="assistant", content="Continue")
+            )
 
         ctx = SimpleNamespace(write_event_to_stream=lambda event: None)
         with (
-            patch("mobilerun.agent.fast_agent.fast_agent.acall_with_retries", new=respond),
-            patch("mobilerun.agent.fast_agent.fast_agent.get_usage_from_response", return_value=None),
+            patch(
+                "mobilerun.agent.fast_agent.fast_agent.acall_with_retries", new=respond
+            ),
+            patch(
+                "mobilerun.agent.fast_agent.fast_agent.get_usage_from_response",
+                return_value=None,
+            ),
             patch.dict("os.environ", {"MOBILERUN_STREAM_SCREENSHOTS": "0"}),
         ):
             await agent.handle_llm_input(ctx, FastAgentInputEvent())
