@@ -159,8 +159,10 @@ def convert_api_error(exc):
         from mobilerun.cli.selection import resolve_cloud_credential
 
         credential = resolve_cloud_credential()
-        document["credential"] = credential.source or "login"
-        if status == 403:
+        document["credential"] = credential.source
+        if credential.source is None:
+            hint = "Run `mobilerun auth login` or set MOBILERUN_API_KEY."
+        elif status == 403:
             label = "env key" if credential.source == "env" else "saved sign-in"
             hint = (f"The {label} is valid but not allowed to do this; "
                     "check its scopes or the device owner.")

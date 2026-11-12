@@ -1165,3 +1165,15 @@ def test_env_text_uses_cloud_credential_source(cloud_credential_case):
     assert f"MOBILERUN_API_KEY=set  ({cloud_credential_case.env_source})\n" in result.stdout
     assert "planted-env-key" not in result.output
     assert "planted-saved-token" not in result.output
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_api_error_without_credential_suggests_login(monkeypatch, status):
+    monkeypatch.setattr(selection, "resolve_cloud_credential",
+                        lambda: selection.CloudCredential(None, None, False))
+    request = httpx.Request("GET", "https://example.test/v1/devices")
+    error = APIStatusError("rejected", response=httpx.Response(status, request=request), body={})
+    text, document, _ = convert_api_error(error)
+    assert document["credential"] is None
+    assert text.endswith("Run `mobilerun auth login` or set MOBILERUN_API_KEY.")
+    assert "saved sign-in" not in text
