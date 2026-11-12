@@ -237,12 +237,23 @@ class HelpLayout:
         return self.short_help or " ".join((self.help or "").split("\n\n", 1)[0].split())
 
 
+def _config_path(ctx):
+    from mobilerun.config_manager import ConfigLoader
+
+    try:
+        return ConfigLoader.resolve_path(ctx.params.get("config_path"))
+    except (OSError, ValueError):
+        if ctx.command.name != "doctor":
+            raise
+        return ConfigLoader.get_user_config_path()
+
+
 class Command(HelpLayout, click.Command):
     def invoke(self, ctx):
         ctx.ensure_object(dict)
         ctx.obj["stdout"] = sys.stdout
         ctx.obj["emitted"] = False
-        if "verbose" in ctx.params and ctx.params["verbose"] is None:
+        if ctx.command.name != "completion" and ctx.params.get("verbose") is None:
             parent = ctx.parent
             while parent:
                 if parent.params.get("verbose") is not None:
@@ -259,22 +270,9 @@ class Command(HelpLayout, click.Command):
             # Libraries and OAuth flows may print progress directly.
             with redirect_stdout(sys.stderr):
                 if ctx.command.name != "completion":
-                    from mobilerun.config_manager import ConfigLoader
-
-                    try:
-                        path = ConfigLoader.resolve_path(ctx.params.get("config_path"))
-                    except (OSError, ValueError):
-                        if ctx.command.name != "doctor":
-                            raise
-                        path = ConfigLoader.get_user_config_path()
-                else:
-                    from pathlib import Path
-
-                    from mobilerun.config_manager.credential_paths import USER_CONFIG_DIR
-
-                    path = Path(os.environ.get("MOBILERUN_CONFIG", USER_CONFIG_DIR / "config.yaml"))
-                if ctx.params.get("verbose") is None:
-                    ctx.params["verbose"] = config_debug(path)
+                    path = _config_path(ctx)
+                    if ctx.params.get("verbose") is None:
+                        ctx.params["verbose"] = config_debug(path)
                 configure_logging(bool(ctx.params.get("verbose")), handler)
                 return super().invoke(ctx)
         except (KeyboardInterrupt, asyncio.CancelledError):
