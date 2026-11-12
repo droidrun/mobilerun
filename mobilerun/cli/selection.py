@@ -15,19 +15,29 @@ class CloudCredential:
     value: str | None = field(repr=False)
     source: str | None
     saved_sign_in: bool
+    env_var: str | None = None
 
 
 def resolve_cloud_credential():
     """Resolve the cloud bearer and its source without changing precedence."""
     import os
 
+    from mobilerun_core.connection.cloud import (
+        BEARER_ENV_VAR,
+        LEGACY_BEARER_ENV_VAR,
+        bearer_token_from_env,
+    )
+
     from mobilerun.cli import deviceauth
 
     credentials = deviceauth.load_credentials() or {}
     saved = credentials.get("api_key") or credentials.get("access_token")
-    env_key = os.environ.get("MOBILERUN_CLOUD_API_KEY")
+    env_key = bearer_token_from_env()
     if env_key:
-        return CloudCredential(env_key, "env", bool(saved))
+        return CloudCredential(
+            env_key, "env", bool(saved),
+            BEARER_ENV_VAR if os.environ.get(BEARER_ENV_VAR) else LEGACY_BEARER_ENV_VAR,
+        )
     return CloudCredential(saved, "login" if saved else None, bool(saved))
 
 
@@ -111,7 +121,7 @@ def require_cloud_api_key():
     key = resolve_cloud_api_key()
     if not key:
         raise click.ClickException(
-            "No cloud API key found. Set MOBILERUN_CLOUD_API_KEY or run `mobilerun auth login`."
+            "No cloud API key found. Set MOBILERUN_API_KEY or run `mobilerun auth login`."
         )
     return key
 

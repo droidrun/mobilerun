@@ -1,13 +1,14 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 from click.testing import CliRunner
 
 from mobilerun.cli import device_commands, selection
 from mobilerun.cli.main import cli
 
 
-def test_resolve_cloud_api_key_prefers_cloud_env(monkeypatch, tmp_path):
+def test_resolve_cloud_api_key_prefers_primary_env(monkeypatch, tmp_path):
     from mobilerun.config_manager import credential_paths
 
     monkeypatch.setattr(credential_paths, "OAUTH_CREDENTIAL_DIR", tmp_path)
@@ -15,19 +16,19 @@ def test_resolve_cloud_api_key_prefers_cloud_env(monkeypatch, tmp_path):
         '{"access_token": "saved-token", "auth_url": "https://example.test"}'
     )
     monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "env-token")
-    monkeypatch.setenv("MOBILERUN_API_KEY", "legacy-token")
+    monkeypatch.setenv("MOBILERUN_API_KEY", "primary-token")
 
-    assert selection.resolve_cloud_api_key() == "env-token"
+    assert selection.resolve_cloud_api_key() == "primary-token"
 
 
-def test_resolve_cloud_api_key_ignores_legacy_env(monkeypatch, tmp_path):
+def test_resolve_cloud_api_key_reads_primary_env(monkeypatch, tmp_path):
     from mobilerun.config_manager import credential_paths
 
     monkeypatch.setattr(credential_paths, "OAUTH_CREDENTIAL_DIR", tmp_path)
     monkeypatch.delenv("MOBILERUN_CLOUD_API_KEY", raising=False)
-    monkeypatch.setenv("MOBILERUN_API_KEY", "legacy-token")
+    monkeypatch.setenv("MOBILERUN_API_KEY", "primary-token")
 
-    assert selection.resolve_cloud_api_key() is None
+    assert selection.resolve_cloud_api_key() == "primary-token"
 
 
 def test_resolve_cloud_api_key_reads_saved_credential(monkeypatch, tmp_path):
@@ -116,3 +117,21 @@ def test_local_listing_uses_local_scope(monkeypatch):
     result = CliRunner().invoke(cli, ["device", "list", "-j"])
     assert result.exit_code == 0
     assert '"device_id": "serial"' in result.stdout
+
+
+@pytest.mark.parametrize("primary,legacy,expected", [
+    ("primary-token", "legacy-token", "primary-token"),
+    ("", "legacy-token", "legacy-token"),
+    (None, "legacy-token", "legacy-token"),
+    ("", "", "saved-token"),
+    (None, None, "saved-token"),
+])
+def test_cloud_key_env_order_and_empty_fallback(monkeypatch, primary, legacy, expected):
+    from mobilerun.cli import deviceauth
+
+    for name, value in (("MOBILERUN_API_KEY", primary), ("MOBILERUN_CLOUD_API_KEY", legacy)):
+        monkeypatch.delenv(name, raising=False)
+        if value is not None:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setattr(deviceauth, "load_credentials", lambda: {"api_key": "saved-token"})
+    assert selection.resolve_cloud_api_key() == expected

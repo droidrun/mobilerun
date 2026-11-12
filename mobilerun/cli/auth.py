@@ -269,9 +269,10 @@ def login(
         _login_mobilerun(
             auth_url, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr, browser
         )
-        if resolve_cloud_credential().source == "env":
+        credential = resolve_cloud_credential()
+        if credential.source == "env":
             click.echo(
-                "Warning: MOBILERUN_CLOUD_API_KEY is set and takes precedence over this sign-in; "
+                f"Warning: {credential.env_var} is set and takes precedence over this sign-in; "
                 "unset it to use the sign-in.", err=True,
             )
         return
@@ -322,8 +323,10 @@ def logout(service, verbose):
                 lambda profile: profile.pop(_OAUTH_CREDENTIAL_SLOTS[variant], None)
             )
     console.print(f"Logged out of {service}." if removed else f"Not logged in to {service}.")
-    if service == "mobilerun" and resolve_cloud_credential().source == "env":
-        console.print("MOBILERUN_CLOUD_API_KEY stays active; unset it to stop using the env key.")
+    if service == "mobilerun":
+        credential = resolve_cloud_credential()
+        if credential.source == "env":
+            console.print(f"{credential.env_var} stays active; unset it to stop using the env key.")
 
 
 @auth_cli.command()
@@ -381,7 +384,7 @@ def status(verbose, json_output):
             if row["service"] == "mobilerun":
                 cloud = (
                     "; cloud commands have no credential; run `mobilerun auth login` "
-                    "or set MOBILERUN_CLOUD_API_KEY"
+                    "or set MOBILERUN_API_KEY"
                     if row["cloud_credential"] == "not set"
                     else f"; cloud commands use {row['cloud_credential']}"
                 )

@@ -242,7 +242,8 @@ screenshot, ui, apps, start, and ping.
 ### Environment
 
 For CLI options, flags override environment values, then config values and defaults.
-`MOBILERUN_CLOUD_API_KEY` overrides a saved sign-in; unset it to use the sign-in.
+`MOBILERUN_API_KEY` overrides a saved sign-in; unset it to use the sign-in.
+The legacy `MOBILERUN_CLOUD_API_KEY` is still accepted when `MOBILERUN_API_KEY` is unset or empty.
 Inspect resolved values and sources with `mobilerun env`; it shows secrets only
 as `set` or `not set`. Provider authentication follows the selected provider's
 configuration and credential store. `auth status` always checks the service
@@ -252,7 +253,7 @@ that issued the saved session, even when `MOBILERUN_AUTH_URL` has changed.
 | --- | --- | --- |
 | `MOBILERUN_TARGET` | Default target | `local` |
 | `MOBILERUN_DEVICE` | Default device serial, Portal URL, or cloud id | Configured serial, then local selection |
-| `MOBILERUN_CLOUD_API_KEY` | Cloud authentication | Saved Mobilerun sign-in credential |
+| `MOBILERUN_API_KEY` | Cloud authentication | Saved Mobilerun sign-in credential |
 | `MOBILERUN_API_BASE_URL` | Cloud API endpoint | `https://api.mobilerun.ai/v1` |
 | `MOBILERUN_AUTH_URL` | Mobilerun login endpoint | `https://cloud.mobilerun.ai/api/auth` |
 | `MOBILERUN_CONFIG` | Config file | Platform user config directory |

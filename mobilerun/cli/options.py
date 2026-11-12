@@ -141,7 +141,9 @@ def convert_api_error(exc):
     if exc is None:
         return None
     request = exc.request
-    sensitive = [os.environ.get("MOBILERUN_CLOUD_API_KEY", "")]
+    from mobilerun_core.connection.cloud import BEARER_ENV_VAR, LEGACY_BEARER_ENV_VAR
+
+    sensitive = [os.environ.get(name, "") for name in (BEARER_ENV_VAR, LEGACY_BEARER_ENV_VAR)]
     ctx = click.get_current_context(silent=True)
     if ctx:
         sensitive.extend(ctx.meta.get(SECRETS_KEY, ()))
@@ -177,7 +179,7 @@ def convert_api_error(exc):
         credential = resolve_cloud_credential()
         document["credential"] = credential.source or "login"
         if credential.source == "env":
-            hint = "The key in MOBILERUN_CLOUD_API_KEY was rejected. "
+            hint = f"The key in {credential.env_var} was rejected. "
             if credential.saved_sign_in:
                 hint += "A saved sign-in exists; unset the variable to use it."
             else:

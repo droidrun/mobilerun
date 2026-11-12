@@ -163,7 +163,7 @@ builtins.__import__ = blocked_import
 def test_status_no_credential_and_logout_env(monkeypatch):
     result = CliRunner().invoke(cli, ["auth", "status"])
     assert result.exit_code == 0
-    assert "cloud commands have no credential; run `mobilerun auth login` or set MOBILERUN_CLOUD_API_KEY" in result.stdout
+    assert "cloud commands have no credential; run `mobilerun auth login` or set MOBILERUN_API_KEY" in result.stdout
     assert "use not set" not in result.stdout
     monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "fake-env-key")
     monkeypatch.setattr(deviceauth, "clear_credentials", lambda: False)

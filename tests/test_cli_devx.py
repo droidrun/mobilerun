@@ -938,6 +938,11 @@ def test_completion_never_suggests_command_corrections(words, cword):
     assert "to sign in" not in result.stdout
 
 
+@pytest.fixture(params=["MOBILERUN_API_KEY", "MOBILERUN_CLOUD_API_KEY"])
+def cloud_env_var(request):
+    return request.param
+
+
 @pytest.fixture(
     params=[
         (
@@ -977,11 +982,13 @@ def test_completion_never_suggests_command_corrections(words, cword):
         ),
     ]
 )
-def cloud_credential_case(request, monkeypatch):
+def cloud_credential_case(request, monkeypatch, cloud_env_var):
     env, saved, key, source, has_login, label, env_source, overrides, hint = request.param
+    hint = hint.replace("MOBILERUN_CLOUD_API_KEY", cloud_env_var)
+    monkeypatch.delenv("MOBILERUN_API_KEY", raising=False)
     monkeypatch.delenv("MOBILERUN_CLOUD_API_KEY", raising=False)
     if env is not None:
-        monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", env)
+        monkeypatch.setenv(cloud_env_var, env)
     credentials = {"access_token": saved} if saved else None
     monkeypatch.setattr(deviceauth, "load_credentials", lambda: credentials)
     return SimpleNamespace(
@@ -1134,10 +1141,10 @@ def test_env_json_uses_cloud_credential_source(cloud_credential_case):
     result = CliRunner().invoke(cli, ["env", "-j"])
     assert result.exit_code == 0, result.output
     row = next(
-        row for row in json.loads(result.stdout) if row["variable"] == "MOBILERUN_CLOUD_API_KEY"
+        row for row in json.loads(result.stdout) if row["variable"] == "MOBILERUN_API_KEY"
     )
     assert row == {
-        "variable": "MOBILERUN_CLOUD_API_KEY",
+        "variable": "MOBILERUN_API_KEY",
         "value": "set",
         "source": cloud_credential_case.env_source,
     }
@@ -1148,6 +1155,6 @@ def test_env_json_uses_cloud_credential_source(cloud_credential_case):
 def test_env_text_uses_cloud_credential_source(cloud_credential_case):
     result = CliRunner().invoke(cli, ["env"])
     assert result.exit_code == 0, result.output
-    assert f"MOBILERUN_CLOUD_API_KEY=set  ({cloud_credential_case.env_source})\n" in result.stdout
+    assert f"MOBILERUN_API_KEY=set  ({cloud_credential_case.env_source})\n" in result.stdout
     assert "planted-env-key" not in result.output
     assert "planted-saved-token" not in result.output

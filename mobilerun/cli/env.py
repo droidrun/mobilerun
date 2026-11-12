@@ -43,7 +43,7 @@ def resolved_environment(config_path=None):
     values = {
         "MOBILERUN_TARGET": ("local", "default", False),
         "MOBILERUN_DEVICE": (config.device.serial, config_source if config.device.serial else "not set", False),
-        "MOBILERUN_CLOUD_API_KEY": (
+        "MOBILERUN_API_KEY": (
             cloud_credential.value,
             {"env": "env", "login": "credential file", None: "not set"}[cloud_credential.source],
             True,
@@ -76,7 +76,7 @@ def resolved_environment(config_path=None):
         values[name] = (None, "default", True)
     rows = []
     for name, (value, source, secret) in values.items():
-        if (name != "MOBILERUN_CLOUD_API_KEY" and os.environ.get(name)
+        if (name != "MOBILERUN_API_KEY" and os.environ.get(name)
                 and not (name == "MOBILERUN_CONFIG" and path_source == "flag")):
             value, source = os.environ[name], "env"
         if (name == "MOBILERUN_DEBUG" and ctx and
