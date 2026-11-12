@@ -6,6 +6,37 @@ from ..helpers.coordinate import bounds_to_normalized
 from ..helpers.geometry import rects_overlap
 from .base import TreeFormatter
 
+_DETAIL_TEXTS = (
+    ("description", "contentDescription"),
+    ("hint", "hint"),
+    ("stateDescription", "stateDescription"),
+)
+_DETAIL_FLAGS = (
+    ("selected", "isSelected"),
+    ("focused", "isFocused"),
+    ("editable", "isEditable"),
+    ("showingHint", "isShowingHintText"),
+    ("password", "isPassword"),
+)
+
+
+def _node_details(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Node facts the flat ``text`` drops, for option labels (not screen text).
+
+    Nested so macro snapshots, which read top-level keys, stay unchanged.
+    """
+    # A secret masked in the text may sit unmasked, piece by piece, in these.
+    masked = "[secret:" in str(node.get("text") or "")
+    details: Dict[str, Any] = {
+        key: value.strip()
+        for key, source in _DETAIL_TEXTS
+        if not masked and isinstance(value := node.get(source), str) and value.strip()
+    }
+    details.update(
+        {key: True for key, source in _DETAIL_FLAGS if node.get(source) is True}
+    )
+    return details
+
 
 class IndexedFormatter(TreeFormatter):
     """Format tree in the standard Mobilerun format."""
@@ -177,6 +208,8 @@ class IndexedFormatter(TreeFormatter):
             results.extend(descendants)
 
         self._add_tap_blockers(siblings)
+        # Flattening drops nesting; this keeps which elements a node contains.
+        formatted["descendants"] = len(results) - 1
 
         return results
 
@@ -265,6 +298,8 @@ class IndexedFormatter(TreeFormatter):
         }
         if display_bounds_str is not None:
             formatted["displayBounds"] = display_bounds_str
+        if details := _node_details(node):
+            formatted["details"] = details
         for key in ("isClickable", "isLongClickable", "isEnabled", "isVisibleToUser"):
             if key in node:
                 formatted[key] = node[key]

@@ -410,8 +410,8 @@ def test_text_less_rows_are_named_by_the_text_inside_them():
         ]
     ) == [
         "Click Adaptive Battery, Battery saver",
-        "Click search_action_bar: Search Settings (top of screen)",
-        "Click android:id/icon",
+        "Click Search Settings (top of screen)",
+        "Click icon",
         "Click OK",
     ]
 
@@ -435,7 +435,7 @@ def test_rows_do_not_borrow_text_owned_by_a_smaller_clickable():
             _node(6, "Settings", "900,320,1000,420", clickable=True),
         ]
     ) == [
-        "Click com.google.android.material:id/touch_outside",
+        "Click touch_outside",
         "Click Delete",
         "Click T-Mobile",
         "Click Settings",
@@ -452,7 +452,7 @@ def test_screen_roots_do_not_borrow_page_text():
             _node(3, "Email", "84,600,400,660"),
             _node(4, email, "84,680,996,800", True, email, "EditText"),
         ]
-    ) == ["Click android.widget.FrameLayout", 'Click text field "com.app:id/email"']
+    ) == ["Click unnamed FrameLayout", 'Click text field "email"']
 
 
 def test_labels_name_the_widget_kind_and_its_state():
@@ -572,6 +572,49 @@ def test_ios_switch_state_comes_from_its_value():
             },
         ]
     ) == ['Click switch "Wi-Fi" (on)', 'Click text field "Search"']
+
+
+def test_ios_switch_knob_is_not_offered_twice():
+    def switch(index, text, bounds, value="0"):
+        return {
+            "index": index,
+            "type": "Switch",
+            "className": "Switch",
+            "text": text,
+            "value": value,
+            "bounds": bounds,
+        }
+
+    assert _labels(
+        [
+            switch(3, "Bold Text", "0,620,402,670"),
+            switch(33, "", "305,628,368,662"),
+            switch(34, "", "305,828,368,862"),  # unlabelled and alone: still offered
+        ]
+    ) == ['Click switch "Bold Text" (off)', 'Click switch "unnamed" (off)']
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Gym", 'Click text field "Title" (contains "Gym")'),
+        ("Title", 'Click text field "Title"'),
+        ("", 'Click text field "Title"'),
+    ],
+)
+def test_ios_text_field_shows_what_it_contains(value, expected):
+    assert _labels(
+        [
+            {
+                "index": 1,
+                "type": "TextField",
+                "className": "TextField",
+                "text": "Title",
+                "value": value,
+                "bounds": "0,300,402,350",
+            }
+        ]
+    ) == [expected]
 
 
 def test_borrowed_text_keeps_the_resource_name():
@@ -742,3 +785,551 @@ def test_composite_without_app_opener_keeps_exact_app_launching():
         assert "app_id" in agent.registry.get_signatures()["open_app"]["parameters"]
 
     asyncio.run(run())
+
+
+def _formatted(*nodes):
+    from mobilerun.tools.formatters.indexed_formatter import IndexedFormatter
+
+    formatter = IndexedFormatter()
+    return [formatter._format_node(node, index) for index, node in enumerate(nodes, 1)]
+
+
+def _raw(class_name, text, top, **extra):
+    return {
+        "className": class_name,
+        "text": text,
+        "resourceId": "",
+        "boundsInScreen": {"left": 0, "top": top, "right": 1080, "bottom": top + 100},
+        "isClickable": True,
+        "isEnabled": True,
+        "isVisibleToUser": True,
+        **extra,
+    }
+
+
+def test_labels_use_node_facts_the_screen_text_drops():
+    elements = _formatted(
+        # mobilerun-ios on a real iPhone: typed text, field name as description.
+        _raw("TextField", "Gym", 600, contentDescription="Title", isEditable=True),
+        # Android field showing its hint is empty.
+        _raw(
+            "android.widget.EditText",
+            "Search",
+            800,
+            hint="Search",
+            isShowingHintText=True,
+        ),
+        _raw("android.widget.EditText", "••••", 1000, hint="Password", isPassword=True),
+        _raw(
+            "android.widget.CheckBox",
+            "T",
+            1200,
+            contentDescription="Tuesday",
+            isCheckable=True,
+        ),
+        _raw("android.widget.FrameLayout", "Timers", 2250, isSelected=True),
+    )
+    assert "details" not in _formatted(_raw("android.widget.Button", "OK", 600))[0]
+    assert _labels(elements) == [
+        'Click text field "Title" (contains "Gym")',
+        'Click text field "Search"',
+        'Click text field "Password" (password)',
+        'Click checkbox "T, Tuesday" (unchecked)',
+        "Click Timers (selected, bottom of screen)",
+    ]
+
+
+def test_ios_value_keeps_commas_and_skips_the_placeholder():
+    from mobilerun.tools.ui.ios_provider import _parse_a11y_tree
+
+    elements = _parse_a11y_tree(
+        "Application, 0x1, {{0.0, 0.0}, {402.0, 874.0}}, label: 'Reminders'\n"
+        "  TextField, 0x2, {{16.0, 300.0}, {343.0, 34.0}}, label: 'Address', "
+        "value: Main St, Apt 4\n"
+        "  TextField, 0x3, {{16.0, 400.0}, {343.0, 34.0}}, label: 'Title', "
+        "placeholderValue: 'Enter a title', value: Enter a title\n"
+    )
+    fields = [e for e in elements if e["type"] == "TextField"]
+    assert fields[0]["value"] == "Main St, Apt 4"
+    assert _labels(fields) == [
+        'Click text field "Address" (contains "Main St, Apt 4")',
+        'Click text field "Title"',
+    ]
+
+
+def _ios_local(class_name, text, top, height=60, left=0, right=402, **extra):
+    """A node as mobilerun-ios --local sends it."""
+    return {
+        "className": f"XCUIElementType{class_name}",
+        "text": text,
+        "resourceId": "",
+        "boundsInScreen": {
+            "left": left,
+            "top": top,
+            "right": right,
+            "bottom": top + height,
+        },
+        "isClickable": True,
+        "isEnabled": True,
+        "isVisibleToUser": True,
+        **extra,
+    }
+
+
+def test_real_iphone_switch_is_one_named_option_on_the_knob():
+    elements = _formatted(
+        _ios_local(
+            "Switch", "0", 600, contentDescription="Bold Text", isCheckable=True
+        ),
+        _ios_local("Switch", "0", 606, 48, 305, 368, isCheckable=True),
+    )
+    ctx = _context(elements=elements)
+    options = ctx.state_provider.get_action_candidates(ctx.ui)
+    assert [(o.description, o.action.parameters["index"]) for o in options] == [
+        ('Click switch "Bold Text" (off)', 2)
+    ]
+
+
+def test_real_iphone_fields_show_name_and_contents():
+    assert _labels(
+        _formatted(
+            _ios_local(
+                "TextField", "Gym", 600, contentDescription="Title", isClickable=False
+            ),
+            _ios_local(
+                "TextField",
+                "Title",
+                700,
+                contentDescription="Title",
+                hint="Enter a title",
+                isClickable=False,
+            ),
+            _ios_local(
+                "SearchField",
+                "Bold Text",
+                800,
+                contentDescription="Search",
+                isClickable=False,
+            ),
+            _ios_local("Cell", "XCUIElementTypeCell", 900),
+        )
+    ) == [
+        'Click text field "Title" (contains "Gym")',
+        'Click text field "Title"',
+        'Click search field "Search" (contains "Bold Text")',
+        "Click unnamed Cell",
+    ]
+
+
+def test_cell_and_its_button_with_one_label_are_one_option():
+    assert _labels(
+        _formatted(
+            _ios_local("Other", "Notifications", 600),
+            _ios_local("Other", "Notifications", 600),
+        )
+    ) == ["Click Notifications"]
+
+
+def test_samsung_switch_widget_takes_its_row_name_and_tells_the_row_its_state():
+    switch_id = "android:id/switch_widget"
+    elements = _formatted(
+        {
+            **_raw("android.widget.LinearLayout", "", 600),
+            "boundsInScreen": {"left": 0, "top": 600, "right": 1080, "bottom": 800},
+        },
+        _raw("android.widget.TextView", "Extra brightness", 620, isClickable=False),
+        _raw(
+            "android.widget.TextView",
+            "Hidden summary",
+            640,
+            isClickable=False,
+            isVisibleToUser=False,
+        ),
+        {
+            **_raw(
+                "android.widget.Switch", "", 610, resourceId=switch_id, isCheckable=True
+            ),
+            "boundsInScreen": {"left": 900, "top": 610, "right": 1000, "bottom": 690},
+        },
+    )
+    # The row may open a page of its own, so both stay.
+    assert _labels(elements) == [
+        "Click Extra brightness (off)",
+        'Click switch "Extra brightness" (off)',
+    ]
+
+
+def test_masked_secret_pieces_do_not_reach_labels_through_descriptions():
+    boxes = [
+        _raw(
+            "android.widget.EditText",
+            "[secret:otp]",
+            600 + 120 * i,
+            contentDescription=d,
+            isEditable=True,
+        )
+        for i, d in enumerate("482913")
+    ]
+    labels = _labels(_formatted(*boxes))
+    assert len(labels) == 6 and not any(d in "".join(labels) for d in "482913")
+
+
+def test_platform_state_words_do_not_repeat_the_state():
+    assert _labels(
+        _formatted(
+            _raw(
+                "android.widget.CheckBox",
+                "Sunday",
+                600,
+                isCheckable=True,
+                stateDescription="Not selected",
+            ),
+            _raw("android.widget.SeekBar", "Brightness", 800, stateDescription="83%"),
+        )
+    ) == ['Click checkbox "Sunday" (unchecked)', 'Click slider "Brightness" (83%)']
+
+
+def test_icon_buttons_inside_a_named_button_stay_offered():
+    assert _labels(
+        _formatted(
+            _raw("android.widget.Button", "Profile", 600),
+            {
+                **_raw("android.widget.ImageButton", "", 610),
+                "boundsInScreen": {
+                    "left": 900,
+                    "top": 610,
+                    "right": 1000,
+                    "bottom": 690,
+                },
+            },
+        )
+    ) == ['Click button "Profile"', 'Click button "unnamed"']
+
+
+def test_wrapper_without_options_does_not_hide_its_clickable_twin():
+    assert _labels(
+        _formatted(
+            _raw("android.view.View", "Sign in", 600, isClickable=False),
+            _raw("android.view.View", "Sign in", 600),
+        )
+    ) == ["Click Sign in"]
+
+
+def test_one_option_per_tap_target_keeps_the_named_one():
+    assert _labels(
+        _formatted(
+            _ios_local(
+                "Cell", "XCUIElementTypeCell", 600, resourceId="ENHANCE_TEXT_LEGIBILITY"
+            ),
+            _ios_local("Button", "Bold Text", 600),
+        )
+    ) == ['Click button "Bold Text"']
+
+
+@pytest.mark.parametrize(
+    "knob", [{"isEnabled": False}, {"isClickable": False}, {"isVisibleToUser": False}]
+)
+def test_row_switch_stays_when_its_knob_cannot_be_offered(knob):
+    assert _labels(
+        _formatted(
+            _ios_local(
+                "Switch", "0", 600, contentDescription="Bold Text", isCheckable=True
+            ),
+            _ios_local("Switch", "0", 606, 48, 305, 368, isCheckable=True, **knob),
+        )
+    ) == ['Click switch "Bold Text" (off)']
+
+
+def test_knob_sticking_out_of_its_row_still_takes_the_row_name():
+    assert _labels(
+        _formatted(
+            _ios_local(
+                "Switch",
+                "1",
+                646,
+                29,
+                40,
+                400,
+                contentDescription="Bold Text",
+                isCheckable=True,
+                isChecked=True,
+            ),
+            _ios_local(
+                "Switch", "1", 646, 29, 339, 402, isCheckable=True, isChecked=True
+            ),
+        )
+    ) == ['Click switch "Bold Text" (on)']
+
+
+def test_android_options_named_zero_and_one_keep_their_names():
+    assert _labels(
+        _formatted(
+            *(
+                _raw(
+                    "android.widget.RadioButton",
+                    str(n),
+                    600 + 120 * n,
+                    isCheckable=True,
+                )
+                for n in range(3)
+            )
+        )
+    ) == [f'Click radio button "{n}" (unchecked)' for n in range(3)]
+
+
+def test_text_ending_in_a_dot_is_kept_without_a_class_name():
+    assert _labels([{"index": 1, "text": "Done.", "bounds": "0,600,1080,700"}]) == [
+        "Click Done."
+    ]
+
+
+def test_masking_a_secret_piece_also_masks_its_description():
+    from mobilerun.tools.driver.secret_safe import SecretRedactor
+
+    redactor = SecretRedactor()
+    redactor.register("otp", "482913")
+    tree = {
+        "children": [
+            {
+                "className": "android.widget.EditText",
+                "text": d,
+                "contentDescription": d,
+                "isEditable": True,
+                "children": [],
+            }
+            for d in "482913"
+        ]
+    }
+    masked = redactor.redact_ui_tree(tree)
+    assert all(
+        child["text"] == child["contentDescription"] == "[secret:otp]"
+        for child in masked["children"]
+    )
+
+
+def _tree(*nodes):
+    """Format a nested raw tree the way the provider does (keeps nesting)."""
+    from mobilerun.tools.formatters.indexed_formatter import IndexedFormatter
+
+    formatter = IndexedFormatter()
+    counter = [1]
+    return [e for node in nodes for e in formatter._flatten_with_index(node, counter)]
+
+
+def test_text_is_only_borrowed_from_nested_elements():
+    row = {
+        **_raw("android.widget.LinearLayout", "", 1884),
+        "boundsInScreen": {"left": 0, "top": 1884, "right": 1080, "bottom": 2205},
+        "children": [_raw("android.widget.TextView", "09:30", 1900, isClickable=False)],
+    }
+    # The tab bar is drawn over the row's lower part but is not inside it.
+    tab = {
+        **_raw("android.widget.LinearLayout", "", 2011, isClickable=False),
+        "boundsInScreen": {"left": 235, "top": 2011, "right": 370, "bottom": 2147},
+        "children": [_raw("android.widget.TextView", "Alarm", 2020, isClickable=False)],
+    }
+    tab["children"][0]["boundsInScreen"] = {
+        "left": 240,
+        "top": 2020,
+        "right": 360,
+        "bottom": 2100,
+    }
+    assert _labels(_tree(row, tab)) == ["Click 09:30"]
+
+
+def test_ios_cell_wrapping_its_own_controls_is_not_an_option():
+    cell = {
+        **_ios_local(
+            "Cell",
+            "XCUIElementTypeCell",
+            146,
+            29,
+            20,
+            420,
+            resourceId="ENHANCE_TEXT_LEGIBILITY",
+        ),
+        "children": [
+            _ios_local("Button", "Bold Text", 146, 29, 40, 300),
+            {
+                **_ios_local(
+                    "Switch",
+                    "0",
+                    146,
+                    29,
+                    40,
+                    400,
+                    contentDescription="Bold Text",
+                    isCheckable=True,
+                ),
+                "children": [
+                    _ios_local("Switch", "0", 146, 29, 339, 402, isCheckable=True)
+                ],
+            },
+        ],
+    }
+    for node in (cell, *cell["children"], cell["children"][1]["children"][0]):
+        node["boundsInScreen"]["top"] += 500
+        node["boundsInScreen"]["bottom"] += 500
+    assert _labels(_tree(cell)) == [
+        'Click button "Bold Text"',
+        'Click switch "Bold Text" (off)',
+    ]
+
+
+def test_ios_cell_holding_a_switch_is_not_named_by_its_value():
+    cell = {
+        **_ios_local("Cell", "1", 600, 60, 20, 420),
+        "children": [
+            _ios_local("StaticText", "Snooze", 610, 40, 40, 200, isClickable=False),
+            _ios_local(
+                "Switch",
+                "1",
+                610,
+                40,
+                339,
+                402,
+                contentDescription="Snooze",
+                isCheckable=True,
+                isChecked=True,
+            ),
+        ],
+    }
+    assert _labels(_tree(cell)) == ["Click Snooze (on)", 'Click switch "Snooze" (on)']
+
+
+def test_field_keeps_its_label_over_a_cell_with_the_same_bounds():
+    cell = {
+        **_ios_local("Cell", "XCUIElementTypeCell", 600),
+        "children": [
+            _ios_local(
+                "TextField", "Gym", 600, contentDescription="Title", isClickable=False
+            )
+        ],
+    }
+    assert _labels(_tree(cell)) == ['Click text field "Title" (contains "Gym")']
+
+
+def test_legacy_ios_split_secret_in_values_is_masked():
+    from mobilerun.tools.driver.secret_safe import SecretRedactor
+
+    redactor = SecretRedactor()
+    redactor.register("otp", "482915")
+    elements = [
+        {
+            "index": i,
+            "type": "TextField",
+            "className": "TextField",
+            "text": "",
+            "value": d,
+            "bounds": f"{20 + 60 * i},600,{70 + 60 * i},660",
+            "children": [],
+        }
+        for i, d in enumerate("482915", 1)
+    ]
+    state = UIState(
+        elements=elements,
+        formatted_text="",
+        focused_text="",
+        phone_state={},
+        screen_width=402,
+        screen_height=874,
+    )
+    masked = redactor.redact_ui_state(state)
+    labels = [
+        o.description
+        for o in StateProvider.get_action_candidates(
+            StateProvider.__new__(StateProvider), masked
+        )
+    ]
+    assert labels and not any(d in "".join(labels) for d in "482915")
+
+
+def test_unlabelled_ios_switch_takes_the_label_beside_it():
+    row = {
+        **_ios_local(
+            "Other", "XCUIElementTypeOther", 600, 40, 0, 402, isClickable=False
+        ),
+        "children": [
+            _ios_local("StaticText", "Dark mode", 605, 30, 16, 200),
+            _ios_local("Switch", "0", 604, 31, 330, 381, isCheckable=True),
+        ],
+    }
+    assert _labels(_tree(row)) == ["Click Dark mode", 'Click switch "Dark mode" (off)']
+
+
+def test_knob_of_an_off_screen_ios_row_is_not_offered():
+    row = {
+        **_ios_local(
+            "Switch",
+            "0",
+            0,
+            0,
+            0,
+            0,
+            contentDescription="Reduce Bright Effects",
+            isCheckable=True,
+        ),
+        "children": [_ios_local("Switch", "0", 616, 28, 0, 63, isCheckable=True)],
+    }
+    row["boundsInScreen"] = {"left": 0, "top": 0, "right": 0, "bottom": 0}
+    assert _labels(_tree(row)) == []
+
+
+def test_same_bounds_twin_keeps_its_long_press():
+    row = {
+        **_raw("android.widget.LinearLayout", "", 600, contentDescription="Alice"),
+        "children": [
+            _raw("android.view.View", "", 600, isClickable=False, isLongClickable=True)
+        ],
+    }
+    ctx = _context(elements=_tree(row))
+    options = ctx.state_provider.get_action_candidates(ctx.ui)
+    assert [(o.action.name, o.action.parameters["index"]) for o in options] == [
+        ("click", 1),
+        ("long_press", 2),
+    ]
+
+
+def test_ios_tab_value_does_not_leak_into_its_name():
+    assert _labels(
+        _formatted(
+            _ios_local(
+                "Button", "1", 2250, contentDescription="Alarms", isSelected=True
+            ),
+            _ios_local("Button", "1", 600, contentDescription="1"),  # a key "1"
+        )
+    ) == ['Click button "Alarms" (selected, bottom of screen)', 'Click button "1"']
+
+
+def test_ios_row_title_button_is_not_offered_beside_the_knob():
+    row = {
+        **_ios_local(
+            "Switch",
+            "0",
+            646,
+            29,
+            40,
+            400,
+            contentDescription="Bold Text",
+            isCheckable=True,
+        ),
+        "children": [
+            _ios_local("Button", "Bold Text", 649, 22, 40, 111),
+            _ios_local("Switch", "0", 646, 29, 339, 402, isCheckable=True),
+        ],
+    }
+    assert _labels(_tree(row)) == ['Click switch "Bold Text" (off)']
+
+
+def test_legacy_ios_cells_labelled_zero_and_one_keep_their_names():
+    from mobilerun.tools.ui.ios_provider import _parse_a11y_tree
+
+    elements = _parse_a11y_tree(
+        "Application, 0x1, {{0.0, 0.0}, {402.0, 874.0}}, label: 'Picker'\n"
+        + "".join(
+            f"  Cell, 0x{n + 2}, {{{{0.0, {300 + 60 * n}.0}}, {{402.0, 50.0}}}}, label: '{n}'\n"
+            for n in range(3)
+        )
+    )
+    cells = [e for e in elements if e["type"] == "Cell"]
+    assert _labels(cells) == ["Click 0", "Click 1", "Click 2"]
