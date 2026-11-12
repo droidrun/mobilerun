@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+import click
 import httpx
 import requests
 from async_adbutils import AdbDevice, adb
@@ -176,7 +177,7 @@ async def check_adb(debug: bool) -> CheckResult:
         return CheckResult(
             "ADB",
             Status.FAIL,
-            str(e),
+            e.message if isinstance(e, click.ClickException) else str(e),
         )
 
 

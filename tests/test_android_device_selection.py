@@ -323,5 +323,7 @@ def test_macro_replay_when_adb_is_unavailable(monkeypatch, tmp_path, dry_run):
         assert devices == [None]
     else:
         assert result.exit_code == 1
-        assert "adb server not running" in result.output
+        from mobilerun.cli.options import ADB_HINT
+
+        assert ADB_HINT in result.output
         assert devices == []
