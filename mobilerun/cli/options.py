@@ -190,30 +190,38 @@ def convert_api_error(exc):
     return text, document, diagnostic
 
 
+_REMOVED_FLAGS = {
+    "--base_url": "-u/--llm-url", "--api_base": "-u/--llm-url",
+    "--cloud": "-t cloud", "--ios": "-P ios", "--debug": "-v",
+    "--device-id": "-d", "--steps": "-s/--max-steps",
+    "-pv": "--portal-version", "--control-backend": "--backend",
+}
+
 class HelpLayout:
     """Keep shared flags and complete command summaries consistent."""
 
-    def __init__(self, *args, **kwargs):
+    removed_flags = _REMOVED_FLAGS
+    dash_hint = False
+
+    def __init__(self, *args, dash_hint=False, removed_flags=None, **kwargs):
+        self.dash_hint = dash_hint
+        if removed_flags is not None:
+            self.removed_flags = removed_flags
         kwargs.setdefault("context_settings", CONTEXT_SETTINGS)
         super().__init__(*args, **kwargs)
 
     def parse_args(self, ctx, args):
-        if not ctx.resilient_parsing:
-            for arg in args:
-                if arg == "--":
-                    break
-                flag = arg.split("=", 1)[0]
-                replacement = _REMOVED_FLAGS.get(flag)
-                if flag == "--path" and self.name == "setup":
-                    replacement = "--apk"
-                if replacement:
-                    raise click.UsageError(
-                        f"Removed option: {flag}. Use {replacement} instead.", ctx
-                    )
+        legacy_cluster = "-pv" in args
         try:
             return super().parse_args(ctx, args)
         except click.NoSuchOption as exc:
-            if self.name in {"tap", "type", "swipe", "long-press"}:
+            flag = "-pv" if exc.option_name in {"p", "-p"} and legacy_cluster else exc.option_name
+            replacement = self.removed_flags.get(flag)
+            if replacement:
+                raise click.UsageError(
+                    f"Removed option: {flag}. Use {replacement} instead.", ctx,
+                ) from None
+            if self.dash_hint:
                 exc.message += "\nPut `--` before arguments that start with a dash."
             raise
 
@@ -301,13 +309,6 @@ class Command(HelpLayout, click.Command):
             logger.handlers, level, logger.propagate = previous
             logger.setLevel(level)
 
-
-_REMOVED_FLAGS = {
-    "--base_url": "-u/--llm-url", "--api_base": "-u/--llm-url",
-    "--cloud": "-t cloud", "--ios": "-P ios", "--debug": "-v",
-    "--device-id": "-d", "--steps": "-s/--max-steps",
-    "-pv": "--portal-version", "--control-backend": "--backend",
-}
 
 _RENAMED_COMMANDS = {
     "devices": ("mobilerun", "device", "list"),

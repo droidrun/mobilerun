@@ -10,6 +10,7 @@ from mobilerun.cli.device_pair import adb_connect_succeeded
 from mobilerun.cli.options import (
     NO_CLOUD_DEVICES_HINT,
     NO_LOCAL_DEVICES_HINT,
+    Command,
     api_url_option,
     config_option,
     convert_api_error,
@@ -113,7 +114,7 @@ async def disconnect(serial, verbose):
     )
 
 
-@device_cli.command()
+@device_cli.command(removed_flags={**Command.removed_flags, "--path": "--apk"})
 @device_option
 @config_option
 @verbose_option

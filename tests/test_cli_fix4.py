@@ -251,3 +251,20 @@ def test_doctor_reports_library_adb_error(monkeypatch):
     result = asyncio.run(doctor.check_adb(False))
     assert result.status == doctor.Status.FAIL
     assert result.message == "library startup failed"
+
+
+@pytest.mark.parametrize("args", [
+    ["device", "type", "--", "--debug"],
+    ["device", "type", "--device", "--debug", "text"],
+])
+def test_removed_flag_spelling_can_be_a_value(monkeypatch, args):
+    from mobilerun.cli import device_commands
+
+    @contextmanager
+    def driver(params):
+        yield Mock()
+
+    monkeypatch.setattr(device_commands, "device_driver", driver)
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 0, result.output
+    assert "Removed option" not in result.output
