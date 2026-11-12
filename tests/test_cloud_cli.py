@@ -6,27 +6,37 @@ from mobilerun.cli import device_commands, selection
 from mobilerun.cli.main import cli
 
 
-def test_resolve_cloud_api_key_prefers_cloud_env(monkeypatch, tmp_path):
+def _saved_credential(monkeypatch, tmp_path):
     from mobilerun.config_manager import credential_paths
 
     monkeypatch.setattr(credential_paths, "OAUTH_CREDENTIAL_DIR", tmp_path)
     (tmp_path / "mobilerun-cloud.json").write_text(
         '{"access_token": "saved-token", "auth_url": "https://example.test"}'
     )
-    monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "env-token")
-    monkeypatch.setenv("MOBILERUN_API_KEY", "legacy-token")
-
-    assert selection.resolve_cloud_api_key() == "env-token"
 
 
-def test_resolve_cloud_api_key_ignores_legacy_env(monkeypatch, tmp_path):
-    from mobilerun.config_manager import credential_paths
+def test_resolve_cloud_api_key_prefers_new_env(monkeypatch, tmp_path):
+    _saved_credential(monkeypatch, tmp_path)
+    monkeypatch.setenv("MOBILERUN_API_KEY", "new-token")
+    monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "old-token")
 
-    monkeypatch.setattr(credential_paths, "OAUTH_CREDENTIAL_DIR", tmp_path)
-    monkeypatch.delenv("MOBILERUN_CLOUD_API_KEY", raising=False)
-    monkeypatch.setenv("MOBILERUN_API_KEY", "legacy-token")
+    assert selection.resolve_cloud_api_key() == "new-token"
 
-    assert selection.resolve_cloud_api_key() is None
+
+def test_resolve_cloud_api_key_accepts_old_env(monkeypatch, tmp_path):
+    _saved_credential(monkeypatch, tmp_path)
+    monkeypatch.delenv("MOBILERUN_API_KEY", raising=False)
+    monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "old-token")
+
+    assert selection.resolve_cloud_api_key() == "old-token"
+
+
+def test_resolve_cloud_api_key_empty_new_env_falls_back(monkeypatch, tmp_path):
+    _saved_credential(monkeypatch, tmp_path)
+    monkeypatch.setenv("MOBILERUN_API_KEY", "")
+    monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "old-token")
+
+    assert selection.resolve_cloud_api_key() == "old-token"
 
 
 def test_resolve_cloud_api_key_reads_saved_credential(monkeypatch, tmp_path):
@@ -54,6 +64,15 @@ def test_cloud_uuid_requires_credential_without_falling_back_to_adb(monkeypatch)
     with pytest.raises(click.ClickException, match="No cloud API key"):
         with device_commands.device_driver({"device": "123e4567-e89b-12d3-a456-426614174000", "api_url": "https://example.test/v1"}):
             pass
+
+
+def test_devices_cloud_missing_key_exits_nonzero(monkeypatch):
+    monkeypatch.setattr(selection, "resolve_cloud_api_key", lambda: None)
+
+    result = CliRunner().invoke(cli, ["device", "list", "-t", "cloud"])
+
+    assert result.exit_code != 0
+    assert "MOBILERUN_API_KEY" in result.output
 
 
 def test_cloud_facade_receives_url_key_and_id(monkeypatch):
