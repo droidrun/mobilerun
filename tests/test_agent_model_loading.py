@@ -681,6 +681,38 @@ def test_selector_only_initialization_does_not_load_llms(monkeypatch, caplog):
     load.assert_not_called()
 
 
+def test_selector_only_rejects_structured_output_without_an_llm(monkeypatch):
+    load = Mock()
+    monkeypatch.setattr(droid_agent, "load_agent_llms", load)
+    selector = StubSelector(select=AsyncMock())
+    with pytest.raises(ValueError, match="output_model needs an LLM"):
+        MobileAgent("Select", action_selectors=selector, output_model=_Output)
+    load.assert_not_called()
+
+
+def test_selector_dict_uses_its_llm_for_structured_output(monkeypatch):
+    llm = MockLLM()
+    monkeypatch.setattr(droid_agent, "load_agent_llms", Mock())
+    agent = MobileAgent(
+        "Select",
+        action_selectors={"fast_agent": LlamaIndexLLMSelector(llm)},
+        output_model=_Output,
+    )
+    assert agent.structured_output_llm is llm
+
+
+def test_selector_with_config_loads_structured_output_llm(monkeypatch):
+    llm = MockLLM()
+    load = Mock(return_value={"app_opener": llm, "structured_output": llm})
+    monkeypatch.setattr(droid_agent, "load_agent_llms", load)
+    selector = StubSelector(select=AsyncMock(), requires_action_llm=False)
+    agent = MobileAgent(
+        "Select", config=MobileConfig(), action_selectors=selector, output_model=_Output
+    )
+    assert agent.structured_output_llm is llm
+    assert load.call_args.kwargs["output_model"] is _Output
+
+
 def test_existing_workflow_options_still_reach_model_loading(monkeypatch):
     load = Mock(return_value={"fast_agent": MockLLM(), "app_opener": MockLLM()})
     monkeypatch.setattr(droid_agent, "load_agent_llms", load)
@@ -863,7 +895,7 @@ def test_action_selector_dictionary_works_without_config(monkeypatch, decision):
     assert agent.fast_agent_llm is (None if decision else model)
     assert agent.app_opener_llm is None
     assert agent.manager_llm is None
-    assert agent.structured_output_llm is None
+    assert agent.structured_output_llm is (None if decision else model)
     load.assert_not_called()
 
 

@@ -495,6 +495,17 @@ class MobileAgent(Workflow):
         if llms is None and not isinstance(action_selectors, dict):
             llms = action_selector.shared_llm if action_selector is not None else None
         selector_only = action_selector is not None and llms is None and config is None
+        selector_llm = action_selector.shared_llm if selector_only else None
+        if (
+            selector_only
+            and output_model is not None
+            and selector_llm is None
+            and not self._using_external_agent
+        ):
+            raise ValueError(
+                "output_model needs an LLM to extract the structured output. "
+                "Pass 'llms' or 'config' along with the action selector."
+            )
         if not self._using_external_agent and not selector_only:
             if llms is None:
                 if config is None:
@@ -538,7 +549,9 @@ class MobileAgent(Workflow):
             self.executor_llm = None
             self.fast_agent_llm = None
             self.app_opener_llm = None
-            self.structured_output_llm = None
+            self.structured_output_llm = (
+                None if self._using_external_agent else selector_llm
+            )
 
         if not self._using_external_agent and self.action_selector is None:
             self.action_selector = LlamaIndexLLMSelector(
