@@ -47,11 +47,15 @@ def test_create_driver_passes_portal_mode(monkeypatch):
         ),
     )
     from mobilerun_core_local.driver import android
+
     monkeypatch.setattr(android, "AndroidDriver", FakeAndroidDriver)
 
     async def connect():
         selected = await selection.select_device()
-        return await selection._native_driver(selected, selected.config, "https://example.test/v1")
+        return await selection._native_driver(
+            selected, selected.config, "https://example.test/v1"
+        )
+
     driver = asyncio.run(connect())
 
     assert isinstance(driver, FakeAndroidDriver)
@@ -91,14 +95,16 @@ def test_create_driver_disabled_portal_mode_skips_auto_setup(monkeypatch):
         ),
     )
     from mobilerun_core_local.driver import android
+
     monkeypatch.setattr(android, "AndroidDriver", FakeAndroidDriver)
-    monkeypatch.setattr(
-        android.portal, "ensure_portal_ready", fake_ensure_portal_ready
-    )
+    monkeypatch.setattr(android.portal, "ensure_portal_ready", fake_ensure_portal_ready)
 
     async def connect():
         selected = await selection.select_device()
-        return await selection._native_driver(selected, selected.config, "https://example.test/v1")
+        return await selection._native_driver(
+            selected, selected.config, "https://example.test/v1"
+        )
+
     asyncio.run(connect())
 
     assert setup_calls == []

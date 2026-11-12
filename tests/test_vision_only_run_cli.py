@@ -21,7 +21,8 @@ class RunCliVisionOnlyTest(unittest.TestCase):
                     "run",
                     "Check Wi-Fi",
                     "--vision-only",
-                    "--platform", "ios",
+                    "--platform",
+                    "ios",
                     "--backend",
                     "visual-remote",
                     "--device",
@@ -106,7 +107,9 @@ class RunCliVisionOnlyTest(unittest.TestCase):
                 return_value=MobileConfig(),
             ),
             patch("mobilerun.cli.run.MobileAgent", FakeAgent),
-            patch("mobilerun.cli.selection.discover_ios_device", AsyncMock()) as discover,
+            patch(
+                "mobilerun.cli.selection.discover_ios_device", AsyncMock()
+            ) as discover,
         ):
             success = asyncio.run(
                 run_command(

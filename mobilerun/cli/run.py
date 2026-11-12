@@ -88,7 +88,9 @@ async def _run_task(
     if config.logging.rich_text:
         cloud_text = Text()
         cloud_text.append("✨ Try Mobilerun Cloud: ", style="bold cyan")
-        cloud_text.append("https://cloud.mobilerun.ai/sign-in", style="bold blue underline")
+        cloud_text.append(
+            "https://cloud.mobilerun.ai/sign-in", style="bold blue underline"
+        )
         cloud_panel = Panel(
             cloud_text,
             border_style="cyan",
@@ -151,7 +153,9 @@ async def _run_task(
         if device_id is not None:
             config.device.device_id = device_id
 
-        if (config.device.control_backend or "").strip().lower() == VISUAL_REMOTE_CONNECTION:
+        if (
+            config.device.control_backend or ""
+        ).strip().lower() == VISUAL_REMOTE_CONNECTION:
             _force_screenshot_only_vision(config)
             logger.debug("Control backend visual-remote forces screenshot-only vision")
 
@@ -181,7 +185,9 @@ async def _run_task(
             if selection.backend == "cloud":
                 is_cloud = True
                 if tcp:
-                    raise click.UsageError("--tcp is only supported for local Android devices")
+                    raise click.UsageError(
+                        "--tcp is only supported for local Android devices"
+                    )
                 injected_driver = await _native_driver(selection, config, api_url)
                 # CloudDriver supplies Android-shaped trees for every platform.
                 config.device.platform = "android"
@@ -194,7 +200,9 @@ async def _run_task(
         # STEP 2: Initialize MobileAgent with config
         # ================================================================
 
-        mode = "planning with reasoning" if config.agent.reasoning else "direct execution"
+        mode = (
+            "planning with reasoning" if config.agent.reasoning else "direct execution"
+        )
         logger.info(f"🤖 Agent mode: {mode}")
         logger.info(
             f"👁️  Vision settings: Manager={config.agent.manager.vision}, "
@@ -249,7 +257,9 @@ async def _run_task(
 
     finally:
         if not is_cloud:
-            await _cleanup_android_keyboard(config, getattr(droid_agent, "android_serial", None))
+            await _cleanup_android_keyboard(
+                config, getattr(droid_agent, "android_serial", None)
+            )
 
 
 async def run_command(*args, **kwargs) -> bool:
@@ -261,7 +271,9 @@ async def run_command(*args, **kwargs) -> bool:
         return False
 
 
-async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = None) -> None:
+async def _cleanup_android_keyboard(
+    config: MobileConfig, serial: str | None = None
+) -> None:
     platform = (config.device.platform or "").lower()
     control_backend = (config.device.control_backend or "").lower()
     if platform == "ios" or control_backend == VISUAL_REMOTE_CONNECTION:

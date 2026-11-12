@@ -74,7 +74,9 @@ async def _setup_portal(
 
         device_obj = await adb.device(device)
         if not device_obj:
-            console.print(f"[bold red]Error:[/] Could not get device object for {device}")
+            console.print(
+                f"[bold red]Error:[/] Could not get device object for {device}"
+            )
             return False
 
         # CLI-specific options: path, specific_version, latest
@@ -101,7 +103,9 @@ async def _setup_portal(
                     "\n[bold green]Setup complete![/] The Mobilerun Portal is now installed and ready to use."
                 )
             else:
-                console.print("[bold red]Setup failed.[/] Run 'mobilerun doctor' for diagnostics.")
+                console.print(
+                    "[bold red]Setup failed.[/] Run 'mobilerun doctor' for diagnostics."
+                )
             return bool(success)
 
         # Install from explicit path/version/latest
@@ -145,14 +149,20 @@ async def _setup_portal(
                     "[yellow]Opening accessibility settings for manual configuration...[/]"
                 )
 
-                await device_obj.shell("am start -a android.settings.ACCESSIBILITY_SETTINGS")
+                await device_obj.shell(
+                    "am start -a android.settings.ACCESSIBILITY_SETTINGS"
+                )
 
-                console.print("\n[yellow]Please complete the following steps on your device:[/]")
+                console.print(
+                    "\n[yellow]Please complete the following steps on your device:[/]"
+                )
                 console.print(
                     f"1. Find [bold]{PORTAL_PACKAGE_NAME}[/] in the accessibility services list"
                 )
                 console.print("2. Tap on the service name")
-                console.print("3. Toggle the switch to [bold]ON[/] to enable the service")
+                console.print(
+                    "3. Toggle the switch to [bold]ON[/] to enable the service"
+                )
                 console.print("4. Accept any permission dialogs that appear")
 
                 console.print(

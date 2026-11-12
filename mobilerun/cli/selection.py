@@ -33,7 +33,8 @@ def resolve_cloud_api_key():
 
 def core_client(api_url=DEFAULT_API_URL, *, cloud=False):
     return mobilerun_core.Mobilerun(
-        bearer=require_cloud_api_key() if cloud else resolve_cloud_api_key(), base_url=api_url
+        bearer=require_cloud_api_key() if cloud else resolve_cloud_api_key(),
+        base_url=api_url,
     )
 
 
@@ -117,17 +118,30 @@ async def _native_driver(selection, config, api_url):
     from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 
     if selection.backend == "cloud":
-        driver = CloudDriver(device_id=selection.device, api_key=require_cloud_api_key(), base_url=api_url)
+        driver = CloudDriver(
+            device_id=selection.device,
+            api_key=require_cloud_api_key(),
+            base_url=api_url,
+        )
     elif selection.backend == "local-ios-http":
-        driver = await create_ios_driver(selection.device, token=portal_token(selection))
+        driver = await create_ios_driver(
+            selection.device, token=portal_token(selection)
+        )
     elif selection.backend == "local-android-http":
-        driver = create_android_portal_http_driver(selection.device, portal_token(selection))
+        driver = create_android_portal_http_driver(
+            selection.device, portal_token(selection)
+        )
     else:
         if config.device.auto_setup and config.device.portal_mode != "disabled":
             device = await adb.device(serial=selection.device)
-            await ensure_portal_ready(device, debug=False, **portal_version_kwargs(ensure_portal_ready))
-        driver = AndroidDriver(serial=selection.device, use_tcp=config.device.use_tcp,
-                               portal_mode=config.device.portal_mode)
+            await ensure_portal_ready(
+                device, debug=False, **portal_version_kwargs(ensure_portal_ready)
+            )
+        driver = AndroidDriver(
+            serial=selection.device,
+            use_tcp=config.device.use_tcp,
+            portal_mode=config.device.portal_mode,
+        )
     await driver.connect()
     return driver
 
@@ -135,10 +149,15 @@ async def _native_driver(selection, config, api_url):
 async def teardown_native_driver(driver):
     """Disable the framework keyboard after macro replay on local Android."""
     from mobilerun_core_local.driver.android import AndroidDriver
-    from mobilerun_core_local.driver.android.portal import PORTAL_PACKAGE_NAME, portal_ime_id
+    from mobilerun_core_local.driver.android.portal import (
+        PORTAL_PACKAGE_NAME,
+        portal_ime_id,
+    )
 
     if isinstance(driver, AndroidDriver) and driver.device:
         try:
-            await driver.device.shell(f"ime disable {portal_ime_id(PORTAL_PACKAGE_NAME)}")
+            await driver.device.shell(
+                f"ime disable {portal_ime_id(PORTAL_PACKAGE_NAME)}"
+            )
         except Exception:
             pass

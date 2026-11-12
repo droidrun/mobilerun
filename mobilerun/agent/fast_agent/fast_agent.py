@@ -160,8 +160,7 @@ class FastAgent(Workflow):
         self.state_provider = state_provider
         self.save_trajectory = save_trajectory
         self._stream_screenshots = (
-            os.environ.get("MOBILERUN_STREAM_SCREENSHOTS")
-            or ""
+            os.environ.get("MOBILERUN_STREAM_SCREENSHOTS") or ""
         ).lower() in ("1", "true")
         self.shared_state = shared_state
         self.output_model = output_model

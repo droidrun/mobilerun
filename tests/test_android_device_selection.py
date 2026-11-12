@@ -167,6 +167,7 @@ def test_setup_uses_android_serial(adb_devices, monkeypatch):
 def test_device_command_with_multiple_devices_raises_click_error(adb_devices):
     from mobilerun.cli.device_commands import device_driver
     from mobilerun.cli.options import DEFAULT_API_URL
+
     _set(adb_devices, ("emulator-5554", "device"), ("emulator-5556", "device"))
     with pytest.raises(click.ClickException, match="emulator-5554, emulator-5556"):
         with device_driver({"api_url": DEFAULT_API_URL}):
@@ -178,11 +179,14 @@ def test_device_command_uses_single_online_device(adb_devices, monkeypatch):
 
     from mobilerun.cli.device_commands import device_driver
     from mobilerun.cli.options import DEFAULT_API_URL
+
     _set(adb_devices, ("emulator-5556", "unauthorized"), ("emulator-5554", "device"))
     serials = []
+
     def connect(self, serial, **kwargs):
         serials.append(serial)
         return object()
+
     monkeypatch.setattr(mobilerun_core.Mobilerun, "connect", connect)
     with device_driver({"api_url": DEFAULT_API_URL}):
         pass

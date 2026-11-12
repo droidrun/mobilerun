@@ -131,7 +131,9 @@ async def check_sdk_version(debug: bool) -> CheckResult:
         return CheckResult("SDK Version", Status.PASS, f"{current} (up to date)")
 
 
-async def check_config(debug: bool, config_path: str | None = None) -> tuple[CheckResult, Any]:
+async def check_config(
+    debug: bool, config_path: str | None = None
+) -> tuple[CheckResult, Any]:
     """Check config file exists and loads."""
     from mobilerun.config_manager import ConfigLoader
     from mobilerun.config_manager.loader import OutdatedConfigError
@@ -140,7 +142,12 @@ async def check_config(debug: bool, config_path: str | None = None) -> tuple[Che
         path = ConfigLoader.resolve_path(config_path)
         existed = path.exists()
         config = ConfigLoader.load(config_path)
-        return CheckResult("Config", Status.PASS, str(path) + ("" if existed else " (created)")), config
+        return (
+            CheckResult(
+                "Config", Status.PASS, str(path) + ("" if existed else " (created)")
+            ),
+            config,
+        )
     except OutdatedConfigError:
         return (
             CheckResult(
@@ -652,7 +659,10 @@ async def run_doctor(
     device_serial: str | None = None,
     debug: bool = False,
     config_path: str | None = None,
-    *, target="local", platform=None, api_url=None,
+    *,
+    target="local",
+    platform=None,
+    api_url=None,
 ) -> list[CheckResult]:
     """Run all doctor checks and auto-fix where possible."""
     debug = debug or False
@@ -683,8 +693,12 @@ async def run_doctor(
     from mobilerun.cli.selection import select_device
 
     selected_platform = platform or (config.device.platform if config else "android")
-    non_adb = ((target == "cloud" and not device_serial) or selected_platform == "ios"
-               or is_portal_http_url(device_serial) or bool(device_serial and is_uuid(device_serial)))
+    non_adb = (
+        (target == "cloud" and not device_serial)
+        or selected_platform == "ios"
+        or is_portal_http_url(device_serial)
+        or bool(device_serial and is_uuid(device_serial))
+    )
 
     # 3. ADB
     r = await check_adb(debug)
@@ -697,7 +711,11 @@ async def run_doctor(
     if non_adb:
         try:
             selection = await select_device(
-                device_serial, config_path, platform=selected_platform, target=target, config=config,
+                device_serial,
+                config_path,
+                platform=selected_platform,
+                target=target,
+                config=config,
             )
             probe_device({"api_url": api_url or DEFAULT_API_URL}, selection=selection)
             result = CheckResult("Device", Status.PASS, "UI tree is reachable")
