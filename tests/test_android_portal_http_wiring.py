@@ -138,6 +138,9 @@ def test_ping_checks_portal_http_without_adb(monkeypatch, no_adb):
     def connect(self, device_id, **kwargs):
         created.update(kwargs)
         class Core:
+            def close(self):
+                pass
+
             def ui(self):
                 return {}
         return Core()
