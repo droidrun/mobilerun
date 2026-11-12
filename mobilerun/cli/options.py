@@ -27,7 +27,9 @@ NO_LOCAL_DEVICES_HINT = (
     "use `-t cloud` for cloud devices."
 )
 
-NO_CLOUD_DEVICES_HINT = "Create or start a device in Mobilerun Cloud and check your sign-in."
+NO_CLOUD_DEVICES_HINT = (
+    "Create or start a device in Mobilerun Cloud and check your sign-in."
+)
 
 
 ADB_HINT = (
@@ -53,19 +55,33 @@ def config_debug(path):
 def local_device_hint(message, target="local"):
     """Add the recovery step for known local discovery errors."""
     lowered = message.lower()
-    if any(text in lowered for text in (
-        "no connected android devices", "no devices", "no device connected",
-    )):
-        return message + "\n" + (NO_CLOUD_DEVICES_HINT if target == "cloud" else NO_LOCAL_DEVICES_HINT)
+    if any(
+        text in lowered
+        for text in (
+            "no connected android devices",
+            "no devices",
+            "no device connected",
+        )
+    ):
+        return (
+            message
+            + "\n"
+            + (NO_CLOUD_DEVICES_HINT if target == "cloud" else NO_LOCAL_DEVICES_HINT)
+        )
     if "unknown device" in lowered or ("device" in lowered and "not found" in lowered):
-        command = "mobilerun device list -t cloud" if target == "cloud" else "mobilerun device list"
+        command = (
+            "mobilerun device list -t cloud"
+            if target == "cloud"
+            else "mobilerun device list"
+        )
         return message + f"\nFind connected devices with `{command}`."
     return message
 
 
 def _caused_by_interrupt(exc):
     return isinstance(exc, KeyboardInterrupt) or isinstance(
-        exc.__cause__ or exc.__context__, KeyboardInterrupt,
+        exc.__cause__ or exc.__context__,
+        KeyboardInterrupt,
     )
 
 
@@ -76,22 +92,36 @@ def read_secret(ctx, param, value):
     if value == "-":
         stream = click.get_text_stream("stdin")
         try:
-            value = (click.prompt(param.human_readable_name, hide_input=True, err=True,
-                                  default="", show_default=False)
-                     if stream.isatty() else stream.readline()).rstrip("\r\n")
+            value = (
+                click.prompt(
+                    param.human_readable_name,
+                    hide_input=True,
+                    err=True,
+                    default="",
+                    show_default=False,
+                )
+                if stream.isatty()
+                else stream.readline()
+            ).rstrip("\r\n")
         except (KeyboardInterrupt, click.Abort) as exc:
             if _caused_by_interrupt(exc):
                 raise click.exceptions.Exit(130) from None
             raise click.ClickException(INPUT_CLOSED) from None
         if not value.strip():
-            raise click.BadParameter("stdin is empty; provide one secret line.", ctx=ctx, param=param)
+            raise click.BadParameter(
+                "stdin is empty; provide one secret line.", ctx=ctx, param=param
+            )
     if value:
         ctx.meta.setdefault(SECRETS_KEY, []).append(value)
     return value
 
 
 def redact(text, secrets):
-    for secret in sorted({value for value in secrets if value and len(value) >= MIN_REDACTABLE_SECRET}, key=len, reverse=True):
+    for secret in sorted(
+        {value for value in secrets if value and len(value) >= MIN_REDACTABLE_SECRET},
+        key=len,
+        reverse=True,
+    ):
         text = text.replace(secret, "[redacted]")
     return text
 
@@ -133,7 +163,9 @@ def convert_api_error(exc):
     request = exc.request
     from mobilerun_core.connection.cloud import BEARER_ENV_VAR, LEGACY_BEARER_ENV_VAR
 
-    sensitive = [os.environ.get(name, "") for name in (BEARER_ENV_VAR, LEGACY_BEARER_ENV_VAR)]
+    sensitive = [
+        os.environ.get(name, "") for name in (BEARER_ENV_VAR, LEGACY_BEARER_ENV_VAR)
+    ]
     ctx = click.get_current_context(silent=True)
     if ctx:
         sensitive.extend(ctx.meta.get(SECRETS_KEY, ()))
@@ -146,12 +178,29 @@ def convert_api_error(exc):
 
     status = exc.status_code if isinstance(exc, APIStatusError) else None
     body = exc.body if isinstance(exc.body, dict) else {}
-    first = (body.get("errors") or [None])[0] if isinstance(body.get("errors"), list) else None
+    first = (
+        (body.get("errors") or [None])[0]
+        if isinstance(body.get("errors"), list)
+        else None
+    )
     fields = (body, first) if isinstance(first, dict) else (body,)
-    message = next((entry[key] for entry in fields for key in ("detail", "title", "message")
-                    if isinstance(entry.get(key), str) and entry[key].strip()), None)
-    code = next((entry["code"] for entry in fields
-                 if isinstance(entry.get("code"), (str, int))), None)
+    message = next(
+        (
+            entry[key]
+            for entry in fields
+            for key in ("detail", "title", "message")
+            if isinstance(entry.get(key), str) and entry[key].strip()
+        ),
+        None,
+    )
+    code = next(
+        (
+            entry["code"]
+            for entry in fields
+            if isinstance(entry.get("code"), (str, int))
+        ),
+        None,
+    )
     if message is None:
         if status is not None:
             message = exc.response.reason_phrase
@@ -160,11 +209,18 @@ def convert_api_error(exc):
         else:
             message = "Could not connect to the API"
     message = clean(message or "API request failed")
-    document = {"error": message, "status": status, "code": clean(code) if code is not None else None}
+    document = {
+        "error": message,
+        "status": status,
+        "code": clean(code) if code is not None else None,
+    }
     text = f"{message} (HTTP {status})" if status is not None else message
     hint = None
     if status in {401, 403}:
-        from mobilerun.cli.selection import CLOUD_CREDENTIAL_LABELS, resolve_cloud_credential
+        from mobilerun.cli.selection import (
+            CLOUD_CREDENTIAL_LABELS,
+            resolve_cloud_credential,
+        )
 
         credential = resolve_cloud_credential()
         document["credential"] = credential.source
@@ -172,8 +228,10 @@ def convert_api_error(exc):
             hint = "Run `mobilerun auth login` or set MOBILERUN_API_KEY."
         elif status == 403:
             label = CLOUD_CREDENTIAL_LABELS[credential.source]
-            hint = (f"The {label} is valid but not allowed to do this; "
-                    "check its scopes or the device owner.")
+            hint = (
+                f"The {label} is valid but not allowed to do this; "
+                "check its scopes or the device owner."
+            )
         elif credential.source == "env":
             hint = f"The key in {credential.env_var} was rejected. "
             if credential.saved_sign_in:
@@ -199,11 +257,17 @@ def convert_api_error(exc):
 
 
 _REMOVED_FLAGS = {
-    "--base_url": "-u/--llm-url", "--api_base": "-u/--llm-url",
-    "--cloud": "-t cloud", "--ios": "-P ios", "--debug": "-v",
-    "--device-id": "-d", "--steps": "-s/--max-steps",
-    "-pv": "--portal-version", "--control-backend": "--backend",
+    "--base_url": "-u/--llm-url",
+    "--api_base": "-u/--llm-url",
+    "--cloud": "-t cloud",
+    "--ios": "-P ios",
+    "--debug": "-v",
+    "--device-id": "-d",
+    "--steps": "-s/--max-steps",
+    "-pv": "--portal-version",
+    "--control-backend": "--backend",
 }
+
 
 class HelpLayout:
     """Keep shared flags and complete command summaries consistent."""
@@ -223,11 +287,16 @@ class HelpLayout:
         try:
             return super().parse_args(ctx, args)
         except click.NoSuchOption as exc:
-            flag = "-pv" if exc.option_name in {"p", "-p"} and legacy_cluster else exc.option_name
+            flag = (
+                "-pv"
+                if exc.option_name in {"p", "-p"} and legacy_cluster
+                else exc.option_name
+            )
             replacement = self.removed_flags.get(flag)
             if replacement:
                 raise click.UsageError(
-                    f"Removed option: {flag}. Use {replacement} instead.", ctx,
+                    f"Removed option: {flag}. Use {replacement} instead.",
+                    ctx,
                 ) from None
             if self.dash_hint:
                 exc.message += "\nPut `--` before arguments that start with a dash."
@@ -235,14 +304,25 @@ class HelpLayout:
 
     def get_params(self, ctx):
         def rank(param):
-            order = ("device", "target", "platform", "config_path", None,
-                     "api_url", "json_output", "verbose", "help")
+            order = (
+                "device",
+                "target",
+                "platform",
+                "config_path",
+                None,
+                "api_url",
+                "json_output",
+                "verbose",
+                "help",
+            )
             return order.index(param.name if param.name in order else None)
 
         return sorted(super().get_params(ctx), key=rank)
 
     def get_short_help_str(self, limit=45):
-        return self.short_help or " ".join((self.help or "").split("\n\n", 1)[0].split())
+        return self.short_help or " ".join(
+            (self.help or "").split("\n\n", 1)[0].split()
+        )
 
 
 def _config_path(ctx):
@@ -301,14 +381,20 @@ class Command(HelpLayout, click.Command):
             else:
                 if not isinstance(exc, click.ClickException):
                     if ctx.params.get("verbose"):
-                        click.echo(redact_secrets(traceback.format_exc(), ctx), err=True)
+                        click.echo(
+                            redact_secrets(traceback.format_exc(), ctx), err=True
+                        )
                     exc = click.ClickException(str(exc) or type(exc).__name__)
                 exc.message = local_device_hint(
-                    redact_secrets(exc.message, ctx), ctx.params.get("target", "local"),
+                    redact_secrets(exc.message, ctx),
+                    ctx.params.get("target", "local"),
                 )
                 document = {"error": exc.message}
-            if (not isinstance(exc, click.UsageError) and ctx.params.get("json_output")
-                    and not ctx.obj["emitted"]):
+            if (
+                not isinstance(exc, click.UsageError)
+                and ctx.params.get("json_output")
+                and not ctx.obj["emitted"]
+            ):
                 emit(document, json_output=True)
             raise exc
         finally:
@@ -360,7 +446,11 @@ class Group(HelpLayout, click.Group):
         try:
             return super().resolve_command(ctx, args)
         except click.UsageError as exc:
-            if not ctx.resilient_parsing and args and exc.message.startswith("No such command"):
+            if (
+                not ctx.resilient_parsing
+                and args
+                and exc.message.startswith("No such command")
+            ):
                 matches = self.suggest_commands(ctx, args[0])
                 if matches:
                     suggestions = ", ".join(
@@ -376,19 +466,33 @@ class Group(HelpLayout, click.Group):
         if exact:
             return exact
         if name in _RENAMED_COMMANDS:
-            return [(path, command) for path, command in paths if path == _RENAMED_COMMANDS[name]]
-        siblings = difflib.get_close_matches(name, self.list_commands(ctx), n=1, cutoff=0.6)
+            return [
+                (path, command)
+                for path, command in paths
+                if path == _RENAMED_COMMANDS[name]
+            ]
+        siblings = difflib.get_close_matches(
+            name, self.list_commands(ctx), n=1, cutoff=0.6
+        )
         if siblings:
             parent_path = next(path for path, command in paths if command is self)
             return [((*parent_path, siblings[0]), self.commands[siblings[0]])]
-        closest = difflib.get_close_matches(name, [path[-1] for path, _ in paths], n=1, cutoff=0.6)
+        closest = difflib.get_close_matches(
+            name, [path[-1] for path, _ in paths], n=1, cutoff=0.6
+        )
         if closest:
-            return [next((path, command) for path, command in paths if path[-1] == closest[0])]
+            return [
+                next(
+                    (path, command) for path, command in paths if path[-1] == closest[0]
+                )
+            ]
         return []
 
 
 # The same declarations are reused everywhere, including groups.
-no_input_option = click.option("--no-input", is_flag=True, help="Never prompt for input.")
+no_input_option = click.option(
+    "--no-input", is_flag=True, help="Never prompt for input."
+)
 verbose_option = click.option(
     "-v",
     "--verbose",

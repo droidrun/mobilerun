@@ -29,16 +29,19 @@ from mobilerun.cli.selection import core_client, local_adb_errors, select_device
 
 
 @device_cli.command(
-    "list", epilog=examples(
-        'mobilerun device list',
-        'mobilerun device list --all -j',
+    "list",
+    epilog=examples(
+        "mobilerun device list",
+        "mobilerun device list --all -j",
     ),
 )
 @target_option
 @api_url_option
 @verbose_option
 @json_option
-@click.option("--all", "all_devices", is_flag=True, help="List local and cloud devices.")
+@click.option(
+    "--all", "all_devices", is_flag=True, help="List local and cloud devices."
+)
 def list_devices(target, api_url, verbose, json_output, all_devices):
     """List devices in the selected target."""
     rows, errors = [], []
@@ -51,17 +54,30 @@ def list_devices(target, api_url, verbose, json_output, all_devices):
                 raise
             converted = convert_api_error(exc)
             message = converted[1]["error"] if converted else str(exc)
-            message = " ".join(redact_secrets(message, click.get_current_context()).split())
+            message = " ".join(
+                redact_secrets(message, click.get_current_context()).split()
+            )
             errors.append({"target": scope, "error": message})
             click.echo(f"Warning: {scope}: {' '.join(message.split())}", err=True)
     if json_output:
-        emit({"devices": rows, "errors": errors} if all_devices else rows, json_output=True)
+        emit(
+            {"devices": rows, "errors": errors} if all_devices else rows,
+            json_output=True,
+        )
     elif rows:
-        emit_rows(("DEVICE_ID", "NAME", "STATE", "TYPE"), (
-            (row["device_id"], row["name"] or "-", row["state"], row["type"]) for row in rows
-        ))
+        emit_rows(
+            ("DEVICE_ID", "NAME", "STATE", "TYPE"),
+            (
+                (row["device_id"], row["name"] or "-", row["state"], row["type"])
+                for row in rows
+            ),
+        )
     elif len(errors) < len(scopes):
-        hint = NO_CLOUD_DEVICES_HINT if target == "cloud" and not all_devices else NO_LOCAL_DEVICES_HINT
+        hint = (
+            NO_CLOUD_DEVICES_HINT
+            if target == "cloud" and not all_devices
+            else NO_LOCAL_DEVICES_HINT
+        )
         click.echo("No devices found. " + hint, err=True)
     if len(errors) == len(scopes):
         click.get_current_context().exit(1)
@@ -75,19 +91,25 @@ def _list_target(api_url, scope):
             devices = client.list_devices(filters={"state": None}, scope=scope)
         rows = []
         for device in devices:
-            rows.append({
-                "device_id": device.device_id,
-                "name": device.name,
-                "state": "connected" if scope == "local" else device.state,
-                "type": device.capabilities["backend"] if scope == "local" else device.device_type,
-            })
+            rows.append(
+                {
+                    "device_id": device.device_id,
+                    "name": device.name,
+                    "state": "connected" if scope == "local" else device.state,
+                    "type": (
+                        device.capabilities["backend"]
+                        if scope == "local"
+                        else device.device_type
+                    ),
+                }
+            )
         return rows
     finally:
         for resource in [*devices, client]:
             resource.close()
 
 
-@device_cli.command( epilog=examples('mobilerun device connect 192.0.2.1:5555'))
+@device_cli.command(epilog=examples("mobilerun device connect 192.0.2.1:5555"))
 @click.argument("serial", metavar="HOST:PORT")
 @verbose_option
 @coro
@@ -100,7 +122,7 @@ async def connect(serial, verbose):
     click.echo(f"Successfully connected to {serial}", err=True)
 
 
-@device_cli.command( epilog=examples('mobilerun device disconnect 192.0.2.1:5555'))
+@device_cli.command(epilog=examples("mobilerun device disconnect 192.0.2.1:5555"))
 @click.argument("serial", metavar="HOST:PORT")
 @verbose_option
 @coro
@@ -109,16 +131,25 @@ async def disconnect(serial, verbose):
     with local_adb_errors():
         success = await adb.disconnect(serial, raise_error=True)
     click.echo(
-        f"Successfully disconnected from {serial}"
-        if success else f"Device {serial} was not connected", err=True,
+        (
+            f"Successfully disconnected from {serial}"
+            if success
+            else f"Device {serial} was not connected"
+        ),
+        err=True,
     )
 
 
-@device_cli.command(removed_flags={**Command.removed_flags, "--path": "--apk"}, epilog=examples('mobilerun device setup -d emulator-5554'))
+@device_cli.command(
+    removed_flags={**Command.removed_flags, "--path": "--apk"},
+    epilog=examples("mobilerun device setup -d emulator-5554"),
+)
 @device_option
 @config_option
 @verbose_option
-@click.option("--apk", type=click.Path(exists=True, dir_okay=False), help="Portal APK file.")
+@click.option(
+    "--apk", type=click.Path(exists=True, dir_okay=False), help="Portal APK file."
+)
 @click.option("--portal-version", help="Specific Portal version.")
 @click.option("--latest", is_flag=True, help="Install the latest Portal.")
 @coro
@@ -131,11 +162,15 @@ async def setup(device, config_path, verbose, apk, portal_version, latest):
     selection = await select_device(device, config_path)
     if selection.backend != "local-android-adb":
         raise click.ClickException("Portal setup requires a local Android ADB device")
-    if not await _setup_portal(apk, selection.device, bool(verbose), latest, portal_version):
-        raise click.ClickException("Portal setup failed; run `mobilerun doctor` for diagnostics")
+    if not await _setup_portal(
+        apk, selection.device, bool(verbose), latest, portal_version
+    ):
+        raise click.ClickException(
+            "Portal setup failed; run `mobilerun doctor` for diagnostics"
+        )
 
 
-@device_cli.command( epilog=examples('mobilerun device ping -d emulator-5554'))
+@device_cli.command(epilog=examples("mobilerun device ping -d emulator-5554"))
 @device_option
 @target_option
 @config_option

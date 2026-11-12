@@ -103,14 +103,21 @@ def test_device_commands_route_url_to_portal_http(tmp_path, monkeypatch, no_adb)
     from mobilerun.cli import device_commands
 
     created = {}
+
     def connect(self, device_id, **kwargs):
         created.update(kwargs)
         return SimpleNamespace(close=lambda: None)
 
     monkeypatch.setattr(Mobilerun, "connect", connect)
     monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
-    with device_commands.device_driver({"device": PORTAL_URL, "config_path": _config_file(tmp_path),
-                                        "platform": "android", "api_url": "https://example.test/v1"}):
+    with device_commands.device_driver(
+        {
+            "device": PORTAL_URL,
+            "config_path": _config_file(tmp_path),
+            "platform": "android",
+            "api_url": "https://example.test/v1",
+        }
+    ):
         pass
     assert created["url"] == PORTAL_URL
     assert created["token"] == "sekret"
@@ -123,7 +130,9 @@ def test_device_commands_url_without_token_fails_cleanly(tmp_path, monkeypatch, 
     from mobilerun.cli.main import cli
 
     monkeypatch.delenv("MOBILERUN_ANDROID_PORTAL_TOKEN", raising=False)
-    result = CliRunner().invoke(cli, ["device", "ui", "-d", PORTAL_URL, "-c", _config_file(tmp_path)])
+    result = CliRunner().invoke(
+        cli, ["device", "ui", "-d", PORTAL_URL, "-c", _config_file(tmp_path)]
+    )
     assert result.exit_code == 1
     assert "token" in result.output
 
@@ -135,14 +144,17 @@ def test_ping_checks_portal_http_without_adb(monkeypatch, no_adb):
     from mobilerun.cli.main import cli
 
     created = {}
+
     def connect(self, device_id, **kwargs):
         created.update(kwargs)
+
         class Core:
             def close(self):
                 pass
 
             def ui(self):
                 return {}
+
         return Core()
 
     monkeypatch.setattr(Mobilerun, "connect", connect)

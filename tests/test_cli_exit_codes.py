@@ -30,7 +30,9 @@ def test_connect_fresh_success(monkeypatch):
 
 def test_connect_already_connected(monkeypatch):
     monkeypatch.setattr(
-        device_lifecycle.adb, "connect", AsyncMock(return_value="already connected to device")
+        device_lifecycle.adb,
+        "connect",
+        AsyncMock(return_value="already connected to device"),
     )
 
     result = CliRunner().invoke(main.cli, ["device", "connect", "device"])
@@ -52,7 +54,9 @@ def test_connect_failure_string(monkeypatch):
 
 def test_connect_exception(monkeypatch):
     monkeypatch.setattr(
-        device_lifecycle.adb, "connect", AsyncMock(side_effect=RuntimeError("connection broke"))
+        device_lifecycle.adb,
+        "connect",
+        AsyncMock(side_effect=RuntimeError("connection broke")),
     )
 
     result = CliRunner().invoke(main.cli, ["device", "connect", "device"])
@@ -73,7 +77,9 @@ def test_disconnect_exception(monkeypatch):
 
 
 def test_disconnect_not_connected_is_success(monkeypatch):
-    monkeypatch.setattr(device_lifecycle.adb, "disconnect", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        device_lifecycle.adb, "disconnect", AsyncMock(return_value=False)
+    )
 
     result = CliRunner().invoke(main.cli, ["device", "disconnect", "device"])
 
@@ -82,15 +88,25 @@ def test_disconnect_not_connected_is_success(monkeypatch):
 
 
 def test_ping_unknown_device(monkeypatch):
-    monkeypatch.setattr(device_lifecycle, "probe_device", lambda *_: (_ for _ in ()).throw(RuntimeError("unknown device")))
+    monkeypatch.setattr(
+        device_lifecycle,
+        "probe_device",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("unknown device")),
+    )
     result = CliRunner().invoke(main.cli, ["device", "ping", "-d", "no-such-device"])
     assert result.exit_code == 1
     assert "Error: unknown device" in result.output
 
 
 def test_ping_driver_error(monkeypatch):
-    monkeypatch.setattr(device_lifecycle, "probe_device", lambda *_: (_ for _ in ()).throw(RuntimeError("portal broke")))
-    result = CliRunner().invoke(main.cli, ["device", "ping", "-d", "device", "--verbose"])
+    monkeypatch.setattr(
+        device_lifecycle,
+        "probe_device",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("portal broke")),
+    )
+    result = CliRunner().invoke(
+        main.cli, ["device", "ping", "-d", "device", "--verbose"]
+    )
     assert result.exit_code == 1
     assert "Error: portal broke" in result.output
     assert "Traceback" in result.stderr

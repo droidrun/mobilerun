@@ -1,4 +1,3 @@
-
 import asyncio
 import unittest
 from types import SimpleNamespace
@@ -22,7 +21,8 @@ class RunCliVisionOnlyTest(unittest.TestCase):
                     "run",
                     "Check Wi-Fi",
                     "--vision-only",
-                    "--platform", "ios",
+                    "--platform",
+                    "ios",
                     "--backend",
                     "visual-remote",
                     "--device",
@@ -107,7 +107,9 @@ class RunCliVisionOnlyTest(unittest.TestCase):
                 return_value=MobileConfig(),
             ),
             patch("mobilerun.MobileAgent", FakeAgent),
-            patch("mobilerun_core_local.driver.ios.discover_ios_device", AsyncMock()) as discover,
+            patch(
+                "mobilerun_core_local.driver.ios.discover_ios_device", AsyncMock()
+            ) as discover,
         ):
             success = asyncio.run(
                 run_command(
