@@ -214,7 +214,7 @@ class HelpLayout:
             return super().parse_args(ctx, args)
         except click.NoSuchOption as exc:
             if self.name in {"tap", "type", "swipe", "long-press"}:
-                exc.message += " Put `--` before arguments that start with a dash."
+                exc.message += "\nPut `--` before arguments that start with a dash."
             raise
 
     def get_params(self, ctx):
@@ -310,8 +310,8 @@ _REMOVED_FLAGS = {
 }
 
 _RENAMED_COMMANDS = {
-    "devices": "mobilerun device list",
-    "whoami": "mobilerun auth status",
+    "devices": ("mobilerun", "device", "list"),
+    "whoami": ("mobilerun", "auth", "status"),
 }
 
 
@@ -322,6 +322,15 @@ def _command_paths(command, path=("mobilerun",)):
         for name, child in command.commands.items():
             if not child.hidden:
                 yield from _command_paths(child, (*path, name))
+
+
+def _follow(path, command, words):
+    for word in words:
+        if not isinstance(command, click.Group) or word not in command.commands:
+            break
+        path = (*path, word)
+        command = command.commands[word]
+    return path
 
 
 class Group(HelpLayout, click.Group):
@@ -347,35 +356,27 @@ class Group(HelpLayout, click.Group):
             if not ctx.resilient_parsing and args and exc.message.startswith("No such command"):
                 matches = self.suggest_commands(ctx, args[0])
                 if matches:
-                    paths = {" ".join(path): command for path, command in
-                             _command_paths(ctx.find_root().command)}
-                    suggestions = []
-                    for match in matches:
-                        command = paths.get(match)
-                        for remaining in args[1:]:
-                            if not isinstance(command, click.Group) or remaining not in command.commands:
-                                break
-                            match += " " + remaining
-                            command = command.commands[remaining]
-                        suggestions.append(f"'{match}'")
-                    suggestions = ", ".join(suggestions)
+                    suggestions = ", ".join(
+                        f"'{" ".join(_follow(path, command, args[1:]))}'"
+                        for path, command in matches
+                    )
                     exc.message += f" Did you mean {suggestions}?"
             raise
 
     def suggest_commands(self, ctx, name):
         paths = list(_command_paths(ctx.find_root().command))
-        exact = [" ".join(path) for path, _ in paths if path[-1] == name]
+        exact = [(path, command) for path, command in paths if path[-1] == name]
         if exact:
             return exact
         if name in _RENAMED_COMMANDS:
-            return [_RENAMED_COMMANDS[name]]
+            return [(path, command) for path, command in paths if path == _RENAMED_COMMANDS[name]]
         siblings = difflib.get_close_matches(name, self.list_commands(ctx), n=1, cutoff=0.6)
         if siblings:
             parent_path = next(path for path, command in paths if command is self)
-            return [" ".join((*parent_path, siblings[0]))]
+            return [((*parent_path, siblings[0]), self.commands[siblings[0]])]
         closest = difflib.get_close_matches(name, [path[-1] for path, _ in paths], n=1, cutoff=0.6)
         if closest:
-            return [next(" ".join(path) for path, _ in paths if path[-1] == closest[0])]
+            return [next((path, command) for path, command in paths if path[-1] == closest[0])]
         return []
 
 
