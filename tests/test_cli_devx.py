@@ -1177,3 +1177,11 @@ def test_api_error_without_credential_suggests_login(monkeypatch, status):
     assert document["credential"] is None
     assert text.endswith("Run `mobilerun auth login` or set MOBILERUN_API_KEY.")
     assert "saved sign-in" not in text
+
+
+@pytest.mark.parametrize("path", [path for path, _ in commands()])
+def test_every_command_examples_and_verbose(path):
+    result = CliRunner().invoke(cli, [*path, "--help"])
+    assert result.exit_code == 0
+    assert "Examples:" in result.stdout
+    assert "--verbose" in result.stdout

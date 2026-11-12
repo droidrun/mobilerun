@@ -220,20 +220,6 @@ def test_typo_keeps_remaining_command():
     assert "Did you mean 'mobilerun device list'?" in result.stderr
 
 
-def test_every_command_examples_and_verbose():
-    def visit(command, path=()):
-        yield command, path
-        if isinstance(command, click.Group):
-            for name, child in command.commands.items():
-                yield from visit(child, (*path, name))
-
-    for _, path in visit(cli):
-        result = CliRunner().invoke(cli, [*path, "--help"])
-        assert result.exit_code == 0
-        assert "Examples:" in result.stdout, path
-        assert "--verbose" in result.stdout, path
-
-
 def test_readme_real_error_examples():
     readme = Path("README.md").read_text()
     assert '{"error":"Resource not found","status":404,"code":null}' in readme
