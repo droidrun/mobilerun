@@ -91,7 +91,7 @@ def _run_grok_oauth_login(credential_path: str, model: str | None = None, **kwar
 DEFAULT_DEVICE_CLIENT_ID = "mobilerun-cli"
 
 
-def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool, browser: bool = False):
+def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool, browser: bool):
     """Authenticate via OAuth 2.0 device authorization and save the session token."""
     import webbrowser
 
@@ -102,12 +102,12 @@ def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool, browser:
 
     link = code.verification_uri_complete
     terminal = sys.stderr.isatty()
+    styled = terminal and "NO_COLOR" not in os.environ
     if link:
         if terminal and not no_qr:
-            print_qr(link, color="NO_COLOR" not in os.environ)
-        hyperlink = terminal and "NO_COLOR" not in os.environ
-        display = f"\033]8;;{link}\033\\{link}\033]8;;\033\\" if hyperlink else link
-        click.echo(display, err=True, color=hyperlink)
+            print_qr(link)
+        display = f"\033]8;;{link}\033\\{link}\033]8;;\033\\" if styled else link
+        click.echo(display, err=True, color=styled)
     click.echo(f"Visit: {code.verification_uri}", err=True)
     click.echo(f"Code:  {code.user_code}", err=True)
     if browser and link:
@@ -115,7 +115,8 @@ def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool, browser:
             webbrowser.open(link)
         except Exception:
             pass
-    console.print(f"[dim]Waiting for authorization (expires in {code.expires_in}s)...[/]")
+    waiting = f"Waiting for authorization (expires in {code.expires_in}s)..."
+    console.print(f"[dim]{waiting}[/]" if styled else waiting)
 
     try:
         token = deviceauth.poll_token(auth_url, client_id, code)

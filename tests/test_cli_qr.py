@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import click
 import pytest
 import segno
 from click.testing import CliRunner
@@ -103,7 +104,7 @@ def test_login_prints_complete_link_qr_and_preserves_flow(login):
     assert result.exit_code == 0, result.output
     assert result.stdout == ""
     assert "ABCD-EFGH" in result.stderr and "Visit:" in result.stderr
-    login.printed.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH", color=True)
+    login.printed.assert_called_once_with("https://example.test/verify?user_code=ABCD-EFGH")
     assert "\x1b[97;40m" in result.stderr
     login.browser.assert_not_called()
     login.request.assert_called_once_with(auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID)
@@ -525,12 +526,13 @@ def test_mobilerun_plain_output_and_no_qr(login, monkeypatch, terminal, no_color
     assert link in result.stderr
     assert result.stderr.index(link) < result.stderr.index("Code:  ABCD-EFGH")
     if not terminal or no_color:
-        assert "\x1b" not in result.stderr
+        plain = result.stderr.replace("\x1b[97;40m", "").replace("\x1b[0m", "")
+        assert "\x1b" not in plain
         assert link + "\n" in result.stderr
     if not terminal or no_qr:
         login.printed.assert_not_called()
     else:
-        login.printed.assert_called_once_with(link, color=not no_color)
+        login.printed.assert_called_once_with(link)
     login.browser.assert_not_called()
 
 
@@ -561,3 +563,15 @@ def test_provider_browser_behavior_unchanged(monkeypatch, no_browser):
     result = CliRunner().invoke(cli, ["auth", "login", "openai", *(["--no-browser"] if no_browser else [])])
     assert result.exit_code == 0, result.output
     assert callback.call_args.kwargs["open_browser"] is (not no_browser)
+
+
+def test_no_color_login_keeps_scannable_qr(login, monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
+    command = click.command()(lambda: auth._login_mobilerun(
+        auth.DEFAULT_AUTH_URL, auth.DEFAULT_DEVICE_CLIENT_ID, False, False,
+    ))
+    result = TerminalRunner().invoke(command)
+    assert result.exit_code == 0, result.output
+    assert "\x1b[97;40m" in result.stderr
+    plain = result.stderr.replace("\x1b[97;40m", "").replace("\x1b[0m", "")
+    assert "\x1b" not in plain
