@@ -9,7 +9,10 @@ from mobilerun.cli.auth import (
     _run_grok_oauth_login,
     _run_openai_oauth_login,
 )
-from mobilerun.cli.configure_wizard import ConfigureWizardCallbacks, run_configure_wizard
+from mobilerun.cli.configure_wizard import (
+    ConfigureWizardCallbacks,
+    run_configure_wizard,
+)
 from mobilerun.cli.options import (
     CONTEXT_SETTINGS,
     Command,
@@ -28,7 +31,11 @@ from mobilerun.cli.providers import PROVIDERS, provider_option
 @verbose_option
 @config_option
 @click.option("-k", "--api-key", help="API key for the selected provider.")
-@click.option("--auth-mode", type=click.Choice(["api_key", "oauth", "none"]), help="Authentication mode for the provider.")
+@click.option(
+    "--auth-mode",
+    type=click.Choice(["api_key", "oauth", "none"]),
+    help="Authentication mode for the provider.",
+)
 def configure(provider, model, llm_url, verbose, config_path, api_key, auth_mode):
     """Configure provider, authentication and model with the wizard."""
     spec = PROVIDERS.get(provider)

@@ -42,12 +42,29 @@ def convert_api_error(exc):
 
     status = exc.status_code if isinstance(exc, APIStatusError) else None
     body = exc.body if isinstance(exc.body, dict) else {}
-    first = (body.get("errors") or [None])[0] if isinstance(body.get("errors"), list) else None
+    first = (
+        (body.get("errors") or [None])[0]
+        if isinstance(body.get("errors"), list)
+        else None
+    )
     fields = (body, first) if isinstance(first, dict) else (body,)
-    message = next((entry[key] for entry in fields for key in ("detail", "title", "message")
-                    if isinstance(entry.get(key), str) and entry[key].strip()), None)
-    code = next((entry["code"] for entry in fields
-                 if isinstance(entry.get("code"), (str, int))), None)
+    message = next(
+        (
+            entry[key]
+            for entry in fields
+            for key in ("detail", "title", "message")
+            if isinstance(entry.get(key), str) and entry[key].strip()
+        ),
+        None,
+    )
+    code = next(
+        (
+            entry["code"]
+            for entry in fields
+            if isinstance(entry.get("code"), (str, int))
+        ),
+        None,
+    )
     if message is None:
         if status is not None:
             message = exc.response.reason_phrase
@@ -56,7 +73,11 @@ def convert_api_error(exc):
         else:
             message = "Could not connect to the API"
     message = clean(message or "API request failed")
-    document = {"error": message, "status": status, "code": clean(code) if code is not None else None}
+    document = {
+        "error": message,
+        "status": status,
+        "code": clean(code) if code is not None else None,
+    }
     text = f"{message} (HTTP {status})" if status is not None else message
     hint = None
     if status in {401, 403}:
@@ -64,7 +85,9 @@ def convert_api_error(exc):
     elif status == 404 and "devices" in request.url.path.split("/"):
         hint = "Find device ids with `mobilerun device list -t cloud`."
     elif status is None:
-        hint = f"Check the API URL: {clean(request.url.scheme + '://' + request.url.host)}"
+        hint = (
+            f"Check the API URL: {clean(request.url.scheme + '://' + request.url.host)}"
+        )
     if hint:
         text += f"\n{hint}"
     diagnostic = f"{request.method} {clean(request.url.path)}"
@@ -89,7 +112,9 @@ class Command(click.Command):
 
         logger = logging.getLogger("mobilerun")
         previous = logger.handlers[:], logger.level, logger.propagate
-        configure_logging(bool(ctx.params.get("verbose")), logging.StreamHandler(sys.stderr))
+        configure_logging(
+            bool(ctx.params.get("verbose")), logging.StreamHandler(sys.stderr)
+        )
         try:
             # Libraries and OAuth flows may print progress directly.
             with redirect_stdout(sys.stderr):
@@ -113,8 +138,11 @@ class Command(click.Command):
                         traceback.print_exc(file=sys.stderr)
                     exc = click.ClickException(str(exc) or type(exc).__name__)
                 document = {"error": exc.message}
-            if (not isinstance(exc, click.UsageError) and ctx.params.get("json_output")
-                    and not ctx.obj["emitted"]):
+            if (
+                not isinstance(exc, click.UsageError)
+                and ctx.params.get("json_output")
+                and not ctx.obj["emitted"]
+            ):
                 emit(document, json_output=True)
             raise exc
         finally:

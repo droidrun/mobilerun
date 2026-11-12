@@ -7,7 +7,10 @@ import click
 from rich.console import Console
 
 from mobilerun.cli import deviceauth
-from mobilerun.cli.configure_wizard import _OAUTH_CREDENTIAL_SLOTS, _oauth_credentials_present
+from mobilerun.cli.configure_wizard import (
+    _OAUTH_CREDENTIAL_SLOTS,
+    _oauth_credentials_present,
+)
 from mobilerun.cli.oauth_actions import (
     run_anthropic_setup_token_oauth,
     run_gemini_oauth_login,
@@ -47,7 +50,9 @@ def _validate_oauth_timeout(
 
 def _print_oauth_login_success(provider_label: str, credential_path: str) -> None:
     console.print(f"[green]{provider_label} login succeeded.[/]")
-    console.print(f"[blue]Credentials saved to:[/] {Path(credential_path).expanduser()}")
+    console.print(
+        f"[blue]Credentials saved to:[/] {Path(credential_path).expanduser()}"
+    )
 
 
 def _run_openai_oauth_login(credential_path: str, model: str | None, **kwargs) -> None:
@@ -70,7 +75,9 @@ def _run_anthropic_oauth_login(credential_path: str, **kwargs) -> None:
     _print_oauth_login_success("Anthropic", credential_path)
 
 
-def _run_grok_oauth_login(credential_path: str, model: str | None = None, **kwargs) -> None:
+def _run_grok_oauth_login(
+    credential_path: str, model: str | None = None, **kwargs
+) -> None:
     run_grok_oauth_login(
         credential_path=credential_path,
         model=model,
@@ -102,7 +109,9 @@ def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool):
             webbrowser.open(code.verification_uri_complete)
         except Exception:
             pass
-    console.print(f"[dim]Waiting for authorization (expires in {code.expires_in}s)...[/]")
+    console.print(
+        f"[dim]Waiting for authorization (expires in {code.expires_in}s)...[/]"
+    )
 
     try:
         token = deviceauth.poll_token(auth_url, client_id, code)
@@ -175,9 +184,13 @@ def auth_cli(verbose):
 @verbose_option
 @auth_url_option
 @model_option
-@click.option("--client-id", default=None, help="Mobilerun device authorization client id.")
 @click.option(
-    "--credential-path", type=click.Path(dir_okay=False), help="Provider credential file."
+    "--client-id", default=None, help="Mobilerun device authorization client id."
+)
+@click.option(
+    "--credential-path",
+    type=click.Path(dir_okay=False),
+    help="Provider credential file.",
 )
 @click.option(
     "--timeout",
@@ -187,9 +200,13 @@ def auth_cli(verbose):
     help="Login timeout in seconds (default 300).",
 )
 @click.option("--no-browser", is_flag=True, help="Do not open a browser.")
-@click.option("--no-qr", is_flag=True, help="Do not display the Mobilerun sign-in QR code.")
+@click.option(
+    "--no-qr", is_flag=True, help="Do not display the Mobilerun sign-in QR code."
+)
 @click.option("--callback-host", help="OAuth callback host.")
-@click.option("--callback-port", type=click.IntRange(0, 65535), help="OAuth callback port.")
+@click.option(
+    "--callback-port", type=click.IntRange(0, 65535), help="OAuth callback port."
+)
 @click.option("--callback-path", help="OAuth callback path.")
 @click.option("--device-code", is_flag=True, help="Use xAI device-code login.")
 @click.option("--token", help="Save an Anthropic setup-token.")
@@ -217,7 +234,9 @@ def login(
             ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
             and name not in LOGIN_OPTIONS[service]
         ):
-            raise click.UsageError(f"--{name.replace('_', '-')} is not supported for {service}")
+            raise click.UsageError(
+                f"--{name.replace('_', '-')} is not supported for {service}"
+            )
     if service == "mobilerun":
         _login_mobilerun(
             auth_url or DEFAULT_AUTH_URL, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr
@@ -267,7 +286,9 @@ def logout(service, verbose):
             AuthProfileStore(path).update_profile(
                 lambda profile: profile.pop(_OAUTH_CREDENTIAL_SLOTS[variant], None)
             )
-    console.print(f"Logged out of {service}." if removed else f"Not logged in to {service}.")
+    console.print(
+        f"Logged out of {service}." if removed else f"Not logged in to {service}."
+    )
 
 
 @auth_cli.command()

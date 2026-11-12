@@ -29,15 +29,24 @@ def resolved_environment(config_path=None):
     config_source = "config" if exists else "default"
     ctx = click.get_current_context(silent=True)
     path_source = (
-        "flag" if config_path and (ctx is None or ctx.get_parameter_source("config_path")
-                                   == click.core.ParameterSource.COMMANDLINE)
+        "flag"
+        if config_path
+        and (
+            ctx is None
+            or ctx.get_parameter_source("config_path")
+            == click.core.ParameterSource.COMMANDLINE
+        )
         else "env" if os.environ.get("MOBILERUN_CONFIG") else "default"
     )
     cloud_key = resolve_cloud_api_key()
     credentials = deviceauth.load_credentials() or {}
     values = {
         "MOBILERUN_TARGET": ("local", "default", False),
-        "MOBILERUN_DEVICE": (config.device.serial, config_source if config.device.serial else "not set", False),
+        "MOBILERUN_DEVICE": (
+            config.device.serial,
+            config_source if config.device.serial else "not set",
+            False,
+        ),
         "MOBILERUN_CLOUD_API_KEY": (
             cloud_key,
             "credential file" if cloud_key else "not set",
@@ -61,17 +70,25 @@ def resolved_environment(config_path=None):
     }
     for platform, name in PORTAL_TOKEN_ENV_VARS.items():
         value = config.device.resolve_auth_token(platform)
-        source = "env" if os.environ.get(name) else config_source if value else "not set"
+        source = (
+            "env" if os.environ.get(name) else config_source if value else "not set"
+        )
         values[name] = (value, source, True)
     sources = load_env_key_sources()
     for slot, name in API_KEY_ENV_VARS.items():
         source = sources[slot]
-        values[name] = (source.saved, "credential file" if source.saved else "default", True)
+        values[name] = (
+            source.saved,
+            "credential file" if source.saved else "default",
+            True,
+        )
     for name in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
         values[name] = (None, "default", True)
     rows = []
     for name, (value, source, secret) in values.items():
-        if os.environ.get(name) and not (name == "MOBILERUN_CONFIG" and path_source == "flag"):
+        if os.environ.get(name) and not (
+            name == "MOBILERUN_CONFIG" and path_source == "flag"
+        ):
             value, source = os.environ[name], "env"
         if name == "MOBILERUN_TELEMETRY_ENABLED":
             value = is_telemetry_enabled(config_enabled=config.telemetry.enabled)

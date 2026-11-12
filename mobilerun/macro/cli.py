@@ -22,7 +22,11 @@ from mobilerun.cli.options import (
     verbose_option,
 )
 from mobilerun.cli.providers import PROVIDERS, provider_option
-from mobilerun.cli.selection import _native_driver, select_device, teardown_native_driver
+from mobilerun.cli.selection import (
+    _native_driver,
+    select_device,
+    teardown_native_driver,
+)
 from mobilerun.config_manager.path_resolver import PathResolver
 from mobilerun.macro.replay import MacroPlayer
 
@@ -68,7 +72,11 @@ def macro_cli(verbose):
 )
 @max_steps_option
 @click.option(
-    "-n", "--dry-run", is_flag=True, help="Show actions without executing", default=False
+    "-n",
+    "--dry-run",
+    is_flag=True,
+    help="Show actions without executing",
+    default=False,
 )
 @click.option(
     "--on-mismatch",
@@ -108,7 +116,10 @@ async def replay(
     config_path: Optional[str],
     provider: Optional[str],
     model: Optional[str],
-    target, platform, api_url, tcp,
+    target,
+    platform,
+    api_url,
+    tcp,
 ):
     """Replay a macro from a file or trajectory folder."""
     logger = configure_logging(bool(verbose))
@@ -120,11 +131,27 @@ async def replay(
     # Convert start_from from 1-based to 0-based
     start_from_zero = max(0, start_from - 1)
 
-    selection = None if dry_run else await select_device(device, config_path, tcp, platform, target)
+    selection = (
+        None
+        if dry_run
+        else await select_device(device, config_path, tcp, platform, target)
+    )
     await _replay_async(
-        path, selection.device if selection else device, delay, start_from_zero,
-        max_steps, dry_run, logger, on_mismatch, state_timeout, state_threshold,
-        config_path, provider, model, selection=selection, api_url=api_url,
+        path,
+        selection.device if selection else device,
+        delay,
+        start_from_zero,
+        max_steps,
+        dry_run,
+        logger,
+        on_mismatch,
+        state_timeout,
+        state_threshold,
+        config_path,
+        provider,
+        model,
+        selection=selection,
+        api_url=api_url,
     )
 
 
@@ -222,7 +249,6 @@ async def _replay_async(
             raise click.ClickException("Macro replay failed")
 
 
-
 async def _show_dry_run(
     macro_data: dict, start_from: int, max_steps: Optional[int], logger: logging.Logger
 ):
@@ -309,8 +335,13 @@ def list(directory: str, verbose: bool, json_output: bool):
                         folders.append((item.name, "Error loading", 0))
 
         if json_output:
-            emit([{"folder": folder, "description": description, "actions": actions}
-                  for folder, description, actions in sorted(folders)], json_output=True)
+            emit(
+                [
+                    {"folder": folder, "description": description, "actions": actions}
+                    for folder, description, actions in sorted(folders)
+                ],
+                json_output=True,
+            )
             return
         if not folders:
             logger.info("📭 No trajectory folders found")

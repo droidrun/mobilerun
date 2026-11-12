@@ -20,20 +20,31 @@ from mobilerun.config_manager.config_manager import DeviceConfig
 
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
-    monkeypatch.setattr(ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml")
+    monkeypatch.setattr(
+        ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml"
+    )
     for name in (
-        "MOBILERUN_ANDROID_PORTAL_TOKEN", "MOBILERUN_IOS_PORTAL_TOKEN",
-        "MOBILERUN_CONFIG", "MOBILERUN_DEVICE", "MOBILERUN_TARGET",
+        "MOBILERUN_ANDROID_PORTAL_TOKEN",
+        "MOBILERUN_IOS_PORTAL_TOKEN",
+        "MOBILERUN_CONFIG",
+        "MOBILERUN_DEVICE",
+        "MOBILERUN_TARGET",
     ):
         monkeypatch.delenv(name, raising=False)
 
 
-@pytest.mark.parametrize("platform,name,other_name", [
-    ("android", "MOBILERUN_ANDROID_PORTAL_TOKEN", "MOBILERUN_IOS_PORTAL_TOKEN"),
-    ("ios", "MOBILERUN_IOS_PORTAL_TOKEN", "MOBILERUN_ANDROID_PORTAL_TOKEN"),
-])
+@pytest.mark.parametrize(
+    "platform,name,other_name",
+    [
+        ("android", "MOBILERUN_ANDROID_PORTAL_TOKEN", "MOBILERUN_IOS_PORTAL_TOKEN"),
+        ("ios", "MOBILERUN_IOS_PORTAL_TOKEN", "MOBILERUN_ANDROID_PORTAL_TOKEN"),
+    ],
+)
 def test_platform_tokens_override_config_without_crossing_platforms(
-    monkeypatch, platform, name, other_name,
+    monkeypatch,
+    platform,
+    name,
+    other_name,
 ):
     other = "ios" if platform == "android" else "android"
     config = DeviceConfig(platform=platform, auth_token="config-token")
@@ -41,7 +52,10 @@ def test_platform_tokens_override_config_without_crossing_platforms(
     assert config.resolve_auth_token(platform) == "config-token"
     assert config.resolve_auth_token(other) is None
     selected = selection.Selection(
-        MobileConfig(device=config), "http://localhost:9", other, f"local-{other}-http",
+        MobileConfig(device=config),
+        "http://localhost:9",
+        other,
+        f"local-{other}-http",
     )
     if other == "ios":
         assert selection.portal_token(selected) is None
@@ -58,9 +72,14 @@ def test_platform_tokens_override_config_without_crossing_platforms(
 
 @pytest.mark.parametrize("platform", ["", None, "unknown"])
 def test_invalid_platform_has_no_token(platform):
-    assert DeviceConfig(platform=platform, auth_token="config-token").resolve_auth_token() is None
+    assert (
+        DeviceConfig(platform=platform, auth_token="config-token").resolve_auth_token()
+        is None
+    )
     if platform is not None:
-        assert DeviceConfig(auth_token="config-token").resolve_auth_token(platform) is None
+        assert (
+            DeviceConfig(auth_token="config-token").resolve_auth_token(platform) is None
+        )
 
 
 @pytest.mark.parametrize("platform", ["android", "ios"])
@@ -68,7 +87,10 @@ def test_legacy_token_variable_is_ignored(monkeypatch, platform):
     # This removed variable must never act as a fallback for either platform.
     monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "ignored-token")
     assert DeviceConfig(platform=platform).resolve_auth_token() is None
-    assert DeviceConfig(platform=platform, auth_token="config-token").resolve_auth_token() == "config-token"
+    assert (
+        DeviceConfig(platform=platform, auth_token="config-token").resolve_auth_token()
+        == "config-token"
+    )
 
 
 def test_env_masks_both_platform_tokens(monkeypatch):
@@ -82,16 +104,23 @@ def test_env_masks_both_platform_tokens(monkeypatch):
         assert all(name in result.stdout for name in names)
         if "-j" in args:
             rows = {row["variable"]: row for row in json.loads(result.stdout)}
-            assert all(rows[name]["value"] == "set" and rows[name]["source"] == "env"
-                       for name in names)
+            assert all(
+                rows[name]["value"] == "set" and rows[name]["source"] == "env"
+                for name in names
+            )
 
 
-@pytest.mark.parametrize("platform,name,other_name", [
-    ("android", "MOBILERUN_ANDROID_PORTAL_TOKEN", "MOBILERUN_IOS_PORTAL_TOKEN"),
-    ("ios", "MOBILERUN_IOS_PORTAL_TOKEN", "MOBILERUN_ANDROID_PORTAL_TOKEN"),
-])
+@pytest.mark.parametrize(
+    "platform,name,other_name",
+    [
+        ("android", "MOBILERUN_ANDROID_PORTAL_TOKEN", "MOBILERUN_IOS_PORTAL_TOKEN"),
+        ("ios", "MOBILERUN_IOS_PORTAL_TOKEN", "MOBILERUN_ANDROID_PORTAL_TOKEN"),
+    ],
+)
 def test_env_uses_config_token_only_for_configured_platform(platform, name, other_name):
-    config = MobileConfig(device=DeviceConfig(platform=platform, auth_token="config-secret-marker"))
+    config = MobileConfig(
+        device=DeviceConfig(platform=platform, auth_token="config-secret-marker")
+    )
     ConfigLoader.save(config)
     result = CliRunner().invoke(cli, ["env", "-j"])
     rows = {row["variable"]: row for row in json.loads(result.stdout)}
@@ -103,8 +132,12 @@ def test_env_uses_config_token_only_for_configured_platform(platform, name, othe
 
 
 @pytest.mark.parametrize("ios_token", [None, "ios-env-token"])
-def test_run_platform_override_does_not_reassign_android_config_token(monkeypatch, ios_token):
-    config = MobileConfig(device=DeviceConfig(platform="android", auth_token="android-config-token"))
+def test_run_platform_override_does_not_reassign_android_config_token(
+    monkeypatch, ios_token
+):
+    config = MobileConfig(
+        device=DeviceConfig(platform="android", auth_token="android-config-token")
+    )
     ConfigLoader.save(config)
     if ios_token:
         monkeypatch.setenv("MOBILERUN_IOS_PORTAL_TOKEN", ios_token)
@@ -117,14 +150,24 @@ def test_run_platform_override_does_not_reassign_android_config_token(monkeypatc
         def __await__(self):
             async def done():
                 return SimpleNamespace(success=True, reason="done", steps=1)
+
             return done().__await__()
 
     agent = Mock(return_value=SimpleNamespace(run=lambda: Handler()))
     monkeypatch.setattr(run_module, "MobileAgent", agent)
     monkeypatch.setattr(run_module, "_cleanup_android_keyboard", AsyncMock())
-    result = CliRunner().invoke(cli, [
-        "run", "task", "-P", "ios", "-d", "http://localhost:8080", "-j",
-    ])
+    result = CliRunner().invoke(
+        cli,
+        [
+            "run",
+            "task",
+            "-P",
+            "ios",
+            "-d",
+            "http://localhost:8080",
+            "-j",
+        ],
+    )
     assert result.exit_code == 0, result.output
     resolved = agent.call_args.kwargs["config"].device
     assert resolved.platform == "ios"
@@ -137,15 +180,33 @@ UI_STATE = {
         "className": "android.widget.FrameLayout",
         "boundsInScreen": {"left": 0, "top": 0, "right": 100, "bottom": 200},
         "children": [
-            {"className": "android.widget.Button", "text": "Save\tthis\nnow", "resourceId": "app:id/save",
-             "isClickable": True, "isFocused": True,
-             "boundsInScreen": {"left": 1, "top": 2, "right": 30, "bottom": 40}},
-            {"className": "android.view.View", "children": [
-                {"class_name": "android.widget.CheckBox", "content_description": "Accept\rterms",
-                 "is_checkable": True, "checked": True, "selected": True, "enabled": False,
-                 "bounds": {"x": 4, "y": 5, "width": 20, "height": 10}},
-                {"className": "android.widget.EditText", "resourceId": "app:id/input", "editable": True},
-            ]},
+            {
+                "className": "android.widget.Button",
+                "text": "Save\tthis\nnow",
+                "resourceId": "app:id/save",
+                "isClickable": True,
+                "isFocused": True,
+                "boundsInScreen": {"left": 1, "top": 2, "right": 30, "bottom": 40},
+            },
+            {
+                "className": "android.view.View",
+                "children": [
+                    {
+                        "class_name": "android.widget.CheckBox",
+                        "content_description": "Accept\rterms",
+                        "is_checkable": True,
+                        "checked": True,
+                        "selected": True,
+                        "enabled": False,
+                        "bounds": {"x": 4, "y": 5, "width": 20, "height": 10},
+                    },
+                    {
+                        "className": "android.widget.EditText",
+                        "resourceId": "app:id/input",
+                        "editable": True,
+                    },
+                ],
+            },
             {"className": "android.widget.ScrollView", "isScrollable": True},
         ],
     },
@@ -168,7 +229,9 @@ EXPECTED_ALL_LINES = [
 ]
 
 
-@pytest.mark.parametrize("device_id", ["serial", "123e4567-e89b-12d3-a456-426614174000"])
+@pytest.mark.parametrize(
+    "device_id", ["serial", "123e4567-e89b-12d3-a456-426614174000"]
+)
 @pytest.mark.parametrize("all_elements", [False, True])
 def test_ui_text_is_one_line_per_core_node(monkeypatch, device_id, all_elements):
     import mobilerun_core
@@ -204,12 +267,29 @@ def test_ui_json_remains_raw_core_state(monkeypatch):
 def test_ui_uses_description_for_whitespace_and_sanitizes_every_control(monkeypatch):
     import mobilerun_core
 
-    controls = "".join(chr(code) for code in (*range(32), *range(127, 160))) + "\u2028\u2029\u200e"
-    state = UiState({"a11y_tree": {"children": [
-        {"className": "Button", "text": " \t\n ", "contentDescription": "Description"},
-        {"className": "TextView", "text": "before" + controls + "after",
-         "resourceId": "res\x1b[31m", "bounds": [1, 2, 3, 4]},
-    ]}})
+    controls = (
+        "".join(chr(code) for code in (*range(32), *range(127, 160)))
+        + "\u2028\u2029\u200e"
+    )
+    state = UiState(
+        {
+            "a11y_tree": {
+                "children": [
+                    {
+                        "className": "Button",
+                        "text": " \t\n ",
+                        "contentDescription": "Description",
+                    },
+                    {
+                        "className": "TextView",
+                        "text": "before" + controls + "after",
+                        "resourceId": "res\x1b[31m",
+                        "bounds": [1, 2, 3, 4],
+                    },
+                ]
+            }
+        }
+    )
     device = Mock()
     device.ui.return_value = state
     monkeypatch.setattr(mobilerun_core.Mobilerun, "connect", lambda *a, **kw: device)
@@ -221,11 +301,14 @@ def test_ui_uses_description_for_whitespace_and_sanitizes_every_control(monkeypa
     ]
 
 
-@pytest.mark.parametrize("state", [
-    UiState({"a11y_tree": None, "ime_tree": [{"text": "keyboard"}]}),
-    SimpleNamespace(dead_tree=True),
-    SimpleNamespace(a11y_tree_available=False),
-])
+@pytest.mark.parametrize(
+    "state",
+    [
+        UiState({"a11y_tree": None, "ime_tree": [{"text": "keyboard"}]}),
+        SimpleNamespace(dead_tree=True),
+        SimpleNamespace(a11y_tree_available=False),
+    ],
+)
 def test_ui_unavailable_is_a_failure(monkeypatch, state):
     import mobilerun_core
 
@@ -259,35 +342,91 @@ SDK_PATH = "/v1/devices/0python-false-1000"
 def sdk_error_cases():
     cases = []
     for kind, status, body, message, code, hint in [
-        ("status", 401, {"detail": "Not authorized", "title": "Unauthorized", "code": "unauthorized"},
-         "Not authorized", "unauthorized", "mobilerun auth login"),
-        ("status", 403, {"title": "Forbidden"}, "Forbidden", None, "MOBILERUN_CLOUD_API_KEY"),
-        ("status", 404, {"detail": "Device not found"},
-         "Device not found", None, "mobilerun device list -t cloud"),
-        ("status", 422, {"errors": [{"message": "Invalid device id", "code": "validation_error"}]},
-         "Invalid device id", "validation_error", None),
+        (
+            "status",
+            401,
+            {
+                "detail": "Not authorized",
+                "title": "Unauthorized",
+                "code": "unauthorized",
+            },
+            "Not authorized",
+            "unauthorized",
+            "mobilerun auth login",
+        ),
+        (
+            "status",
+            403,
+            {"title": "Forbidden"},
+            "Forbidden",
+            None,
+            "MOBILERUN_CLOUD_API_KEY",
+        ),
+        (
+            "status",
+            404,
+            {"detail": "Device not found"},
+            "Device not found",
+            None,
+            "mobilerun device list -t cloud",
+        ),
+        (
+            "status",
+            422,
+            {"errors": [{"message": "Invalid device id", "code": "validation_error"}]},
+            "Invalid device id",
+            "validation_error",
+            None,
+        ),
         ("status", 500, {}, "Internal Server Error", None, None),
-        ("status", 422, {
-            "detail": f"Device 10 python false {REQUEST_KEY} {ENV_KEY}", "code": "0_python_false",
-        }, "Device 10 python false [redacted] [redacted]", "0_python_false", None),
-        ("connection", None, None, "Could not connect to the API", None, "https://api.example.test"),
+        (
+            "status",
+            422,
+            {
+                "detail": f"Device 10 python false {REQUEST_KEY} {ENV_KEY}",
+                "code": "0_python_false",
+            },
+            "Device 10 python false [redacted] [redacted]",
+            "0_python_false",
+            None,
+        ),
+        (
+            "connection",
+            None,
+            None,
+            "Could not connect to the API",
+            None,
+            "https://api.example.test",
+        ),
         ("timeout", None, None, "Request timed out", None, "https://api.example.test"),
     ]:
+
         def respond(request, kind=kind, status=status, body=body):
             if kind == "connection":
-                raise httpx.ConnectError(f"raw connection {REQUEST_KEY}", request=request)
+                raise httpx.ConnectError(
+                    f"raw connection {REQUEST_KEY}", request=request
+                )
             if kind == "timeout":
                 raise httpx.ReadTimeout(f"raw timeout {REQUEST_KEY}", request=request)
-            return httpx.Response(status, json={
-                **body, "raw_secret": REQUEST_KEY, "request_headers": dict(request.headers),
-            })
+            return httpx.Response(
+                status,
+                json={
+                    **body,
+                    "raw_secret": REQUEST_KEY,
+                    "request_headers": dict(request.headers),
+                },
+            )
 
         with Mobilerun(
-            api_key=REQUEST_KEY, base_url="https://api.example.test/v1",
-            http_client=httpx.Client(transport=httpx.MockTransport(respond)), max_retries=0,
+            api_key=REQUEST_KEY,
+            base_url="https://api.example.test/v1",
+            http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+            max_retries=0,
         ) as client:
             try:
-                client.devices.retrieve("0python-false-1000", extra_query={"token": REQUEST_KEY})
+                client.devices.retrieve(
+                    "0python-false-1000", extra_query={"token": REQUEST_KEY}
+                )
             except (APIStatusError, APIConnectionError) as error:
                 assert error.request.headers["x-stainless-lang"] == "python"
                 assert error.request.headers["x-stainless-async"] == "false"
@@ -300,14 +439,26 @@ def sdk_error_cases():
 
 def invoke_api_error(monkeypatch, error, *flags):
     monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", ENV_KEY)
-    monkeypatch.setattr(device_lifecycle, "core_client", lambda *a, **kw: SimpleNamespace(
-        list_devices=Mock(side_effect=error),
-    ))
+    monkeypatch.setattr(
+        device_lifecycle,
+        "core_client",
+        lambda *a, **kw: SimpleNamespace(
+            list_devices=Mock(side_effect=error),
+        ),
+    )
     result = CliRunner().invoke(cli, ["device", "list", "-t", "cloud", "-v", *flags])
     assert result.exit_code == 1, result.output
     for forbidden in (
-        REQUEST_KEY, ENV_KEY, "Authorization", "request_headers", "raw_secret", "Traceback",
-        "raw connection", "raw timeout", "core wrapper", "?token",
+        REQUEST_KEY,
+        ENV_KEY,
+        "Authorization",
+        "request_headers",
+        "raw_secret",
+        "Traceback",
+        "raw connection",
+        "raw timeout",
+        "core wrapper",
+        "?token",
     ):
         assert forbidden not in result.output
     assert result.stderr.startswith(f"GET {SDK_PATH}\nError: ")
@@ -329,7 +480,11 @@ def test_api_errors_text(monkeypatch, sdk_error_cases):
 def test_api_errors_json(monkeypatch, sdk_error_cases):
     for error, message, status, code, _ in sdk_error_cases:
         result = invoke_api_error(monkeypatch, error, "-j")
-        assert json.loads(result.stdout) == {"error": message, "status": status, "code": code}
+        assert json.loads(result.stdout) == {
+            "error": message,
+            "status": status,
+            "code": code,
+        }
 
 
 def test_wrapped_api_error_uses_sdk_cause(monkeypatch, sdk_error_cases):
@@ -337,4 +492,8 @@ def test_wrapped_api_error_uses_sdk_cause(monkeypatch, sdk_error_cases):
     wrapped = RuntimeError(f"core wrapper {REQUEST_KEY}")
     wrapped.__cause__ = error
     result = invoke_api_error(monkeypatch, wrapped, "-j")
-    assert json.loads(result.stdout) == {"error": message, "status": status, "code": code}
+    assert json.loads(result.stdout) == {
+        "error": message,
+        "status": status,
+        "code": code,
+    }

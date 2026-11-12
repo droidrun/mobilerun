@@ -16,7 +16,11 @@ class Provider:
 
     @property
     def runtime(self):
-        return resolve_provider_variant(self.family, self.auth_mode).id if self.family else self.run_only
+        return (
+            resolve_provider_variant(self.family, self.auth_mode).id
+            if self.family
+            else self.run_only
+        )
 
 
 PROVIDERS = {
@@ -35,7 +39,10 @@ PROVIDERS = {
     "deepseek": Provider(None, "api_key", "base_url", "DeepSeek"),
 }
 provider_option = click.option(
-    "-p", "--provider", type=click.Choice(list(PROVIDERS), case_sensitive=False), help="LLM provider.",
+    "-p",
+    "--provider",
+    type=click.Choice(list(PROVIDERS), case_sensitive=False),
+    help="LLM provider.",
 )
 
 
@@ -50,4 +57,8 @@ def llm_url_kwargs(runtime, url):
         raise click.UsageError(f"-u/--llm-url is not supported for provider {runtime}")
     if runtime == "XAI":
         raise click.UsageError("-u/--llm-url is not supported for provider XAI")
-    return {spec.url_keyword: {"base_url": url} if spec.url_keyword == "http_options" else url}
+    return {
+        spec.url_keyword: (
+            {"base_url": url} if spec.url_keyword == "http_options" else url
+        )
+    }
