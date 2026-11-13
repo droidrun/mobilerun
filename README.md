@@ -183,6 +183,15 @@ mobilerun
 │   ├── ui
 │   ├── apps
 │   └── start PACKAGE
+├── script
+│   ├── init PATH
+│   ├── check PATH
+│   ├── run PATH --local
+│   ├── push FILE
+│   ├── list
+│   ├── show NAME|ID
+│   ├── pull NAME|ID
+│   └── delete NAME|ID
 ├── configure
 ├── auth
 │   ├── login [SERVICE]
@@ -319,6 +328,34 @@ Other errors contain only `error`. Usage errors and interruptions may leave
 stdout empty. The run command emits `success`, `reason`, and `steps` after a
 task, including a failed task; errors before execution use the error document.
 Check the command's exit status as well as its JSON.
+
+### Cloud scripts
+
+Upload immutable versions of a Python script, inspect them, and download their
+source. Names default to the uploaded file's basename, including `.py`.
+`push` waits up to 60 seconds for inspection by default; use `--no-wait` to
+return immediately. A rejected version exits 1; a pending version exits 0 with
+a hint to check it later. All five commands support `-j` for one JSON document.
+
+```bash
+mobilerun script push hello.py --manifest manifest.json
+mobilerun script list --name hello.py
+mobilerun script show hello.py
+mobilerun script pull hello.py --version 1 -o out.py
+mobilerun script delete hello.py --version 1 --yes
+```
+
+Without `--name`, `list` shows one row per name with the latest version and
+active version count; `--name` shows every active version, newest first.
+`show` and `pull` accept an id or a name (latest by default). `pull` writes to
+`-o` or the argument plus `.py` if missing, checks SHA-256, and requires `--force`
+to overwrite a file. `delete NAME` requires `--version N` or `--all`; an id deletes
+that version directly. Interactive deletion asks once; automation requires `--yes`.
+
+Cloud scripts use `MOBILERUN_API_KEY` or a saved `mobilerun auth login` sign-in
+(the legacy `MOBILERUN_CLOUD_API_KEY` also works), and `MOBILERUN_API_BASE_URL`
+(or `--api-url`) selects the endpoint. Until the script API is public on production,
+set `MOBILERUN_API_BASE_URL` to the dev API's `/v1` URL for cloud script commands.
 
 ### Non-interactive use and secrets
 

@@ -183,7 +183,9 @@ def convert_api_error(exc):
         if isinstance(body.get("errors"), list)
         else None
     )
-    fields = (body, first) if isinstance(first, dict) else (body,)
+    fields = tuple(
+        entry for entry in (body, body.get("error"), first) if isinstance(entry, dict)
+    )
     message = next(
         (
             entry[key]
@@ -215,6 +217,22 @@ def convert_api_error(exc):
         "code": clean(code) if code is not None else None,
     }
     text = f"{message} (HTTP {status})" if status is not None else message
+    details = next((entry["details"] for entry in fields if "details" in entry), None)
+    if details is not None:
+        # Keep structured details usable in JSON while applying the same secret
+        # redaction as the top-level message to every nested string.
+        def clean_details(value):
+            if isinstance(value, dict):
+                return {clean(key): clean_details(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [clean_details(item) for item in value]
+            return clean(value) if isinstance(value, str) else value
+
+        document["details"] = clean_details(details)
+        text += "\nDetails: " + json.dumps(document["details"])
+    if status is not None and exc.response.headers.get("retry-after"):
+        document["retryAfter"] = clean(exc.response.headers["retry-after"])
+        text += f"\nRetry-After: {document['retryAfter']}"
     hint = None
     if status in {401, 403}:
         from mobilerun.cli.selection import (
