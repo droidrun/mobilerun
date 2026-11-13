@@ -229,7 +229,19 @@ def convert_api_error(exc):
             return clean(value) if isinstance(value, str) else value
 
         document["details"] = clean_details(details)
-        text += "\nDetails: " + json.dumps(document["details"])
+        entries = document["details"]
+        if isinstance(entries, dict):
+            entries = [{key: value} for key, value in entries.items()]
+        elif not isinstance(entries, list):
+            entries = [entries]
+        messages = [json.dumps(entry, ensure_ascii=False) for entry in entries[:10]]
+        messages = [
+            message if len(message) <= 200 else message[:199] + "…"
+            for message in messages
+        ]
+        if len(entries) > 10:
+            messages.append(f"… {len(entries) - 10} more")
+        text += "\nDetails:\n" + "\n".join(messages)
     if status is not None and exc.response.headers.get("retry-after"):
         document["retryAfter"] = clean(exc.response.headers["retry-after"])
         text += f"\nRetry-After: {document['retryAfter']}"

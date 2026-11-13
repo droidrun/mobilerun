@@ -738,3 +738,42 @@ def test_delete_partial_failure_reports_completed(sdk, json_output, completed, k
         "Could not connect" if kind == "connection" else "delete failed"
     ) in result.stderr
     sdk.client.close.assert_called_once()
+
+
+def test_list_named_versions_uses_count_placeholder(sdk):
+    sdk.scripts.list.return_value = page(record(versionCount=None))
+    result = invoke("list", "--name", "hello.py")
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "hello.py\t2\t-\tready\t2026-11-13T00:00:00+00:00\n"
+
+
+@pytest.mark.parametrize("shape", ["list", "dict", "string"])
+def test_error_details_text_is_bounded_json_is_complete(sdk, shape):
+    entries = [{"message": f"item {index}: " + "x" * 500} for index in range(15)]
+    details = (
+        entries
+        if shape == "list"
+        else (
+            {str(index): entry for index, entry in enumerate(entries)}
+            if shape == "dict"
+            else "x" * 500
+        )
+    )
+    request = httpx.Request("GET", "https://example.test/v1/sandbox/scripts")
+    sdk.scripts.list.side_effect = APIStatusError(
+        "invalid",
+        response=httpx.Response(422, request=request),
+        body={"message": "invalid", "details": details},
+    )
+    result = invoke("list", "-j")
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["details"] == details
+    lines = result.stderr.split("Details:\n", 1)[1].splitlines()
+    assert all(len(line) <= 200 for line in lines)
+    if shape != "string":
+        assert len(lines) == 11
+        assert lines[-1] == "… 5 more"
+        assert "item 10" not in result.stderr
+    else:
+        assert len(lines) == 1
+    assert lines[0].endswith("…")

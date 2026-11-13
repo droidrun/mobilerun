@@ -367,7 +367,7 @@ def list_scripts(name, search, api_url, json_output, verbose):
                 (
                     item.name,
                     item.version,
-                    item.version_count,
+                    item.version_count if name is None else "-",
                     item.status,
                     item.created_at.isoformat(),
                 )
