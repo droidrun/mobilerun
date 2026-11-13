@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -997,6 +998,54 @@ def test_executor_runs_the_action_json_over_several_actions(action_json):
                 await agent.get_response(ctx, event)
                 stored = await ctx.store.get("executor_selection")
                 assert stored.action_json == action_json
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("actions", [[ToolCall("click", {"index": 2})], []])
+def test_fast_agent_runs_nothing_from_a_failed_selection(actions):
+    async def run():
+        config, registry, action_ctx, shared, provider, _ = _dependencies()
+        selection = ActionSelection(actions, failure="Option 7 does not exist")
+        agent = FastAgent(
+            action_selector=StubSelector(select=AsyncMock(return_value=selection)),
+            agent_config=config,
+            registry=registry,
+            action_ctx=action_ctx,
+            state_provider=provider,
+            shared_state=shared,
+        )
+        agent.system_prompt = await agent._build_system_prompt()
+        shared.message_history = [ChatMessage(role="user", content="Select Bob")]
+        ctx = Context(agent)
+        with patch.object(Context, "write_event_to_stream"):
+            await ctx.store.set("selection_goal", "Select Bob")
+            event = await agent.handle_llm_input(ctx, FastAgentInputEvent())
+        assert event.tool_call_status == ToolCallParseStatus.MALFORMED
+        assert event.code is None
+        assert await ctx.store.get("pending_tool_calls", default=None) is None
+
+    asyncio.run(run())
+
+
+def test_executor_reports_a_failed_selection_without_actions():
+    async def run():
+        config, registry, action_ctx, shared, _, _ = _dependencies()
+        selection = ActionSelection(failure="Option 7 does not exist")
+        agent = ExecutorAgent(
+            action_selector=StubSelector(select=AsyncMock(return_value=selection)),
+            agent_config=config,
+            registry=registry,
+            action_ctx=action_ctx,
+            shared_state=shared,
+        )
+        ctx = Context(agent)
+        with patch.object(Context, "write_event_to_stream"):
+            event = await agent.prepare_context(ctx, StartEvent(subgoal="Select Bob"))
+            response = await agent.get_response(ctx, event)
+            action = await agent.process_response(ctx, response)
+        assert json.loads(action.action_json) == {"action": "invalid"}
+        assert await ctx.store.get("executor_failure") == "Option 7 does not exist"
 
     asyncio.run(run())
 

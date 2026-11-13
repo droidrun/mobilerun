@@ -521,6 +521,26 @@ class FastAgent(Workflow):
             )
 
         usage = selection.usage
+        if selection.failure is not None:
+            # A failed selection runs nothing; the retry path reports why.
+            selection = replace(
+                selection,
+                actions=[],
+                response=None if self.native_tools else selection.response,
+                parse_result=(
+                    replace(
+                        selection.parse_result,
+                        calls=[],
+                        status=ToolCallParseStatus.MALFORMED,
+                    )
+                    if selection.parse_result is not None
+                    else ToolCallParseResult(
+                        thought=selection.thought,
+                        calls=[],
+                        status=ToolCallParseStatus.MALFORMED,
+                    )
+                ),
+            )
         parse_result = selection.parse_result or ToolCallParseResult(
             thought=selection.thought,
             calls=selection.actions,
