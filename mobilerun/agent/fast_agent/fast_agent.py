@@ -11,9 +11,16 @@ import asyncio
 import copy
 import logging
 import os
+import uuid
+from dataclasses import replace
 from typing import TYPE_CHECKING, Optional, Type
 
-from llama_index.core.base.llms.types import ChatMessage, ImageBlock, TextBlock
+from llama_index.core.base.llms.types import (
+    ChatMessage,
+    ImageBlock,
+    TextBlock,
+    ToolCallBlock,
+)
 from llama_index.core.llms.llm import LLM
 from llama_index.core.workflow import Context, StartEvent, StopEvent, Workflow, step
 from mobilerun_core_local.driver.base import DeviceDisconnectedError
@@ -35,21 +42,22 @@ from mobilerun.agent.fast_agent.events import (
     FastAgentToolCallEvent,
 )
 from mobilerun.agent.fast_agent.native_tools import (
-    native_tool_kwargs,
-    parse_native_tool_calls,
     tool_result_messages,
 )
 from mobilerun.agent.fast_agent.xml_parser import (
+    ToolCallParseResult,
     ToolCallParseStatus,
     ToolResult,
     extract_add_memory,
     format_tool_calls,
     format_tool_results,
-    parse_tool_calls_detailed,
 )
-from mobilerun.agent.usage import get_usage_from_response
+from mobilerun.agent.selectors import (
+    ActionSelector,
+    LlamaIndexLLMSelector,
+    SelectionRequest,
+)
 from mobilerun.agent.utils.chat_utils import limit_history
-from mobilerun.agent.utils.inference import acall_with_retries
 from mobilerun.agent.utils.prompt_resolver import PromptResolver
 from mobilerun.agent.utils.tracing_setup import record_langfuse_screenshot
 from mobilerun.config_manager.config_manager import AgentConfig, TracingConfig
@@ -94,6 +102,13 @@ def _malformed_tool_call_correction(attempt: int) -> str:
     )
 
 
+def _selection_failure_correction(failure: str, attempt: int) -> str:
+    return (
+        f"{failure} (attempt {attempt}/{_MALFORMED_TOOL_CALL_LIMIT}). "
+        "No tool was executed. Respond again with a valid action."
+    )
+
+
 def _truncate_message_text(message: ChatMessage, end: int) -> ChatMessage:
     """Cut text at offset ``end`` of ``message.content``, keeping non-text blocks."""
     blocks = []
@@ -132,11 +147,11 @@ class FastAgent(Workflow):
 
     def __init__(
         self,
-        llm: LLM,
-        agent_config: AgentConfig,
-        registry: "ToolRegistry",
-        action_ctx: "ActionContext",
-        state_provider: "StateProvider",
+        action_selector: ActionSelector | None = None,
+        agent_config: AgentConfig | None = None,
+        registry: "ToolRegistry | None" = None,
+        action_ctx: "ActionContext | None" = None,
+        state_provider: "StateProvider | None" = None,
         save_trajectory: str = "none",
         debug: bool = False,
         shared_state: Optional["MobileAgentState"] = None,
@@ -146,10 +161,22 @@ class FastAgent(Workflow):
         *args,
         **kwargs,
     ):
-        assert llm, "llm must be provided."
+        llm = kwargs.pop("llm", None)
+        if isinstance(action_selector, LLM):
+            action_selector, llm = None, action_selector
+        if action_selector is None and llm is not None:
+            action_selector = LlamaIndexLLMSelector(llm)
+        if action_selector is None:
+            raise ValueError("action_selector or llm is required")
+        if not isinstance(action_selector, ActionSelector):
+            raise TypeError("action_selector must implement ActionSelector")
+        if agent_config is None:
+            raise TypeError("agent_config is required")
+        if registry is None:
+            raise TypeError("registry is required")
         super().__init__(*args, **kwargs)
 
-        self.llm = llm
+        self.action_selector = action_selector
         self.agent_config = agent_config
         self.config = agent_config.fast_agent
         self.max_steps = agent_config.max_steps
@@ -179,9 +206,22 @@ class FastAgent(Workflow):
                 f"fast_agent.tool_calling must be one of {_TOOL_CALLING_MODES}, "
                 f"got {tool_calling!r}"
             )
-        self.native_tools = tool_calling == "auto" and bool(
-            getattr(llm, "supports_native_tool_calls", False)
+        self.native_tools = (
+            tool_calling == "auto" and self.action_selector.supports_native_tool_calls
         )
+        if (
+            tool_calling == "auto"
+            and not self.native_tools
+            and any(
+                getattr(llm, "supports_native_tool_calls", False)
+                for llm in self.action_selector.llms
+            )
+        ):
+            logger.warning(
+                "%s does not support native tool calls; using XML tool calling. "
+                "Models that need native tool calls may produce no valid actions.",
+                type(self.action_selector).__name__,
+            )
 
         # Build tool descriptions and param types from registry
         self.tool_descriptions = self.registry.get_tool_descriptions_xml()
@@ -216,12 +256,9 @@ class FastAgent(Workflow):
             ),
         }
 
-        custom_system_prompt = self.prompt_resolver.get_prompt("fast_agent_system")
-        if custom_system_prompt:
-            system_text = PromptLoader.render_template(
-                custom_system_prompt,
-                template_context,
-            )
+        custom_prompt = self.prompt_resolver.get_prompt("fast_agent_system")
+        if custom_prompt:
+            system_text = PromptLoader.render_template(custom_prompt, template_context)
         else:
             system_text = await PromptLoader.load_prompt(
                 self.agent_config.get_fast_agent_system_prompt_path(),
@@ -231,26 +268,19 @@ class FastAgent(Workflow):
 
     async def _build_user_prompt(self, goal: str) -> ChatMessage:
         """Build initial user prompt message."""
-        custom_user_prompt = self.prompt_resolver.get_prompt("fast_agent_user")
-        if custom_user_prompt:
-            user_text = PromptLoader.render_template(
-                custom_user_prompt,
-                {
-                    "goal": goal,
-                    "variables": (
-                        self.shared_state.custom_variables if self.shared_state else {}
-                    ),
-                },
-            )
+        template_context = {
+            "goal": goal,
+            "variables": (
+                self.shared_state.custom_variables if self.shared_state else {}
+            ),
+        }
+        custom_prompt = self.prompt_resolver.get_prompt("fast_agent_user")
+        if custom_prompt:
+            user_text = PromptLoader.render_template(custom_prompt, template_context)
         else:
             user_text = await PromptLoader.load_prompt(
                 self.agent_config.get_fast_agent_user_prompt_path(),
-                {
-                    "goal": goal,
-                    "variables": (
-                        self.shared_state.custom_variables if self.shared_state else {}
-                    ),
-                },
+                template_context,
             )
         return ChatMessage(role="user", content=user_text)
 
@@ -278,6 +308,7 @@ class FastAgent(Workflow):
         # Get goal and build user message
         user_input = ev.get("input", default=None)
         assert user_input, "User input cannot be empty."
+        await ctx.store.set("selection_goal", user_input)
 
         user_message = await self._build_user_prompt(user_input)
         self.shared_state.message_history.clear()
@@ -311,7 +342,6 @@ class FastAgent(Workflow):
                 reason=f"Reached max step count of {self.max_steps} steps",
                 tool_call_count=self.tool_call_counter,
             )
-            ctx.write_event_to_stream(event)
             return event
 
         self.shared_state.step_number += 1
@@ -343,6 +373,7 @@ class FastAgent(Workflow):
                 logger.warning(f"Failed to capture screenshot: {e}")
 
         # Get device state
+        ui_state = None
         try:
             ui_state = await self.state_provider.get_state()
             self.action_ctx.ui = ui_state
@@ -383,6 +414,11 @@ class FastAgent(Workflow):
             preserve_first=True,
         )
         messages_to_send = [self.system_prompt] + copy.deepcopy(limited_history)
+        model_screenshot = (
+            await resize_model_screenshot_async(self.state_provider, screenshot)
+            if self.vision and screenshot
+            else None
+        )
 
         # Inject device state and screenshot into the copy (not the original)
         user_indices = [
@@ -408,12 +444,9 @@ class FastAgent(Workflow):
                 )
 
             # Screenshot → last user message
-            if self.vision and screenshot:
-                screenshot = await resize_model_screenshot_async(
-                    self.state_provider, screenshot
-                )
+            if model_screenshot:
                 messages_to_send[last_user_idx].blocks.append(
-                    ImageBlock(image=screenshot)
+                    ImageBlock(image=model_screenshot)
                 )
 
             # Previous device state → second-to-last user message
@@ -427,47 +460,130 @@ class FastAgent(Workflow):
                         )
                     )
 
-        # Call LLM
+        # Select actions
         logger.info("FastAgent response:", extra={"color": "yellow"})
-        chat_kwargs = {}
-        if self.native_tools:
-            chat_kwargs = native_tool_kwargs(
-                self.llm, self.tool_specs, self.config.parallel_tools
+        tools = self.registry.get_signatures()
+        if self.action_selector.requires_action_candidates:
+            options = await self.state_provider.build_action_candidates(
+                self.action_ctx,
+                tools,
+                include_device_actions=True,
+                locate_taps=bool(model_screenshot)
+                and self.action_selector.locates_points,
             )
-        response = await acall_with_retries(
-            self.llm,
-            messages_to_send,
+        else:
+            options = ()
+        located = any(option.point_space for option in options)
+        request = SelectionRequest(
+            goal=await ctx.store.get(
+                "selection_goal", default=self.shared_state.instruction
+            ),
+            state=ui_state,
+            memory=self.shared_state.agent_memory,
+            history=limited_history,
+            # Located taps need the clean screenshot, not the grid copy.
+            screenshot=screenshot if located else model_screenshot,
+            tools=tools,
+            variables=self.shared_state.custom_variables,
+            messages=messages_to_send,
+            param_types=self.param_types,
             stream=self.agent_config.streaming,
-            **chat_kwargs,
+            options=options,
+            protocol="native" if self.native_tools else "xml",
+            tool_specs=self.tool_specs,
+            parallel_tools=self.config.parallel_tools,
+        )
+        if self.action_selector.requires_action_candidates:
+            custom_prompt = self.prompt_resolver.get_prompt("decision_system")
+            agent_config = self.agent_config
+
+            async def render_instructions(variables: dict) -> str:
+                if custom_prompt:
+                    return PromptLoader.render_template(custom_prompt, variables)
+                return await PromptLoader.load_prompt(
+                    agent_config.get_decision_system_prompt_path(), variables
+                )
+
+            request.render_instructions = render_instructions
+            request.instructions = await render_instructions(
+                request.get_decision_prompt_variables()
+            )
+        selection = await self.action_selector.select(request)
+        await ctx.store.set(
+            "selection_failure", selection.failure if selection else None
         )
 
-        if response is None:
+        if selection is None:
             return FastAgentEndEvent(
                 success=False,
-                reason="LLM response is None. This is a critical error.",
+                reason=self.action_selector.abstention_reason,
                 tool_call_count=self.tool_call_counter,
             )
 
-        # Extract usage
-        usage = None
-        try:
-            usage = get_usage_from_response(self.llm.class_name(), response)
-        except Exception as e:
-            logger.warning(f"Could not get usage: {e}")
-
-        response_text = response.message.content or ""
-
-        # Parse tool calls from response
-        if self.native_tools:
-            parse_result = parse_native_tool_calls(response.message, self.param_types)
-        else:
-            parse_result = parse_tool_calls_detailed(response_text, self.param_types)
+        usage = selection.usage
+        if selection.failure is not None:
+            # A failed selection runs nothing; the retry path reports why.
+            selection = replace(
+                selection,
+                actions=[],
+                response=None if self.native_tools else selection.response,
+                parse_result=(
+                    replace(
+                        selection.parse_result,
+                        calls=[],
+                        status=ToolCallParseStatus.MALFORMED,
+                    )
+                    if selection.parse_result is not None
+                    else ToolCallParseResult(
+                        thought=selection.thought,
+                        calls=[],
+                        status=ToolCallParseStatus.MALFORMED,
+                    )
+                ),
+            )
+        parse_result = selection.parse_result or ToolCallParseResult(
+            thought=selection.thought,
+            calls=selection.actions,
+            status=(
+                ToolCallParseStatus.VALID
+                if selection.actions
+                else ToolCallParseStatus.NO_MARKUP
+            ),
+        )
         thought = parse_result.thought
         tool_calls = parse_result.calls
 
         # Store assistant response (preserves ThinkingBlock, additional_kwargs, etc.)
         # up to the end of its first block, so later text is never replayed.
-        message = response.message
+        if self.native_tools and any(call.call_id is None for call in tool_calls):
+            # Calls from a non-LLM or delegated selector get ids so the tool
+            # results that answer them form a valid native exchange.
+            tool_calls = [
+                replace(call, call_id=call.call_id or f"call_{uuid.uuid4().hex}")
+                for call in tool_calls
+            ]
+            parse_result = replace(parse_result, calls=tool_calls, end=None)
+            message = ChatMessage(
+                role="assistant",
+                blocks=[
+                    *([TextBlock(text=thought)] if thought else []),
+                    *(
+                        ToolCallBlock(
+                            tool_call_id=call.call_id,
+                            tool_name=call.name,
+                            tool_kwargs=call.parameters,
+                        )
+                        for call in tool_calls
+                    ),
+                ],
+            )
+        elif selection.response is not None:
+            message = selection.response.message
+        else:
+            message = ChatMessage(
+                role="assistant", content=thought + "\n" + format_tool_calls(tool_calls)
+            )
+        response_text = message.content or ""
         if parse_result.end is not None and response_text[parse_result.end :].strip():
             message = _truncate_message_text(message, parse_result.end)
         if parse_result.ignored_blocks:
@@ -481,6 +597,8 @@ class FastAgent(Workflow):
         memory_update = extract_add_memory(thought)
         if memory_update:
             self.shared_state.append_memory(memory_update)
+        if selection.memory_update:
+            self.shared_state.append_memory(selection.memory_update)
 
         # Store parsed calls for logging/trajectory output. This uses the
         # executable representation so ignored XML blocks are not shown as
@@ -515,6 +633,7 @@ class FastAgent(Workflow):
         has_tool_calls = ev.code is not None
 
         if ev.tool_call_status == ToolCallParseStatus.MALFORMED and not has_tool_calls:
+            failure = await ctx.store.get("selection_failure", default=None)
             self._consecutive_malformed_tool_calls += 1
             attempt = self._consecutive_malformed_tool_calls
             logger.warning(
@@ -540,19 +659,25 @@ class FastAgent(Workflow):
                 event = FastAgentEndEvent(
                     success=False,
                     reason=(
-                        "Model produced malformed tool-call markup "
+                        f"{failure} ({_MALFORMED_TOOL_CALL_LIMIT} consecutive times); "
+                        "stopped to prevent a retry loop."
+                        if failure
+                        else "Model produced malformed tool-call markup "
                         f"{_MALFORMED_TOOL_CALL_LIMIT} consecutive times; stopped to prevent "
                         "a retry loop. Switch models or verify tool-call protocol compatibility."
                     ),
                     tool_call_count=self.tool_call_counter,
                 )
-                ctx.write_event_to_stream(event)
                 return event
 
             self.shared_state.message_history.append(
                 ChatMessage(
                     role="user",
-                    content=_malformed_tool_call_correction(attempt),
+                    content=(
+                        _selection_failure_correction(failure, attempt)
+                        if failure
+                        else _malformed_tool_call_correction(attempt)
+                    ),
                 )
             )
             return FastAgentInputEvent()
@@ -689,7 +814,6 @@ class FastAgent(Workflow):
                     reason=reason,
                     tool_call_count=self.tool_call_counter,
                 )
-                ctx.write_event_to_stream(event)
                 return event
 
             # Later calls were planned assuming this one succeeded.
@@ -773,6 +897,7 @@ class FastAgent(Workflow):
     @step
     async def finalize(self, ev: FastAgentEndEvent, ctx: Context) -> StopEvent:
         self.shared_state.finished = False
+        # All exit paths publish their terminal event exactly once, here.
         ctx.write_event_to_stream(ev)
 
         return StopEvent(

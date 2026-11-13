@@ -98,6 +98,9 @@ class _Registry:
     def get_param_types(self):
         return {"index": "number", "success": "boolean", "secret_id": "string"}
 
+    def get_signatures(self):
+        return {name: {} for name in self.tools}
+
     async def execute(self, name, parameters, action_ctx, workflow_ctx=None):
         self.executed.append(name)
         if name == "type_secret":
@@ -135,11 +138,11 @@ def _run_fast(responses, *, queue_message=False, decision="denied", provider=Tru
         )
         with (
             patch(
-                "mobilerun.agent.fast_agent.fast_agent.acall_with_retries",
+                "mobilerun.agent.selectors.llama_index_llm.acall_with_retries",
                 new=responder,
             ),
             patch(
-                "mobilerun.agent.fast_agent.fast_agent.get_usage_from_response",
+                "mobilerun.agent.selectors.llama_index_llm.get_usage_from_response",
                 return_value=None,
             ),
         ):
