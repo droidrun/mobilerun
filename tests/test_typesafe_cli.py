@@ -346,3 +346,67 @@ def test_wizard_delegate_without_any_llm_runs_jev_alone(monkeypatch):
 
     assert config.agent.delegation is None
     assert "fast_agent" in config.decision_profiles
+
+
+def test_typesafe_flag_overrides_the_named_delegation_primary(monkeypatch):
+    config = MobileConfig()
+    config.decision_profiles["jev"] = DecisionProfile(model="jev-1", kwargs={"a": 1})
+    config.llm_profiles["gpt"] = LLMProfile(provider="OpenAI", model="gpt-6.1-sol")
+    config.agent.delegation = DelegationConfig(primary="jev", delegate="gpt")
+    _, agents, _ = _run(monkeypatch, config, provider="TypeSafe", model="jev-2")
+
+    profiles = agents[0]["config"].decision_profiles
+    assert profiles == {"jev": DecisionProfile(model="jev-2", kwargs={"a": 1})}
+
+
+def test_typesafe_flag_with_no_delegate_overrides_the_action_role(monkeypatch):
+    config = MobileConfig()
+    config.decision_profiles["jev"] = DecisionProfile(model="jev-1")
+    config.agent.delegation = DelegationConfig(primary="jev", delegate="manager")
+    _, agents, _ = _run(
+        monkeypatch, config, provider="TypeSafe", model="jev-2", delegate=False
+    )
+
+    config = agents[0]["config"]
+    assert config.agent.delegation is None
+    assert config.decision_profiles["fast_agent"] == DecisionProfile(model="jev-2")
+
+
+def test_typesafe_flag_reaches_the_loaded_primary_selector(monkeypatch):
+    from mobilerun.agent.utils import selector_loader
+
+    config = MobileConfig()
+    config.decision_profiles["jev"] = DecisionProfile(model="jev-1")
+    config.agent.delegation = DelegationConfig(primary="jev", delegate="manager")
+    _, agents, _ = _run(monkeypatch, config, provider="TypeSafe", model="jev-2")
+    loaded = []
+    monkeypatch.setattr(
+        selector_loader,
+        "load_decision_models_from_profiles",
+        lambda profiles, names: loaded.append(profiles[names[0]]) or {names[0]: Mock()},
+    )
+    monkeypatch.setattr(
+        selector_loader,
+        "load_llms_from_profiles",
+        lambda profiles, profile_names, **kw: {profile_names[0]: Mock()},
+    )
+
+    selector_loader.load_delegating_selector(agents[0]["config"])
+
+    assert loaded == [DecisionProfile(model="jev-2")]
+
+
+@pytest.mark.parametrize("delegate_profile", ["delegate", "jev_big"])
+def test_typesafe_delegate_keeps_the_named_primary(monkeypatch, delegate_profile):
+    config = MobileConfig()
+    config.decision_profiles["jev"] = DecisionProfile(model="jev-1")
+    config.decision_profiles["jev_big"] = DecisionProfile(model="jev-big")
+    config.agent.delegation = DelegationConfig(primary="jev", delegate=delegate_profile)
+    _, agents, _ = _run(
+        monkeypatch, config, provider="TypeSafe", model="jev-2", delegate=True
+    )
+
+    config = agents[0]["config"]
+    assert config.agent.delegation == DelegationConfig(primary="jev")
+    assert config.decision_profiles["jev"] == DecisionProfile(model="jev-2")
+    assert config.llm_profiles["delegate"] == config.llm_profiles["fast_agent"]

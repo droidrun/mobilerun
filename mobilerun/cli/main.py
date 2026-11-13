@@ -228,7 +228,15 @@ async def run_command(
 
         # A decision model picks actions in place of the action LLM.
         if provider and provider.strip().lower() == "typesafe":
-            role = _action_role(config)
+            # Override the profile that will actually pick actions.
+            delegation = config.agent.delegation
+            role = (
+                delegation.primary
+                if delegation is not None
+                and delegation.primary
+                and delegate is not False
+                else _action_role(config)
+            )
             existing = config.decision_profiles.get(role)
             endpoint = base_url or api_base
             if existing is not None and existing.provider.lower() == "typesafe":

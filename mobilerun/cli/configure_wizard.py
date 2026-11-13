@@ -530,7 +530,10 @@ def ensure_llm_delegation(config, role: str) -> None:
                 "config has none."
             )
         config.llm_profiles["delegate"] = deepcopy(config.llm_profiles[source])
-    config.agent.delegation = DelegationConfig()
+    # A named primary is the profile picking actions; keep it.
+    config.agent.delegation = DelegationConfig(
+        primary=delegation.primary if delegation is not None else None
+    )
 
 
 def _prompt_typesafe_key_source() -> str:

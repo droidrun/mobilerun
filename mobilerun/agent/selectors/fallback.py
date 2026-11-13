@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import replace
@@ -19,14 +20,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mobilerun")
 
 
-def _usable(selection: ActionSelection | None) -> bool:
+def _usable(selection: ActionSelection | None, request: SelectionRequest) -> bool:
     """An error placeholder (executor 'invalid', failure, parse error) is not usable."""
+    if (
+        selection is None
+        or selection.failure is not None
+        or selection.parse_error is not None
+    ):
+        return False
+    if selection.actions:
+        return any(action.name != "invalid" for action in selection.actions)
+    # The executor also runs a selection given only as action JSON.
+    if request.protocol != "executor" or not selection.action_json:
+        return False
+    try:
+        action = json.loads(selection.action_json)
+    except (TypeError, ValueError):
+        return False
+    name = action.get("action") if isinstance(action, dict) else None
     return (
-        selection is not None
-        and bool(selection.actions)
-        and selection.failure is None
-        and selection.parse_error is None
-        and any(action.name != "invalid" for action in selection.actions)
+        isinstance(name, str)
+        and name != "invalid"
+        and (not request.tools or name in request.tools)
     )
 
 
@@ -80,7 +95,7 @@ class FallbackSelector(BaseActionSelector):
         for selector in selectors[:-1]:
             try:
                 selection = await selector.select(request)
-                if _usable(selection):
+                if _usable(selection, request):
                     return _with_usage(selection, spent)
                 if selection is not None:
                     spent.append(selection.usage)

@@ -851,6 +851,45 @@ def test_fallback_reports_usage_of_unusable_attempts():
     assert selection.usage.total_tokens == 24
 
 
+@pytest.mark.parametrize(
+    ("action_json", "tools", "kept"),
+    [
+        ('{"action": "click", "index": 2}', {"click": None}, True),
+        ('{"action": "click", "index": 2}', {}, True),
+        ('{"action": "invalid"}', {"click": None}, False),
+        ('{"action": "teleport"}', {"click": None}, False),
+        ("{not json", {"click": None}, False),
+        ('["click"]', {"click": None}, False),
+    ],
+)
+def test_fallback_keeps_valid_executor_json_selections(action_json, tools, kept):
+    chosen = ActionSelection(action_json=action_json)
+    fallback_choice = ActionSelection([ToolCall("back")])
+    fallback = StubSelector(select=AsyncMock(return_value=fallback_choice))
+    request = SelectionRequest("Select", tools=tools, protocol="executor")
+
+    selection = asyncio.run(
+        FallbackSelector(
+            StubSelector(select=AsyncMock(return_value=chosen)), [fallback]
+        ).select(request)
+    )
+
+    assert selection is (chosen if kept else fallback_choice)
+
+
+def test_fallback_ignores_json_only_selections_outside_the_executor():
+    chosen = ActionSelection(action_json='{"action": "click", "index": 2}')
+    fallback_choice = ActionSelection([ToolCall("back")])
+    selection = asyncio.run(
+        FallbackSelector(
+            StubSelector(select=AsyncMock(return_value=chosen)),
+            [StubSelector(select=AsyncMock(return_value=fallback_choice))],
+        ).select(SelectionRequest("Select", protocol="xml"))
+    )
+
+    assert selection is fallback_choice
+
+
 def test_successful_selection_does_not_call_fallback():
     result = ActionSelection([ToolCall("click", {"index": 2})])
     primary = StubSelector(select=AsyncMock(return_value=result))
