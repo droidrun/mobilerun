@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -761,3 +762,27 @@ def test_wizard_keep_survives_a_decision_profile_named_delegate(monkeypatch):
     assert delegation.min_confidence == 0.3
     assert config.llm_profiles[delegation.delegate] == gpt
     assert delegation.delegate not in config.decision_profiles
+
+
+def test_changing_the_llm_keeps_a_delegate_with_its_own_endpoint(monkeypatch):
+    config = MobileConfig()
+    delegate = replace(config.llm_profiles["fast_agent"], base_url="https://own.test")
+    config.llm_profiles["delegate"] = delegate
+    monkeypatch.setattr(
+        "mobilerun.agent.providers.setup_service.save_env_keys", lambda keys: None
+    )
+    from mobilerun.agent.providers.registry import resolve_provider_variant
+
+    configure_wizard._apply_model_selection(
+        config,
+        family_id="openai",
+        variant=resolve_provider_variant("openai", "api_key"),
+        selected_auth_mode="api_key",
+        selected_model="gpt-6.1-sol",
+        selected_api_key="sk-test",
+        selected_api_key_source="env",
+        selected_base_url=None,
+        credential_path=None,
+    )
+
+    assert config.llm_profiles["delegate"] == delegate

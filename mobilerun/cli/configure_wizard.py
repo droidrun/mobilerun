@@ -341,11 +341,7 @@ def _roles_following_the_llm(config) -> tuple[str, ...]:
     """All roles, minus a delegate set to a different LLM than the agent."""
     delegate = config.llm_profiles.get("delegate")
     main = config.llm_profiles.get("fast_agent")
-    if (
-        delegate is not None
-        and main is not None
-        and (delegate.provider, delegate.model) != (main.provider, main.model)
-    ):
+    if delegate is not None and main is not None and delegate != main:
         return tuple(role for role in _ALL_CONFIG_ROLES if role != "delegate")
     return _ALL_CONFIG_ROLES
 
@@ -627,9 +623,7 @@ def _prompt_delegate_llm(
     main = config.llm_profiles.get(role) or config.llm_profiles.get("fast_agent")
     current = config.llm_profiles.get(_llm_delegate_name(config, role) or "delegate")
     choices: list[SelectChoice] = []
-    if current is not None and (
-        main is None or (current.provider, current.model) != (main.provider, main.model)
-    ):
+    if current is not None and (main is None or current != main):
         choices.append(
             SelectChoice(value="keep", label=f"Keep {_profile_label(current)}")
         )
