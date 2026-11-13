@@ -32,11 +32,15 @@ for _retry_logger in (
 if TYPE_CHECKING:
     from mobilerun.agent import ResultEvent
     from mobilerun.agent.droid import MobileAgent, MobileAgentState
+    from mobilerun.agent.utils.decision_loader import load_decision_model
     from mobilerun.agent.utils.llm_picker import load_llm
     from mobilerun.config_manager import (
         AgentConfig,
         AppCardConfig,
         CredentialsConfig,
+        DecisionConfig,
+        DecisionProfile,
+        DelegationConfig,
         DeviceConfig,
         ExecutorConfig,
         FastAgentConfig,
@@ -55,10 +59,17 @@ _EXPORTS = {
     "ResultEvent": ("mobilerun.agent", "ResultEvent"),
     "MobileAgent": ("mobilerun.agent.droid", "MobileAgent"),
     "MobileAgentState": ("mobilerun.agent.droid", "MobileAgentState"),
+    "load_decision_model": (
+        "mobilerun.agent.utils.decision_loader",
+        "load_decision_model",
+    ),
     "load_llm": ("mobilerun.agent.utils.llm_picker", "load_llm"),
     "AgentConfig": ("mobilerun.config_manager", "AgentConfig"),
     "AppCardConfig": ("mobilerun.config_manager", "AppCardConfig"),
     "CredentialsConfig": ("mobilerun.config_manager", "CredentialsConfig"),
+    "DecisionConfig": ("mobilerun.config_manager", "DecisionConfig"),
+    "DecisionProfile": ("mobilerun.config_manager", "DecisionProfile"),
+    "DelegationConfig": ("mobilerun.config_manager", "DelegationConfig"),
     "DeviceConfig": ("mobilerun.config_manager", "DeviceConfig"),
     "ExecutorConfig": ("mobilerun.config_manager", "ExecutorConfig"),
     "FastAgentConfig": ("mobilerun.config_manager", "FastAgentConfig"),
@@ -83,6 +94,7 @@ __all__ = [
     "MobileAgent",
     "MobileAgentState",
     "load_llm",
+    "load_decision_model",
     "ResultEvent",
     # Tools / Drivers
     "DeviceDriver",
@@ -106,6 +118,9 @@ __all__ = [
     "ToolsConfig",
     "CredentialsConfig",
     "LLMProfile",
+    "DecisionProfile",
+    "DecisionConfig",
+    "DelegationConfig",
 ]
 
 # Legacy aliases — deprecated, will be removed in v0.8.0
