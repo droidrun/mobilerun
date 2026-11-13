@@ -44,14 +44,14 @@ def _interpreter(python_path):
     else:
         interpreter = sys.executable
     result = subprocess.run(
-        [interpreter, "-c", "import mobilerun_sandbox"],
+        [interpreter, "-c", "import mobilerun_routines"],
         capture_output=True,
         check=False,
     )
     if result.returncode:
         click.echo(
-            f"mobilerun-sandbox is not installed in {interpreter}. "
-            "Install it with: pip install mobilerun-sandbox",
+            f"mobilerun-routines is not installed in {interpreter}. "
+            "Install it with: pip install mobilerun-routines",
             err=True,
         )
         raise click.exceptions.Exit(1)
@@ -72,7 +72,7 @@ def init_script(path, python_path, verbose):
     """Create a starter script."""
     interpreter = _interpreter(python_path)
     result = subprocess.run(
-        [interpreter, "-m", "mobilerun_sandbox", "new", path],
+        [interpreter, "-m", "mobilerun_routines", "new", path],
         capture_output=True,
         text=True,
         check=False,
@@ -93,7 +93,7 @@ def check_script(path, python_path, json_output, verbose):
     """Inspect a script's entry point and schemas."""
     interpreter = _interpreter(python_path)
     result = subprocess.run(
-        [interpreter, "-m", "mobilerun_sandbox", "inspect", path],
+        [interpreter, "-m", "mobilerun_routines", "inspect", path],
         capture_output=True,
         text=True,
         check=False,
@@ -155,7 +155,7 @@ def run_script(
         command = [
             interpreter,
             "-m",
-            "mobilerun_sandbox",
+            "mobilerun_routines",
             "run",
             path,
             "--input-file",

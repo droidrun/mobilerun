@@ -46,7 +46,7 @@ def test_interpreter_precedence(monkeypatch, explicit, venv, platform, expected)
     call = Mock(return_value=subprocess.CompletedProcess([], 0))
     monkeypatch.setattr(script.subprocess, "run", call)
     assert script._interpreter(explicit) == expected
-    assert call.call_args.args[0] == [expected, "-c", "import mobilerun_sandbox"]
+    assert call.call_args.args[0] == [expected, "-c", "import mobilerun_routines"]
 
 
 @pytest.mark.parametrize("command", ["init", "check", "run"])
@@ -60,8 +60,8 @@ def test_missing_package(monkeypatch, source, command):
     assert result.exit_code == 1, result.output
     assert result.stdout == ""
     assert result.stderr == (
-        "mobilerun-sandbox is not installed in /custom/python. "
-        "Install it with: pip install mobilerun-sandbox\n"
+        "mobilerun-routines is not installed in /custom/python. "
+        "Install it with: pip install mobilerun-routines\n"
     )
     assert call.call_count == 1
 
@@ -83,7 +83,7 @@ def test_init_passthrough(monkeypatch, tmp_path, code):
     assert call.call_args.args[0] == [
         sys.executable,
         "-m",
-        "mobilerun_sandbox",
+        "mobilerun_routines",
         "new",
         path,
     ]
@@ -173,7 +173,7 @@ def test_run_result_and_cleanup(monkeypatch, source, tmp_path, code, from_file, 
     def run(command, **kwargs):
         if "-c" in command:
             return subprocess.CompletedProcess(command, 0)
-        assert command[:5] == [sys.executable, "-m", "mobilerun_sandbox", "run", source]
+        assert command[:5] == [sys.executable, "-m", "mobilerun_routines", "run", source]
         input_path = Path(command[command.index("--input-file") + 1])
         result_path = Path(command[command.index("--result-file") + 1])
         temporary_paths.append(input_path.parent)
