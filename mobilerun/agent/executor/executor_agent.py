@@ -242,9 +242,8 @@ class ExecutorAgent(Workflow):
                 response_text=reason,
                 failure=reason,
             )
-        if len(selection.actions) > 1 or (
-            not selection.actions and selection.action_json is None
-        ):
+        # The action JSON, when given, is what runs.
+        if selection.action_json is None and len(selection.actions) != 1:
             raise ValueError("Executor requires exactly one selected action")
         await ctx.store.set("executor_selection", selection)
         response_text = selection.response_text

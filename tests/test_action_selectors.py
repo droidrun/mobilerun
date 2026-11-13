@@ -972,6 +972,35 @@ def test_executor_fallback_checks_the_action_json_it_runs(action_json, kept):
     assert selection is (chosen if kept else fallback_choice)
 
 
+@pytest.mark.parametrize("action_json", ['{"action": "click", "index": 2}', None])
+def test_executor_runs_the_action_json_over_several_actions(action_json):
+    async def run():
+        config, registry, action_ctx, shared, _, _ = _dependencies()
+        selection = ActionSelection(
+            [ToolCall("click", {"index": 2}), ToolCall("back")],
+            action_json=action_json,
+        )
+        agent = ExecutorAgent(
+            action_selector=StubSelector(select=AsyncMock(return_value=selection)),
+            agent_config=config,
+            registry=registry,
+            action_ctx=action_ctx,
+            shared_state=shared,
+        )
+        ctx = Context(agent)
+        with patch.object(Context, "write_event_to_stream"):
+            event = await agent.prepare_context(ctx, StartEvent(subgoal="Select Bob"))
+            if action_json is None:
+                with pytest.raises(ValueError, match="exactly one selected action"):
+                    await agent.get_response(ctx, event)
+            else:
+                await agent.get_response(ctx, event)
+                stored = await ctx.store.get("executor_selection")
+                assert stored.action_json == action_json
+
+    asyncio.run(run())
+
+
 def test_fallback_ignores_json_only_selections_outside_the_executor():
     chosen = ActionSelection(action_json='{"action": "click", "index": 2}')
     fallback_choice = ActionSelection([ToolCall("back")])
