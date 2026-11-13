@@ -24,10 +24,13 @@ def normalize_ui_state(ui_state: Any) -> Dict[str, Any]:
 
     return {
         "phone_state": {
+            # Portal reports packageName/activityName.
             "package": _first_present(
-                phone_state, "package", "appPackage", "bundle_id"
+                phone_state, "package", "packageName", "appPackage", "bundle_id"
             ),
-            "activity": _first_present(phone_state, "activity", "appActivity"),
+            "activity": _first_present(
+                phone_state, "activity", "activityName", "appActivity"
+            ),
         },
         "screen": screen,
         "nodes": nodes,

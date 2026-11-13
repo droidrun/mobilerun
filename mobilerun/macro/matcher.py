@@ -54,10 +54,9 @@ def _node_key_set(state: Dict[str, Any]) -> set[Tuple[Any, ...]]:
 def _phone_score(saved_state: Dict[str, Any], current_state: Dict[str, Any]) -> float:
     saved_phone = saved_state.get("phone_state") or {}
     current_phone = current_state.get("phone_state") or {}
+    # Only compare what the macro recorded: older Android macros have no app.
     fields = [
-        field
-        for field in ("package", "activity")
-        if saved_phone.get(field) is not None or current_phone.get(field) is not None
+        field for field in ("package", "activity") if saved_phone.get(field) is not None
     ]
     if not fields:
         return 1.0

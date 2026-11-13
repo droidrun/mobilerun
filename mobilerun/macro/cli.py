@@ -4,6 +4,7 @@ Command-line interface for Mobilerun macro replay.
 
 import asyncio
 import logging
+import sys
 from typing import Optional
 
 import click
@@ -237,11 +238,11 @@ async def _replay_async(
             macro_data = player.load_macro_from_folder(str(resolved_path))
         else:
             logger.error(f"❌ Invalid path: {resolved_path}")
-            return
+            sys.exit(1)
 
         if not macro_data:
             logger.error("❌ Failed to load macro data")
-            return
+            sys.exit(1)
 
         # Show macro information
         description = macro_data.get("description", "No description")
@@ -278,6 +279,7 @@ async def _replay_async(
                 logger.info("🎉 Macro replay completed successfully!")
             else:
                 logger.error("💥 Macro replay completed with errors")
+                sys.exit(1)
 
     except Exception as e:
         logger.error(f"💥 Error: {e}")
@@ -285,6 +287,7 @@ async def _replay_async(
             import traceback
 
             logger.debug(traceback.format_exc())
+        sys.exit(1)
 
 
 async def _show_dry_run(
