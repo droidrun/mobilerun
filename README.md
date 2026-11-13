@@ -354,11 +354,13 @@ mobilerun script run hello.py --local -t cloud -d CLOUD_DEVICE_ID --input '{}'
 ```
 
 `--local` runs the script in your Python environment. Device options select its
-`ctx.device`: an ADB serial, a Portal URL, or a cloud device id. Use `-P android`
-for an Android Portal URL. `MOBILERUN_DEVICE` and `MOBILERUN_TARGET` also work.
+`ctx.device`: an ADB serial, a Portal URL, or a cloud device id.
+`-P` overrides the platform from your config. `MOBILERUN_DEVICE` and `MOBILERUN_TARGET` also work.
 Cloud devices use `MOBILERUN_API_KEY` or your saved `mobilerun auth login` session;
 `--api-url` or `MOBILERUN_API_BASE_URL` selects the cloud API endpoint.
-Without a device, the script runs with no device flags.
+A local run against a cloud device passes your real key/session to the script's
+environment; on the platform, the script only sees a placeholder.
+Without a device, the script runs with no device flags (local target only).
 
 Upload immutable versions of a Python script, inspect them, and download their
 source. Names default to the uploaded file's basename, including `.py`.

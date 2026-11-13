@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -116,6 +117,49 @@ def check_script(path, python_path, json_output, verbose):
         emit("Output schema:\n" + json.dumps(document["outputSchema"], indent=2))
 
 
+def _device_flags(
+    device, target, platform, api_url
+) -> tuple[list[str], dict[str, str] | None]:
+    if not (device or target == "cloud"):
+        return [], None
+
+    from mobilerun_core.connection.cloud import BEARER_ENV_VAR
+
+    from mobilerun.agent.utils.android_device import is_portal_http_url
+    from mobilerun.cli.selection import (
+        portal_token,
+        require_cloud_api_key,
+        select_device,
+    )
+    from mobilerun.config_manager.config_manager import PORTAL_TOKEN_ENV_VARS
+
+    selection = asyncio.run(
+        select_device(device=device, target=target, platform=platform)
+    )
+    if selection.backend == "cloud":
+        return ["--device-target", "cloud", "--device-id", selection.device], {
+            **os.environ,
+            BEARER_ENV_VAR: require_cloud_api_key(),
+            "MOBILERUN_API_BASE_URL": api_url,
+        }
+
+    token = portal_token(selection)
+    env = None
+    if token:
+        env = {**os.environ, PORTAL_TOKEN_ENV_VARS[selection.platform]: token}
+    device_flag = "--device-id"
+    if is_portal_http_url(selection.device):
+        device_flag = "--device-url"
+    return [
+        "--device-target",
+        "local",
+        "--device-platform",
+        selection.platform,
+        device_flag,
+        selection.device,
+    ], env
+
+
 @script_cli.command(
     "run", epilog=examples("mobilerun script run script.py --local --input '{}'")
 )
@@ -165,38 +209,8 @@ def run_script(
     except (ValueError, OSError) as exc:
         option = "--input" if input_json is not None else "--input-file"
         raise click.BadParameter(str(exc), param_hint=option) from None
-    device_args = []
-    child_options = {}
-    if device:
-        import asyncio
-
-        from mobilerun.agent.utils.android_device import is_portal_http_url
-        from mobilerun.cli.selection import require_cloud_api_key, select_device
-
-        selection = asyncio.run(
-            select_device(device=device, target=target, platform=platform)
-        )
-        if selection.backend == "cloud":
-            child_options["env"] = {
-                **os.environ,
-                "MOBILERUN_API_KEY": require_cloud_api_key(),
-                "MOBILERUN_API_BASE_URL": api_url,
-            }
-            device_args = ["--device-target", "cloud", "--device-id", selection.device]
-        else:
-            device_args = [
-                "--device-target",
-                "local",
-                "--device-platform",
-                selection.platform,
-                (
-                    "--device-url"
-                    if is_portal_http_url(selection.device)
-                    else "--device-id"
-                ),
-                selection.device,
-            ]
     interpreter = _interpreter(python_path)
+    device_args, env = _device_flags(device, target, platform, api_url)
     with tempfile.TemporaryDirectory(prefix="mobilerun-script-") as directory:
         input_path = Path(directory) / "input.json"
         result_path = Path(directory) / "result.json"
@@ -217,7 +231,7 @@ def run_script(
             command.extend(["--state-file", state_file])
         # Inherit stderr so script logs appear immediately while it runs.
         result = subprocess.run(
-            command, stdout=subprocess.PIPE, text=True, check=False, **child_options
+            command, stdout=subprocess.PIPE, text=True, check=False, env=env
         )
         if result_path.exists():
             raw = result_path.read_text(encoding="utf-8")
