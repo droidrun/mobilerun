@@ -368,12 +368,22 @@ class FastAgent(Workflow):
         except DeviceDisconnectedError:
             raise
         except Exception as e:
+            # The state provider has already retried and tried recovery. Stop
+            # here, as the manager does: the LLM must not act on the previous
+            # screen.
             err_desc = str(e) or type(e).__name__
-            logger.warning(
+            logger.error(
                 f"⚠️ Error retrieving state from the connected device: {err_desc}"
             )
             if self.debug:
                 logger.error("State retrieval error details:", exc_info=True)
+            event = FastAgentEndEvent(
+                success=False,
+                reason=f"Could not read the device state: {err_desc}",
+                tool_call_count=self.tool_call_counter,
+            )
+            ctx.write_event_to_stream(event)
+            return event
 
         # Limit history and build ephemeral copy for LLM. A native step adds
         # a tool-result message per call besides the assistant and user turns.
