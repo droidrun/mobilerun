@@ -1009,7 +1009,7 @@ def test_doctor_runner_suppresses_results_and_keeps_instructions(monkeypatch, fl
         ),
         (
             ["list"],
-            "No such command 'list'. Did you mean 'mobilerun device list', 'mobilerun macro list'?",
+            "No such command 'list'. Did you mean 'mobilerun device list', 'mobilerun macro list', 'mobilerun script list'?",
         ),
         (
             ["configure", "openai"],

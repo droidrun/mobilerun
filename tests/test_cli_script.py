@@ -16,7 +16,9 @@ from mobilerun.config_manager import ConfigLoader
 
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
-    monkeypatch.setattr(ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml")
+    monkeypatch.setattr(
+        ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml"
+    )
     monkeypatch.delenv("MOBILERUN_CONFIG", raising=False)
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
 
@@ -28,12 +30,15 @@ def source(tmp_path):
     return str(path)
 
 
-@pytest.mark.parametrize("explicit,venv,platform,expected", [
-    ("/custom/python", "/project/.venv", "linux", "/custom/python"),
-    (None, "/project/.venv", "linux", "/project/.venv/bin/python"),
-    (None, "/project/.venv", "win32", "/project/.venv/Scripts/python.exe"),
-    (None, None, "linux", sys.executable),
-])
+@pytest.mark.parametrize(
+    "explicit,venv,platform,expected",
+    [
+        ("/custom/python", "/project/.venv", "linux", "/custom/python"),
+        (None, "/project/.venv", "linux", "/project/.venv/bin/python"),
+        (None, "/project/.venv", "win32", "/project/.venv/Scripts/python.exe"),
+        (None, None, "linux", sys.executable),
+    ],
+)
 def test_interpreter_precedence(monkeypatch, explicit, venv, platform, expected):
     if venv:
         monkeypatch.setenv("VIRTUAL_ENV", venv)
@@ -63,32 +68,48 @@ def test_missing_package(monkeypatch, source, command):
 
 @pytest.mark.parametrize("code", [0, 3, 7])
 def test_init_passthrough(monkeypatch, tmp_path, code):
-    call = Mock(side_effect=[
-        subprocess.CompletedProcess([], 0),
-        subprocess.CompletedProcess([], code, "created\n", "diagnostic\n"),
-    ])
+    call = Mock(
+        side_effect=[
+            subprocess.CompletedProcess([], 0),
+            subprocess.CompletedProcess([], code, "created\n", "diagnostic\n"),
+        ]
+    )
     monkeypatch.setattr(script.subprocess, "run", call)
     path = str(tmp_path / "new.py")
     result = CliRunner().invoke(cli, ["script", "init", path])
     assert result.exit_code == code, result.output
     assert result.stdout == "created\n"
     assert result.stderr == "diagnostic\n"
-    assert call.call_args.args[0] == [sys.executable, "-m", "mobilerun_sandbox", "new", path]
+    assert call.call_args.args[0] == [
+        sys.executable,
+        "-m",
+        "mobilerun_sandbox",
+        "new",
+        path,
+    ]
 
 
 INSPECTION = {
-    "ok": True, "entrypoint": "main", "async": True,
-    "inputSchema": {"type": "object"}, "outputSchema": {"type": "string"},
-    "outputKind": "value", "datasetKey": None, "sdkVersion": "1.0",
+    "ok": True,
+    "entrypoint": "main",
+    "async": True,
+    "inputSchema": {"type": "object"},
+    "outputSchema": {"type": "string"},
+    "outputKind": "value",
+    "datasetKey": None,
+    "sdkVersion": "1.0",
 }
 
 
 @pytest.mark.parametrize("flags", [[], ["-j"]])
 def test_check_output(monkeypatch, source, flags):
     raw = json.dumps(INSPECTION, indent=2) + "\n"
-    call = Mock(side_effect=[
-        subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0, raw, ""),
-    ])
+    call = Mock(
+        side_effect=[
+            subprocess.CompletedProcess([], 0),
+            subprocess.CompletedProcess([], 0, raw, ""),
+        ]
+    )
     monkeypatch.setattr(script.subprocess, "run", call)
     result = CliRunner().invoke(cli, ["script", "check", source, *flags])
     assert result.exit_code == 0, result.output
@@ -96,7 +117,10 @@ def test_check_output(monkeypatch, source, flags):
     if flags:
         assert result.stdout == raw
     else:
-        assert "Entry point: main\nOutput kind: value\nDataset key: None\n" in result.stdout
+        assert (
+            "Entry point: main\nOutput kind: value\nDataset key: None\n"
+            in result.stdout
+        )
         assert 'Input schema:\n{\n  "type": "object"\n}' in result.stdout
         assert 'Output schema:\n{\n  "type": "string"\n}' in result.stdout
     assert call.call_args.args[0][-2:] == ["inspect", source]
@@ -104,21 +128,30 @@ def test_check_output(monkeypatch, source, flags):
 
 @pytest.mark.parametrize("code", [3, 8])
 def test_check_error_passthrough(monkeypatch, source, code):
-    monkeypatch.setattr(script.subprocess, "run", Mock(side_effect=[
-        subprocess.CompletedProcess([], 0),
-        subprocess.CompletedProcess([], code, "", "invalid entry point\n"),
-    ]))
+    monkeypatch.setattr(
+        script.subprocess,
+        "run",
+        Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0),
+                subprocess.CompletedProcess([], code, "", "invalid entry point\n"),
+            ]
+        ),
+    )
     result = CliRunner().invoke(cli, ["script", "check", source, "-j"])
     assert result.exit_code == code
     assert result.stdout == ""
     assert result.stderr == "invalid entry point\n"
 
 
-@pytest.mark.parametrize("args,message", [
-    (["--input", "{}"], "--local"),
-    (["--local"], "exactly one"),
-    (["--local", "--input", "{"], "--input"),
-])
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (["--input", "{}"], "--local"),
+        (["--local"], "exactly one"),
+        (["--local", "--input", "{"], "--input"),
+    ],
+)
 def test_run_usage_errors(monkeypatch, source, args, message):
     call = Mock(side_effect=AssertionError("must validate before starting Python"))
     monkeypatch.setattr(script.subprocess, "run", call)
@@ -153,9 +186,14 @@ def test_run_result_and_cleanup(monkeypatch, source, tmp_path, code, from_file, 
     monkeypatch.setattr(script.subprocess, "run", run)
     input_path = tmp_path / "source-input.json"
     input_path.write_text('{"name": "example"}')
-    inputs = ["--input-file", str(input_path)] if from_file else ["--input", input_path.read_text()]
+    inputs = (
+        ["--input-file", str(input_path)]
+        if from_file
+        else ["--input", input_path.read_text()]
+    )
     result = CliRunner().invoke(
-        cli, ["script", "run", source, "--local", *inputs, "--state-file", state, *flags],
+        cli,
+        ["script", "run", source, "--local", *inputs, "--state-file", state, *flags],
     )
     assert result.exit_code == code, result.output
     assert json.loads(result.stdout) == envelope
@@ -177,7 +215,9 @@ def test_run_cleanup_without_result(monkeypatch, source, mode):
         return subprocess.CompletedProcess(command, 9, "")
 
     monkeypatch.setattr(script.subprocess, "run", run)
-    result = CliRunner().invoke(cli, ["script", "run", source, "--local", "--input", "null"])
+    result = CliRunner().invoke(
+        cli, ["script", "run", source, "--local", "--input", "null"]
+    )
     assert result.exit_code == (1 if mode == "exception" else 9), result.output
     assert result.stdout == ""
     assert temporary_paths and all(not path.exists() for path in temporary_paths)
@@ -186,9 +226,19 @@ def test_run_cleanup_without_result(monkeypatch, source, mode):
 def test_run_rejects_both_inputs(monkeypatch, source):
     call = Mock()
     monkeypatch.setattr(script.subprocess, "run", call)
-    result = CliRunner().invoke(cli, [
-        "script", "run", source, "--local", "--input", "{}", "--input-file", source,
-    ])
+    result = CliRunner().invoke(
+        cli,
+        [
+            "script",
+            "run",
+            source,
+            "--local",
+            "--input",
+            "{}",
+            "--input-file",
+            source,
+        ],
+    )
     assert result.exit_code == 2
     assert "exactly one" in result.stderr
     call.assert_not_called()
