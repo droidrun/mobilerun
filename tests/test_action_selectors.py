@@ -899,6 +899,19 @@ def test_fallback_keeps_only_calls_the_registry_can_run(call, kept):
     assert selection is (chosen if kept else fallback_choice)
 
 
+def test_fallback_skips_multi_action_selections_in_the_executor():
+    chosen = ActionSelection([ToolCall("click", {"index": 1}), ToolCall("back")])
+    fallback_choice = ActionSelection([ToolCall("back")])
+    selection = asyncio.run(
+        FallbackSelector(
+            StubSelector(select=AsyncMock(return_value=chosen)),
+            [StubSelector(select=AsyncMock(return_value=fallback_choice))],
+        ).select(SelectionRequest("Select", protocol="executor"))
+    )
+
+    assert selection is fallback_choice
+
+
 def test_fallback_ignores_json_only_selections_outside_the_executor():
     chosen = ActionSelection(action_json='{"action": "click", "index": 2}')
     fallback_choice = ActionSelection([ToolCall("back")])

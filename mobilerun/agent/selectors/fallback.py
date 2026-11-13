@@ -37,6 +37,9 @@ def _usable(selection: ActionSelection | None, request: SelectionRequest) -> boo
     ):
         return False
     if selection.actions:
+        # The executor runs exactly one action.
+        if request.protocol == "executor" and len(selection.actions) > 1:
+            return False
         return any(
             action.error is None and _runnable(action.name, request)
             for action in selection.actions
