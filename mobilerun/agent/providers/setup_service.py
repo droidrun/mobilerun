@@ -187,6 +187,37 @@ def create_profile_for_variant(
     )
 
 
+def profile_for_provider(provider: str, model: str) -> LLMProfile:
+    """Build an LLM profile from a provider name as passed to ``-p``."""
+    from mobilerun.agent.utils.llm_picker import (
+        SUPPORTED_PROVIDERS,
+        normalize_provider_name,
+    )
+
+    name = normalize_provider_name(provider)
+    for family in list_provider_families():
+        for variant in family.variants:
+            if variant.runtime_provider_name.lower() == name.lower():
+                if variant.requires_base_url and not variant.base_url:
+                    raise ValueError(
+                        f"{variant.runtime_provider_name} needs a base URL; set "
+                        "the delegate profile in the config instead."
+                    )
+                return create_profile_for_variant(
+                    variant,
+                    SetupSelection(
+                        family_id=family.id,
+                        variant_id=variant.id,
+                        auth_mode=variant.auth_mode,
+                        model=model,
+                    ),
+                )
+    canonical = next(
+        (p for p in SUPPORTED_PROVIDERS if p.lower() == name.lower()), name
+    )
+    return LLMProfile(provider=canonical, model=model)
+
+
 def apply_selection_to_roles(
     config: MobileConfig,
     selection: SetupSelection,

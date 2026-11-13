@@ -225,7 +225,18 @@ screenshot, ui, apps, start, and ping.
 | — | `--api-url` | Device actions, list, run, doctor, macro replay: cloud API endpoint. |
 | — | `--auth-url` | Mobilerun login: sign-in endpoint. |
 | — | `--tcp` / `--no-tcp` | Run and macro replay: local Android TCP mode. |
+| — | `--no-delegate` | Run: let the decision model pick every action without LLM delegation. |
+| — | `--delegate-model` | Run: helper LLM as `PROVIDER/MODEL` or `MODEL`. |
 | — | `--no-qr` | Mobilerun login: suppress the QR code. |
+
+`run -p TypeSafe` uses the Jev decision model and delegates to the configured LLM
+by default. Its `-m` model is optional. `--no-delegate` disables delegation;
+`--delegate-model PROVIDER/MODEL` or `--delegate-model MODEL` selects its helper LLM.
+
+```bash
+mobilerun run "Open Settings" -p TypeSafe --no-delegate
+mobilerun run "Open Settings" -p TypeSafe --delegate-model openai/gpt-6.1-sol
+```
 
 ### Environment
 

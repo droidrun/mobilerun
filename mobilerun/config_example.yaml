@@ -54,6 +54,11 @@ agent:
     # System prompt path (relative or absolute)
     system_prompt: config/prompts/executor/system.jinja2
 
+  # Native decision-model prompt (FastAgent and Executor)
+  decision:
+    # System prompt path (relative or absolute)
+    system_prompt: config/prompts/decision/system.jinja2
+
   # App Cards Configuration
   app_cards:
     # Enable app-specific instruction cards
