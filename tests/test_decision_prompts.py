@@ -177,3 +177,35 @@ def test_typing_candidates_take_precedence_over_the_delegate():
 
     assert "Text entry is limited to the exact text and target" in text
     assert "choose delegate to type the text" not in text
+
+
+def test_delegating_fallback_renders_its_own_typing_guidance():
+    from llama_index.core.llms.mock import MockLLM
+
+    from mobilerun.agent.selectors import (
+        DelegatingSelector,
+        FallbackSelector,
+        LlamaIndexLLMSelector,
+    )
+
+    path = MobileConfig().agent.get_decision_system_prompt_path()
+
+    async def render(variables):
+        return await PromptLoader.load_prompt(path, variables)
+
+    request = _request("click")
+    request.render_instructions = render
+    request.instructions = asyncio.run(render(request.get_decision_prompt_variables()))
+    plain = SimpleNamespace(decide=AsyncMock(return_value=None))
+    model = SimpleNamespace(decide=AsyncMock(return_value=Decision(0)))
+    selector = FallbackSelector(
+        DecisionSelector(plain),
+        [DelegatingSelector(DecisionSelector(model), LlamaIndexLLMSelector(MockLLM()))],
+    )
+
+    asyncio.run(selector.select(request))
+
+    assert "Avoid opening search bars" in plain.decide.call_args.args[0].instructions
+    text = model.decide.call_args.args[0].instructions
+    assert "choose delegate to type the text" in text
+    assert "Avoid opening search bars" not in text

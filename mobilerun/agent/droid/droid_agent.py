@@ -504,7 +504,8 @@ class MobileAgent(Workflow):
         ) or (isinstance(action_selectors, dict) and action_selector is not None):
             # The selector supplies actions; only planning/helper LLMs are needed.
             llm_loading_kwargs["load_action_llm"] = False
-        if llms is None and not isinstance(action_selectors, dict):
+        if llms is None and (not isinstance(action_selectors, dict) or config is None):
+            # Without llms or config, the action selector's LLM also runs helpers.
             llms = action_selector.shared_llm if action_selector is not None else None
         selector_only = action_selector is not None and llms is None and config is None
         selector_llm = action_selector.shared_llm if selector_only else None

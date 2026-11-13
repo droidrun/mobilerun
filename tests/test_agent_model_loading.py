@@ -892,10 +892,12 @@ def test_action_selector_dictionary_works_without_config(monkeypatch, decision):
 
     assert agent.action_selector is selector
     assert agent.action_selectors == {"fast_agent": selector}
-    assert agent.fast_agent_llm is (None if decision else model)
-    assert agent.app_opener_llm is None
-    assert agent.manager_llm is None
-    assert agent.structured_output_llm is (None if decision else model)
+    # An LLM selector also runs the helpers, as in the single-selector form.
+    llm = None if decision else model
+    assert agent.fast_agent_llm is llm
+    assert agent.app_opener_llm is llm
+    assert agent.manager_llm is llm
+    assert agent.structured_output_llm is llm
     load.assert_not_called()
 
 

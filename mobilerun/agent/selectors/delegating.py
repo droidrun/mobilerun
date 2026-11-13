@@ -155,11 +155,16 @@ class DelegatingSelector(BaseActionSelector):
                 },
             ]
         instructions = request.instructions
-        if not instructions and self.primary.requires_action_candidates:
-            instructions = await PromptLoader.load_prompt(
-                AgentConfig().get_decision_system_prompt_path(),
-                primary_request.get_decision_prompt_variables(self.delegate_can_type),
+        if self.primary.requires_action_candidates:
+            variables = primary_request.get_decision_prompt_variables(
+                self.delegate_can_type
             )
+            if request.render_instructions is not None:
+                instructions = await request.render_instructions(variables)
+            elif not instructions:
+                instructions = await PromptLoader.load_prompt(
+                    AgentConfig().get_decision_system_prompt_path(), variables
+                )
         primary_request.instructions = f"{instructions}\n\n{guidance}".strip()
 
         selection = await self.primary.select(primary_request)

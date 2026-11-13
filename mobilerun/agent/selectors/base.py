@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from llama_index.core.base.llms.types import ChatMessage, ChatResponse
 
@@ -39,6 +39,9 @@ class SelectionRequest:
     param_types: dict[str, str] = field(default_factory=dict)
     stream: bool = False
     instructions: str = ""
+    # Renders the decision prompt for other variables, so a chooser deeper in
+    # the selector can describe its own capabilities.
+    render_instructions: Callable[[dict[str, Any]], Awaitable[str]] | None = None
     tool_specs: list[dict[str, Any]] | None = None
     parallel_tools: bool = True
 
@@ -117,11 +120,6 @@ class ActionSelector(ABC):
     @property
     def locates_points(self) -> bool:
         """Whether selection can locate a tap on the screenshot itself."""
-        return False
-
-    @property
-    def delegate_can_type(self) -> bool:
-        """Whether a delegate can type free text for the candidate chooser."""
         return False
 
     @property

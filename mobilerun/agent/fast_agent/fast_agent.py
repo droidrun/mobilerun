@@ -494,19 +494,20 @@ class FastAgent(Workflow):
             parallel_tools=self.config.parallel_tools,
         )
         if self.action_selector.requires_action_candidates:
-            decision_variables = request.get_decision_prompt_variables(
-                self.action_selector.delegate_can_type
-            )
             custom_prompt = self.prompt_resolver.get_prompt("decision_system")
-            if custom_prompt:
-                request.instructions = PromptLoader.render_template(
-                    custom_prompt, decision_variables
+            agent_config = self.agent_config
+
+            async def render_instructions(variables: dict) -> str:
+                if custom_prompt:
+                    return PromptLoader.render_template(custom_prompt, variables)
+                return await PromptLoader.load_prompt(
+                    agent_config.get_decision_system_prompt_path(), variables
                 )
-            else:
-                request.instructions = await PromptLoader.load_prompt(
-                    self.agent_config.get_decision_system_prompt_path(),
-                    decision_variables,
-                )
+
+            request.render_instructions = render_instructions
+            request.instructions = await render_instructions(
+                request.get_decision_prompt_variables()
+            )
         selection = await self.action_selector.select(request)
         await ctx.store.set(
             "selection_failure", selection.failure if selection else None
