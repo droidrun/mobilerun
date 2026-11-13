@@ -1496,7 +1496,7 @@ requires-dist = [
     { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
     { name = "mobilerun-core", extras = ["local"], specifier = ">=1.12.0" },
     { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
-    { name = "mobilerun-sdk", specifier = ">=6.1.1" },
+    { name = "mobilerun-sdk", git = "https://github.com/droidrun/mobilerun-sdk-python?rev=871123bcb8ed72fc577e4adfb7460b9ce0bbb246" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.40.0" },
@@ -1565,7 +1565,7 @@ cloud = [
 [[package]]
 name = "mobilerun-sdk"
 version = "6.1.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/droidrun/mobilerun-sdk-python?rev=871123bcb8ed72fc577e4adfb7460b9ce0bbb246#871123bcb8ed72fc577e4adfb7460b9ce0bbb246" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -1573,10 +1573,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/21/32/d704aec338e7497eb49febbeae3ac9deb63c2eb6ca8c0ded5bbaf3db9501/mobilerun_sdk-6.1.1.tar.gz", hash = "sha256:b3d890788b25175497a71be913a71b000f2cf5285facd338a65a7b7c786cf94c", size = 351426, upload-time = "2026-11-10T17:01:44.02Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/f3/c3f48b3615635a1e321df4a1fb61a1b7522d6a655ae99ae8c2a06ecb29aa/mobilerun_sdk-6.1.1-py3-none-any.whl", hash = "sha256:2f2858330694283dbe2e814f9232a59b84976b31361e1f260a468eaa3a7d4c3c", size = 573416, upload-time = "2026-11-10T17:01:42.687Z" },
 ]
 
 [[package]]

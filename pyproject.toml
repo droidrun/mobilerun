@@ -101,6 +101,9 @@ mobilerun = "mobilerun.cli.main:cli"
 [tool.uv]
 override-dependencies = ["filelock>=4.2.1"]
 
+[tool.uv.sources]
+mobilerun-sdk = { git = "https://github.com/droidrun/mobilerun-sdk-python", rev = "871123bcb8ed72fc577e4adfb7460b9ce0bbb246" }
+
 [tool.ruff]
 line-length = 100
 target-version = "py313"
