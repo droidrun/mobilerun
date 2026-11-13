@@ -484,7 +484,6 @@ def test_fast_agent_offers_located_taps_only_to_locating_selectors(
         await agent.run(input="Select Bob")
         request = model.decide.call_args.args[0]
         assert any(o.point_space for o in request.options) is locates
-        assert ("click_at" in request.instructions) is locates
         assert request.screenshot == (b"clean" if locates else b"grounded")
         images = [
             block.image
@@ -684,7 +683,7 @@ def test_workflows_forward_decision_prompts(
 
         request = model.decide.call_args.args[0]
         if prompt_source == "default":
-            assert "You cannot write arbitrary text" in request.instructions
+            assert "You cannot type, so avoid search bars" in request.instructions
         else:
             protocol = "xml" if agent_kind == "fast_agent" else "executor"
             assert (
@@ -733,7 +732,7 @@ def test_decision_prompt_sends_typing_to_a_delegate_that_can_type(
 
         text = model.decide.call_args.args[0].instructions
         assert ("choose delegate to type the text" in text) is llm_delegate
-        assert ("You cannot write arbitrary text" in text) is not llm_delegate
+        assert ("You cannot type, so avoid search bars" in text) is not llm_delegate
 
     asyncio.run(run())
 

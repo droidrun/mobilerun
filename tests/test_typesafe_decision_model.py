@@ -177,7 +177,7 @@ def test_decision_prepares_vision_and_opts_in_only_for_image_requests(
     if instructions:
         assert sent_instructions == instructions
     else:
-        assert "You cannot write arbitrary text" in sent_instructions
+        assert "You cannot type, so avoid search bars" in sent_instructions
     if vision:
         assert kwargs["extra_headers"] == {"TypeSafe-Danger-Zone-Images": "true"}
         with Image.open(BytesIO(kwargs["state"]["screenshot"].data)) as screenshot:

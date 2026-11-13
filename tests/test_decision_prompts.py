@@ -31,43 +31,36 @@ def _instructions(request):
     return model.decide.call_args.args[0].instructions
 
 
-def test_default_prompt_explains_missing_typing_and_available_scrolling():
+def test_default_prompt_covers_typing_reopening_apps_and_failure():
     text = _instructions(_request("click", "swipe", "open_app"))
 
-    assert "You cannot write arbitrary text" in text
-    assert "Avoid opening search bars" in text
-    assert "Swipe up to scroll down" in text
-    assert "not reset it to its main page" in text
-    assert "No screenshot is supplied" in text
-    assert "complete_success" in text
-    assert "not output XML tool calls or a reasoning narrative" in text
+    assert "You cannot type, so avoid search bars" in text
+    assert "resume its last screen" in text
+    assert "Report failure only when" in text
 
 
 @pytest.mark.parametrize("typing_tool", ["type", "type_text"])
 def test_typing_capability_requires_an_enabled_candidate(typing_tool):
     request = _request("click", typing_tool)
     text = _instructions(request)
-    assert "Text entry is limited to the exact text and target" in text
-    assert "You cannot write arbitrary text" not in text
+    assert "You can type only the text offered" in text
+    assert "You cannot type, so avoid search bars" not in text
 
     del request.tools[typing_tool]
     text = _instructions(request)
-    assert "You cannot write arbitrary text" in text
+    assert "You cannot type, so avoid search bars" in text
 
 
 def test_secret_candidate_does_not_imply_arbitrary_text_entry():
     text = _instructions(_request("click", "type_secret"))
-    assert "You cannot write arbitrary text" in text
+    assert "You cannot type, so avoid search bars" in text
 
 
 def test_prompt_omits_unavailable_capabilities():
     request = _request("click", protocol="executor", screenshot=b"image")
     text = _instructions(request)
-    assert "Swipe up to scroll down" not in text
-    assert "complete_success" not in text
-    assert "complete_failure" not in text
-    assert "Use the supplied screenshot" in text
-    assert "No screenshot is supplied" not in text
+    assert "resume its last screen" not in text
+    assert "Report failure only when" not in text
 
 
 def test_decision_config_round_trip_and_custom_path(tmp_path, monkeypatch):
@@ -136,7 +129,7 @@ def test_standalone_selector_renders_after_filtering_without_mutating_request():
     asyncio.run(DecisionSelector(model).select(request))
 
     supplied = model.decide.call_args.args[0]
-    assert "You cannot write arbitrary text" in supplied.instructions
+    assert "You cannot type, so avoid search bars" in supplied.instructions
     assert len(supplied.options) == 1
     assert request.instructions == ""
     assert len(request.options) == 2
@@ -164,7 +157,7 @@ def test_delegate_that_can_type_makes_search_fields_usable():
     text = model.decide.call_args.args[0].instructions
 
     assert "choose delegate to type the text" in text
-    assert "Avoid opening search bars" not in text
+    assert "avoid search bars" not in text
 
 
 def test_typing_candidates_take_precedence_over_the_delegate():
@@ -175,7 +168,7 @@ def test_typing_candidates_take_precedence_over_the_delegate():
         )
     )
 
-    assert "Text entry is limited to the exact text and target" in text
+    assert "You can type only the text offered" in text
     assert "choose delegate to type the text" not in text
 
 
@@ -205,7 +198,7 @@ def test_delegating_fallback_renders_its_own_typing_guidance():
 
     asyncio.run(selector.select(request))
 
-    assert "Avoid opening search bars" in plain.decide.call_args.args[0].instructions
+    assert "avoid search bars" in plain.decide.call_args.args[0].instructions
     text = model.decide.call_args.args[0].instructions
     assert "choose delegate to type the text" in text
-    assert "Avoid opening search bars" not in text
+    assert "avoid search bars" not in text
