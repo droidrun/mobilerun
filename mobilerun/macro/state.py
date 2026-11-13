@@ -91,8 +91,13 @@ def _extract_screen(ui_state: Any) -> Dict[str, Any]:
         width = width or screen_bounds.get("width")
         height = height or screen_bounds.get("height")
     else:
-        width = getattr(ui_state, "screen_width", None)
-        height = getattr(ui_state, "screen_height", None)
+        # Taps are recorded in device units, so record the device size.
+        width = getattr(ui_state, "device_width", None) or getattr(
+            ui_state, "screen_width", None
+        )
+        height = getattr(ui_state, "device_height", None) or getattr(
+            ui_state, "screen_height", None
+        )
 
     return {"width": width, "height": height}
 

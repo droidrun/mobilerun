@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from mobilerun.agent.utils import actions
 from mobilerun.agent.utils.actions import click, open_app, type_secret, type_text, wait
 from mobilerun.credential_manager.secret_gate import SecretRunState
@@ -240,3 +242,64 @@ def test_sequential_actions_record_refreshed_current_pre_state():
     assert recorder.actions[1]["pre_state"]["nodes"][0]["resource_id"] == (
         "com.example:id/after_click"
     )
+
+
+def _png_header(width, height):
+    return (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x02\x00\x00\x00"
+    )
+
+
+class ScreenshotDriver(FakeDriver):
+    def __init__(self, size, input_size=None):
+        super().__init__()
+        self.size = size
+        if input_size is not None:
+            self.input_coordinate_size = self._input_size(input_size)
+
+    @staticmethod
+    def _input_size(input_size):
+        async def size(width, height):
+            return input_size
+
+        return size
+
+    async def screenshot(self):
+        return _png_header(*self.size)
+
+
+@pytest.mark.parametrize(
+    ("use_normalized", "input_size", "point", "screen", "tap"),
+    [
+        (False, None, (954, 2047), (1080, 2316), (1079, 2315)),
+        (True, None, (1000, 1000), (1080, 2316), (1079, 2315)),
+        (False, (440, 956), (942, 2047), (440, 956), (440, 956)),
+    ],
+    ids=["pixels", "normalized", "ios-points"],
+)
+def test_screenshot_only_taps_record_the_device_screen_size(
+    use_normalized, input_size, point, screen, tap
+):
+    from mobilerun.tools.ui.screenshot_provider import ScreenshotOnlyStateProvider
+
+    size = (1320, 2868) if input_size else (1080, 2316)
+    driver = ScreenshotDriver(size, input_size)
+    provider = ScreenshotOnlyStateProvider(driver, use_normalized=use_normalized)
+    recorder = MacroRecorder()
+    ctx = SimpleNamespace(
+        driver=driver,
+        ui=asyncio.run(provider.get_state()),
+        state_provider=provider,
+        macro_recorder=recorder,
+    )
+
+    result = asyncio.run(actions.click_at(*point, ctx=ctx))
+
+    assert result.success
+    action = recorder.actions[0]
+    assert (action["x"], action["y"]) == tap
+    assert action["screen"] == {"width": screen[0], "height": screen[1]}
+    assert action["pre_state"]["screen"] == action["screen"]
