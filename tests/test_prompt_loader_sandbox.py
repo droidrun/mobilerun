@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from jinja2 import Environment
+from jinja2 import Environment, FileSystemLoader
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
@@ -152,7 +152,17 @@ def test_bundled_templates_found():
 def test_bundled_templates_render_identically(path, variables):
     source = path.read_text(encoding="utf-8")
     plain = Environment(
-        trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=False
+        loader=FileSystemLoader(PROMPTS_DIR),
+        trim_blocks=True,
+        lstrip_blocks=True,
+        keep_trailing_newline=False,
     )
     expected = plain.from_string(source).render(**variables)
     assert PromptLoader.render_template(source, variables) == expected
+
+
+def test_include_cannot_escape_bundled_prompts():
+    from jinja2.exceptions import TemplateNotFound
+
+    with pytest.raises(TemplateNotFound):
+        PromptLoader.render_template('{% include "../prompt_loader.py" %}')

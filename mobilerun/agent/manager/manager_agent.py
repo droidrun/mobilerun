@@ -233,6 +233,7 @@ class ManagerAgent(Workflow):
             )
 
         variables = {
+            "vision": self.vision,
             "instruction": self.shared_state.instruction,
             "device_date": self.shared_state.device_date,
             "app_card": self.shared_state.app_card,
@@ -243,6 +244,7 @@ class ManagerAgent(Workflow):
             "variables": self.shared_state.custom_variables,
             "output_schema": output_schema,
             "platform": self.shared_state.platform,
+            "vision": self.config.vision,
         }
 
         custom_prompt = self.prompt_resolver.get_prompt("manager_system")

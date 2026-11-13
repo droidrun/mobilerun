@@ -98,6 +98,7 @@ class StatelessManagerAgent(Workflow):
 
     async def _build_prompt(self) -> str:
         variables = {
+            "vision": self.vision,
             "instruction": self.shared_state.instruction,
             "platform": self.shared_state.platform,
             "device_date": self.shared_state.device_date,
@@ -108,6 +109,7 @@ class StatelessManagerAgent(Workflow):
             "progress_summary": self.shared_state.progress_summary,
             "action_history": self._build_action_history(),
             "current_state": self.shared_state.formatted_device_state,
+            "vision": self.agent_config.manager.vision,
         }
 
         custom_prompt = self.prompt_resolver.get_prompt("manager_system")
