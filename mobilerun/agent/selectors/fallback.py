@@ -36,23 +36,21 @@ def _usable(selection: ActionSelection | None, request: SelectionRequest) -> boo
         or selection.parse_error is not None
     ):
         return False
-    if selection.actions:
-        # The executor runs exactly one action.
-        if request.protocol == "executor" and len(selection.actions) > 1:
+    if request.protocol == "executor":
+        # The executor runs the action JSON when given, else its one action.
+        if selection.action_json is not None:
+            try:
+                action = json.loads(selection.action_json)
+            except (TypeError, ValueError):
+                return False
+            name = action.get("action") if isinstance(action, dict) else None
+            return _runnable(name, request)
+        if len(selection.actions) != 1:
             return False
-        return any(
-            action.error is None and _runnable(action.name, request)
-            for action in selection.actions
-        )
-    # The executor also runs a selection given only as action JSON.
-    if request.protocol != "executor" or not selection.action_json:
-        return False
-    try:
-        action = json.loads(selection.action_json)
-    except (TypeError, ValueError):
-        return False
-    name = action.get("action") if isinstance(action, dict) else None
-    return _runnable(name, request)
+    return any(
+        action.error is None and _runnable(action.name, request)
+        for action in selection.actions
+    )
 
 
 class FallbackSelector(BaseActionSelector):

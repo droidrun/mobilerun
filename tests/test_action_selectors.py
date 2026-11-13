@@ -955,6 +955,23 @@ def test_fallback_skips_multi_action_selections_in_the_executor():
     assert selection is fallback_choice
 
 
+@pytest.mark.parametrize(
+    ("action_json", "kept"),
+    [('{"action": "click", "index": 2}', True), ('{"action": "teleport"}', False)],
+)
+def test_executor_fallback_checks_the_action_json_it_runs(action_json, kept):
+    chosen = ActionSelection([ToolCall("click", {"index": 2})], action_json=action_json)
+    fallback_choice = ActionSelection([ToolCall("back")])
+    selection = asyncio.run(
+        FallbackSelector(
+            StubSelector(select=AsyncMock(return_value=chosen)),
+            [StubSelector(select=AsyncMock(return_value=fallback_choice))],
+        ).select(SelectionRequest("Select", tools={"click": None}, protocol="executor"))
+    )
+
+    assert selection is (chosen if kept else fallback_choice)
+
+
 def test_fallback_ignores_json_only_selections_outside_the_executor():
     chosen = ActionSelection(action_json='{"action": "click", "index": 2}')
     fallback_choice = ActionSelection([ToolCall("back")])
