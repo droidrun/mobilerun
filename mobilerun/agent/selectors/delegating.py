@@ -81,6 +81,10 @@ class DelegatingSelector(BaseActionSelector):
         return all_locate_points((self.primary, self.delegate))
 
     @property
+    def delegate_can_type(self) -> bool:
+        return bool(self.delegate.llms)
+
+    @property
     def screenshot_max_side(self) -> int | None:
         limits = [
             limit
@@ -154,7 +158,7 @@ class DelegatingSelector(BaseActionSelector):
         if not instructions and self.primary.requires_action_candidates:
             instructions = await PromptLoader.load_prompt(
                 AgentConfig().get_decision_system_prompt_path(),
-                primary_request.get_decision_prompt_variables(),
+                primary_request.get_decision_prompt_variables(self.delegate_can_type),
             )
         primary_request.instructions = f"{instructions}\n\n{guidance}".strip()
 

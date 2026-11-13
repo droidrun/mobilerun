@@ -42,7 +42,9 @@ class SelectionRequest:
     tool_specs: list[dict[str, Any]] | None = None
     parallel_tools: bool = True
 
-    def get_decision_prompt_variables(self) -> dict[str, Any]:
+    def get_decision_prompt_variables(
+        self, delegate_can_type: bool = False
+    ) -> dict[str, Any]:
         """Describe selectable capabilities for decision prompt templates."""
         available_tools = {
             option.action.name
@@ -58,6 +60,7 @@ class SelectionRequest:
             "available_tools": available_tools,
             "registered_tools": set(self.tools),
             "can_type": bool(available_tools & {"type", "type_text"}),
+            "delegate_can_type": delegate_can_type,
             "can_scroll": "swipe" in available_tools,
             "can_locate": any(option.point_space for option in self.options or ()),
             "can_complete": can_complete,
@@ -114,6 +117,11 @@ class ActionSelector(ABC):
     @property
     def locates_points(self) -> bool:
         """Whether selection can locate a tap on the screenshot itself."""
+        return False
+
+    @property
+    def delegate_can_type(self) -> bool:
+        """Whether a delegate can type free text for the candidate chooser."""
         return False
 
     @property

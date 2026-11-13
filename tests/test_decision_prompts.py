@@ -149,3 +149,31 @@ def test_standalone_selector_preserves_explicit_instructions():
     asyncio.run(DecisionSelector(model).select(request))
 
     assert model.decide.call_args.args[0].instructions == request.instructions
+
+
+def test_delegate_that_can_type_makes_search_fields_usable():
+    from llama_index.core.llms.mock import MockLLM
+
+    from mobilerun.agent.selectors import DelegatingSelector, LlamaIndexLLMSelector
+
+    model = SimpleNamespace(decide=AsyncMock(return_value=Decision(0)))
+    selector = DelegatingSelector(
+        DecisionSelector(model), LlamaIndexLLMSelector(MockLLM())
+    )
+    asyncio.run(selector.select(_request("click")))
+    text = model.decide.call_args.args[0].instructions
+
+    assert "choose delegate to type the text" in text
+    assert "Avoid opening search bars" not in text
+
+
+def test_typing_candidates_take_precedence_over_the_delegate():
+    variables = _request("click", "type").get_decision_prompt_variables(True)
+    text = asyncio.run(
+        PromptLoader.load_prompt(
+            MobileConfig().agent.get_decision_system_prompt_path(), variables
+        )
+    )
+
+    assert "Text entry is limited to the exact text and target" in text
+    assert "choose delegate to type the text" not in text

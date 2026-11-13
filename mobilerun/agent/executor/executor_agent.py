@@ -215,7 +215,9 @@ class ExecutorAgent(Workflow):
             options=options,
         )
         if self.action_selector.requires_action_candidates:
-            decision_variables = request.get_decision_prompt_variables()
+            decision_variables = request.get_decision_prompt_variables(
+                self.action_selector.delegate_can_type
+            )
             custom_prompt = self.prompt_resolver.get_prompt("decision_system")
             if custom_prompt:
                 request.instructions = PromptLoader.render_template(

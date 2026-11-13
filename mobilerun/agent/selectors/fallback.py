@@ -82,6 +82,10 @@ class FallbackSelector(BaseActionSelector):
         return all_locate_points((self.primary, *self.fallbacks))
 
     @property
+    def delegate_can_type(self) -> bool:
+        return self.primary.delegate_can_type
+
+    @property
     def screenshot_max_side(self) -> int | None:
         limits = [
             selector.screenshot_max_side for selector in (self.primary, *self.fallbacks)

@@ -695,6 +695,50 @@ def test_workflows_forward_decision_prompts(
 
 
 @pytest.mark.parametrize("agent_kind", ["fast_agent", "executor"])
+@pytest.mark.parametrize("llm_delegate", [True, False])
+def test_decision_prompt_sends_typing_to_a_delegate_that_can_type(
+    agent_kind, llm_delegate
+):
+    async def run():
+        config, registry, action_ctx, shared, provider, _ = _dependencies()
+        model = _model(Decision(0))
+        delegate = (
+            LlamaIndexLLMSelector(MockLLM())
+            if llm_delegate
+            else DecisionSelector(_model(Decision(0)))
+        )
+        kwargs = dict(
+            action_selector=DelegatingSelector(DecisionSelector(model), delegate),
+            agent_config=config,
+            registry=registry,
+            action_ctx=action_ctx,
+            shared_state=shared,
+        )
+        if agent_kind == "fast_agent":
+            agent = FastAgent(**kwargs, state_provider=provider)
+            agent.system_prompt = await agent._build_system_prompt()
+            shared.message_history = [ChatMessage(role="user", content="Select Bob")]
+            ctx = Context(agent)
+            with patch.object(Context, "write_event_to_stream"):
+                await ctx.store.set("selection_goal", "Select Bob")
+                await agent.handle_llm_input(ctx, FastAgentInputEvent())
+        else:
+            agent = ExecutorAgent(**kwargs)
+            ctx = Context(agent)
+            with patch.object(Context, "write_event_to_stream"):
+                event = await agent.prepare_context(
+                    ctx, StartEvent(subgoal="Select Bob")
+                )
+                await agent.get_response(ctx, event)
+
+        text = model.decide.call_args.args[0].instructions
+        assert ("choose delegate to type the text" in text) is llm_delegate
+        assert ("You cannot write arbitrary text" in text) is not llm_delegate
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("agent_kind", ["fast_agent", "executor"])
 @pytest.mark.parametrize("prompt_source", ["file", "inline"])
 def test_llm_fallback_uses_its_own_prompt_and_executes_once(
     tmp_path, agent_kind, prompt_source
