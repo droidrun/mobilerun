@@ -554,7 +554,7 @@ tcp_option = click.option("--tcp/--no-tcp", default=None, help="Use local Androi
 json_option = click.option(
     "-j", "--json", "json_output", is_flag=True, help="Print one JSON document."
 )
-model_option = click.option("-m", "--model", help="LLM model (optional for TypeSafe).")
+model_option = click.option("-m", "--model", help="LLM model.")
 llm_url_option = click.option("-u", "--llm-url", help="LLM API URL.")
 max_steps_option = click.option("-s", "--max-steps", type=int, help="Maximum steps.")
 

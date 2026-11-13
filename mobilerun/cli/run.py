@@ -23,10 +23,9 @@ from mobilerun.cli.options import (
     json_option,
     llm_url_option,
     max_steps_option,
-    model_option,
     tcp_option,
 )
-from mobilerun.cli.providers import PROVIDERS, llm_url_kwargs
+from mobilerun.cli.providers import PROVIDERS, llm_url_kwargs, run_provider_option
 from mobilerun.cli.selection import _native_driver, select_device
 from mobilerun.log_handlers import CLILogHandler, configure_logging
 
@@ -83,9 +82,6 @@ async def _run_task(
     api_url: str = DEFAULT_API_URL,
     no_delegate: bool = False,
     delegate_model: str | None = None,
-    base_url: str | None = None,
-    api_base: str | None = None,
-    **kwargs,
 ) -> tuple[bool, str | None, int | None]:
     """Execute a task and return the result-event fields."""
     from mobilerun_core_local.driver.visual_remote import VISUAL_REMOTE_CONNECTION
@@ -93,7 +89,6 @@ async def _run_task(
     from mobilerun import MobileAgent
     from mobilerun.agent.selectors import LlamaIndexLLMSelector
     from mobilerun.agent.utils.llm_picker import load_llm
-    from mobilerun.cli.configure_wizard import ensure_llm_delegation
     from mobilerun.cli.event_handler import EventHandler
     from mobilerun.config_manager import ConfigLoader
     from mobilerun.config_manager.config_manager import DecisionProfile
@@ -157,10 +152,6 @@ async def _run_task(
             config.agent.streaming = stream
 
         if no_delegate:
-            if delegate_model:
-                raise click.UsageError(
-                    "--delegate-model cannot be used with --no-delegate."
-                )
             _drop_delegation(config)
 
         # A decision model picks actions in place of the action LLM.
@@ -173,7 +164,7 @@ async def _run_task(
                 else _action_role(config)
             )
             existing = config.decision_profiles.get(role)
-            endpoint = llm_url or base_url or api_base
+            endpoint = llm_url
             configured = (
                 existing is not None and existing.provider.lower() == "typesafe"
             )
@@ -188,18 +179,15 @@ async def _run_task(
                     model=model, base_url=endpoint
                 )
             # Endpoints given with -p belong to that provider, not the helper LLMs.
-            provider = model = llm_url = base_url = api_base = None
+            provider = model = llm_url = None
             # Delegate by default, unless the config already sets Jev up alone.
             if not no_delegate and config.agent.delegation is None and not configured:
                 try:
-                    ensure_llm_delegation(config, role)
+                    _apply_delegate_model(config)
                 except ValueError as error:
                     logger.warning(f"{error} Jev will run alone.")
         if delegate_model:
-            try:
-                _apply_delegate_model(config, delegate_model)
-            except ValueError as error:
-                raise click.UsageError(str(error)) from error
+            _apply_delegate_model(config, delegate_model)
         if not (provider or model) and config.agent.name in {"mobilerun", "droidrun"}:
             _log_delegate(config, logger)
 
@@ -287,23 +275,13 @@ async def _run_task(
             if temperature is not None:
                 llm_kwargs["temperature"] = temperature
             llm_kwargs.update(llm_url_kwargs(provider, llm_url))
-            if base_url is not None:
-                llm_kwargs["base_url"] = base_url
-            if api_base is not None:
-                llm_kwargs["api_base"] = api_base
-            llm = load_llm(provider, model=model, **llm_kwargs, **kwargs)
+            llm = load_llm(provider, model=model, **llm_kwargs)
         else:
             if llm_url is not None:
                 for profile in config.llm_profiles.values():
                     profile.kwargs.update(llm_url_kwargs(profile.provider, llm_url))
             if temperature is not None:
                 droid_agent_kwargs["temperature"] = temperature
-
-            if base_url is not None:
-                droid_agent_kwargs["base_url"] = base_url
-            if api_base is not None:
-                droid_agent_kwargs["api_base"] = api_base
-            droid_agent_kwargs.update(kwargs)
 
         droid_agent = MobileAgent(
             goal=command,
@@ -338,6 +316,8 @@ async def _run_task(
 
 async def run_command(*args, **kwargs) -> bool:
     """Keep the boolean interface used by macro handoff and Python callers."""
+    if kwargs.get("no_delegate") and kwargs.get("delegate_model"):
+        return False
     try:
         success, _, _ = await _run_task(*args, **kwargs)
         return success
@@ -371,17 +351,22 @@ def _drop_delegation(config: MobileConfig) -> None:
     config.agent.delegation = None
 
 
-def _apply_delegate_model(config: MobileConfig, spec: str) -> None:
+def _apply_delegate_model(config: MobileConfig, spec: str | None = None) -> None:
     from mobilerun.cli.configure_wizard import ensure_llm_delegation
 
     delegation = config.agent.delegation
     role = _action_role(config)
-    if ((delegation and delegation.primary) or role) not in config.decision_profiles:
-        raise ValueError(
+    if (
+        spec
+        and ((delegation and delegation.primary) or role)
+        not in config.decision_profiles
+    ):
+        raise click.UsageError(
             "--delegate-model needs a decision model picking actions: pass "
             "-p TypeSafe or set decision_profiles in the config."
         )
-    ensure_llm_delegation(config, role, _delegate_profile(config, role, spec))
+    profile = _delegate_profile(config, role, spec) if spec else None
+    ensure_llm_delegation(config, role, profile)
 
 
 # These providers take vendor-prefixed model ids such as "anthropic/claude".
@@ -395,13 +380,19 @@ def _delegate_profile(config: MobileConfig, role: str, spec: str) -> LLMProfile:
 
     spec = spec.strip()
     provider, _, model = spec.partition("/")
+    requested_provider = provider
+    if provider.lower() in PROVIDERS:
+        provider = PROVIDERS[provider.lower()].runtime
     base = config.llm_profiles.get(role) or config.llm_profiles.get("fast_agent")
     base_name = normalize_provider_name(base.provider).lower() if base else ""
     name = normalize_provider_name(provider).lower()
     family = (getattr(base, "provider_family", None) or "").lower()
     if base_name in _VENDOR_MODEL_PROVIDERS and family in {"", "openai_like"}:
-        # Only an exact provider name switches away from a vendor/model id.
-        is_provider = provider in _known_providers(exact=True)
+        # Preserve vendor/model ids while accepting exact names and CLI aliases.
+        is_provider = requested_provider in _known_providers(exact=True) or (
+            requested_provider.lower() in PROVIDERS
+            and requested_provider.lower() != provider.lower()
+        )
     else:
         is_provider = name in _known_providers()
     if model and is_provider:
@@ -409,7 +400,7 @@ def _delegate_profile(config: MobileConfig, role: str, spec: str) -> LLMProfile:
             return replace(base, model=model)
         return profile_for_provider(provider, model)
     if base is None:
-        raise ValueError(
+        raise click.UsageError(
             "--delegate-model needs PROVIDER/MODEL when the config has no agent LLM."
         )
     return replace(base, model=spec)
@@ -499,16 +490,8 @@ class AgentOption(click.Option):
 @device_options
 @tcp_option
 @json_option
-@click.option(
-    "-p",
-    "--provider",
-    type=click.Choice([*PROVIDERS, "TypeSafe"], case_sensitive=False),
-    metavar="PROVIDER",
-    help="LLM provider: "
-    + ", ".join(PROVIDERS)
-    + ", or TypeSafe for the Jev decision model.",
-)
-@model_option
+@run_provider_option
+@click.option("-m", "--model", help="LLM model (optional for TypeSafe).")
 @click.option(
     "--no-delegate",
     is_flag=True,
@@ -518,7 +501,10 @@ class AgentOption(click.Option):
 @click.option(
     "--delegate-model",
     default=None,
-    help="LLM for the decision model's typing and unsure steps, as PROVIDER/MODEL or MODEL (default: the agent's LLM).",
+    help=(
+        "LLM for the decision model's typing and unsure steps, as PROVIDER/MODEL "
+        "or MODEL (default: the agent's LLM)."
+    ),
 )
 @llm_url_option
 @max_steps_option
@@ -578,6 +564,8 @@ async def run(
     """Run a task on a mobile device using natural language."""
     if provider != "TypeSafe" and (provider is None) != (model is None):
         raise click.UsageError("--provider and --model must be given together")
+    if no_delegate and delegate_model:
+        raise click.UsageError("--delegate-model cannot be used with --no-delegate.")
     success, reason, steps = await _run_task(
         command=task,
         config_path=config_path,
@@ -587,11 +575,7 @@ async def run(
         api_url=api_url,
         tcp=tcp,
         debug=verbose,
-        provider=(
-            "TypeSafe"
-            if provider == "TypeSafe"
-            else PROVIDERS[provider].runtime if provider else None
-        ),
+        provider=PROVIDERS[provider].runtime if provider in PROVIDERS else provider,
         model=model,
         llm_url=llm_url,
         steps=max_steps,

@@ -9,7 +9,7 @@ from llama_index.core.workflow import Context, StartEvent
 from pydantic import BaseModel
 from selector_helpers import CompletedRun, StubSelector
 
-import mobilerun.cli.run as cli_main
+import mobilerun.cli.run as cli_run
 from mobilerun import MobileAgent, MobileConfig
 from mobilerun.agent.droid import droid_agent
 from mobilerun.agent.selectors import DecisionSelector, LlamaIndexLLMSelector
@@ -23,11 +23,11 @@ class _Output(BaseModel):
 @pytest.fixture
 def cli_agents(monkeypatch):
     """Use real agent initialization and a completed run, never a real device."""
-    monkeypatch.setattr(cli_main, "_setup_cli_logging", lambda _: None)
+    monkeypatch.setattr(cli_run, "_setup_cli_logging", lambda _: None)
     monkeypatch.setattr(
         "mobilerun.telemetry.print_telemetry_message", lambda **kw: None
     )
-    monkeypatch.setattr(cli_main, "_cleanup_android_keyboard", AsyncMock())
+    monkeypatch.setattr(cli_run, "_cleanup_android_keyboard", AsyncMock())
     agents = []
 
     def initialize(**kwargs):
@@ -570,14 +570,12 @@ def test_cli_custom_provider_retains_original_constructor_defaults(
     monkeypatch.setattr("mobilerun.config_manager.ConfigLoader.load", lambda _: config)
     assert (
         asyncio.run(
-            cli_main.run_command(
+            cli_run.run_command(
                 "Select",
-                provider="Example",
+                provider="OpenAILike",
                 model="test",
                 temperature=temperature,
-                base_url="https://example.test",
-                api_base="https://api.example.test",
-                max_tokens=123,
+                llm_url="https://example.test",
                 debug=False,
             )
         )
@@ -587,12 +585,10 @@ def test_cli_custom_provider_retains_original_constructor_defaults(
     expected: dict[str, object] = {
         "model": "test",
         "base_url": "https://example.test",
-        "api_base": "https://api.example.test",
-        "max_tokens": 123,
     }
     if temperature is not None:
         expected["temperature"] = temperature
-    load.assert_called_once_with("Example", **expected)
+    load.assert_called_once_with("OpenAILike", **expected)
 
 
 @pytest.mark.parametrize("reasoning", [False, True])
@@ -602,6 +598,8 @@ def test_cli_profile_overrides_reach_every_required_llm(
 ):
     config = MobileConfig()
     config.agent.reasoning = reasoning
+    for profile in config.llm_profiles.values():
+        profile.provider = "OpenAILike"
     roles = (
         ["manager", "executor", "app_opener"]
         if reasoning
@@ -612,30 +610,27 @@ def test_cli_profile_overrides_reach_every_required_llm(
     monkeypatch.setattr("mobilerun.config_manager.ConfigLoader.load", lambda _: config)
     assert (
         asyncio.run(
-            cli_main.run_command(
+            cli_run.run_command(
                 "Select",
                 temperature=temperature,
-                base_url="https://example.test",
-                api_base="https://api.example.test",
-                max_tokens=123,
+                llm_url="https://example.test",
                 debug=False,
             )
         )
         is True
     )
     assert len(cli_agents) == 1
-    overrides: dict[str, object] = {
-        "base_url": "https://example.test",
-        "api_base": "https://api.example.test",
-        "max_tokens": 123,
-    }
+    overrides: dict[str, object] = {}
     if temperature is not None:
         overrides["temperature"] = temperature
     load.assert_called_once_with(
         config.llm_profiles,
         profile_names=roles,
-        **{role: overrides for role in roles},
+        **({role: overrides for role in roles} if overrides else {}),
     )
+
+    for role in roles:
+        assert config.llm_profiles[role].kwargs["base_url"] == "https://example.test"
 
 
 def test_custom_constructor_options_are_copied_before_overrides(monkeypatch):

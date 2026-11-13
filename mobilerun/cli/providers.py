@@ -42,19 +42,25 @@ PROVIDERS = {
 }
 
 
-def _provider_option(names):
+def _provider_option(names, note=""):
     return click.option(
         "-p",
         "--provider",
         type=click.Choice(names, case_sensitive=False),
         metavar="PROVIDER",
-        help="LLM provider: " + ", ".join(names) + ".",
+        help="LLM provider: "
+        + ", ".join(names)
+        + "."
+        + (" " + note + "." if note else ""),
     )
 
 
 provider_option = _provider_option(list(PROVIDERS))
 configure_provider_option = _provider_option(
     [name for name, spec in PROVIDERS.items() if spec.family]
+)
+run_provider_option = _provider_option(
+    [*PROVIDERS, "TypeSafe"], note="TypeSafe for the Jev decision model"
 )
 
 
