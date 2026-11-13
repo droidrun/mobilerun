@@ -342,6 +342,24 @@ Check the command's exit status as well as its JSON.
 
 ### Cloud scripts
 
+Install the routines extra to create, check, and run scripts locally:
+
+```bash
+pip install "mobilerun[routines]"
+mobilerun script init hello.py
+mobilerun script check hello.py
+mobilerun script run hello.py --local -d emulator-5554 --input '{}'
+mobilerun script run hello.py --local -P ios -d http://127.0.0.1:6643 --input '{}'
+mobilerun script run hello.py --local -t cloud -d CLOUD_DEVICE_ID --input '{}'
+```
+
+`--local` runs the script in your Python environment. Device options select its
+`ctx.device`: an ADB serial, a Portal URL, or a cloud device id. Use `-P android`
+for an Android Portal URL. `MOBILERUN_DEVICE` and `MOBILERUN_TARGET` also work.
+Cloud devices use `MOBILERUN_API_KEY` or your saved `mobilerun auth login` session;
+`--api-url` or `MOBILERUN_API_BASE_URL` selects the cloud API endpoint.
+Without a device, the script runs with no device flags.
+
 Upload immutable versions of a Python script, inspect them, and download their
 source. Names default to the uploaded file's basename, including `.py`.
 `push` waits up to 60 seconds for inspection by default; use `--no-wait` to

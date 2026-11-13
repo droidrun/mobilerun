@@ -9,18 +9,30 @@ from unittest.mock import Mock
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import script
+from mobilerun.cli import deviceauth, script
 from mobilerun.cli.main import cli
 from mobilerun.config_manager import ConfigLoader
 
 
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
+    from mobilerun_core import detect
+
+    monkeypatch.setattr(detect, "adb_serial_present", lambda serial: False)
     monkeypatch.setattr(
         ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml"
     )
     monkeypatch.delenv("MOBILERUN_CONFIG", raising=False)
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    for name in (
+        "MOBILERUN_DEVICE",
+        "MOBILERUN_TARGET",
+        "MOBILERUN_API_KEY",
+        "MOBILERUN_CLOUD_API_KEY",
+        "MOBILERUN_API_BASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(deviceauth, "load_credentials", lambda: None)
 
 
 @pytest.fixture
@@ -61,7 +73,7 @@ def test_missing_package(monkeypatch, source, command):
     assert result.stdout == ""
     assert result.stderr == (
         "mobilerun-routines is not installed in /custom/python. "
-        "Install it with: pip install mobilerun-routines\n"
+        'Install it with: pip install "mobilerun[routines]"\n'
     )
     assert call.call_count == 1
 
@@ -173,11 +185,19 @@ def test_run_result_and_cleanup(monkeypatch, source, tmp_path, code, from_file, 
     def run(command, **kwargs):
         if "-c" in command:
             return subprocess.CompletedProcess(command, 0)
-        assert command[:5] == [sys.executable, "-m", "mobilerun_routines", "run", source]
+        assert command[:5] == [
+            sys.executable,
+            "-m",
+            "mobilerun_routines",
+            "run",
+            source,
+        ]
         input_path = Path(command[command.index("--input-file") + 1])
         result_path = Path(command[command.index("--result-file") + 1])
         temporary_paths.append(input_path.parent)
         assert json.loads(input_path.read_text()) == {"name": "example"}
+        assert "--device-target" not in command
+        assert "env" not in kwargs
         assert command[-2:] == ["--state-file", state]
         assert "stderr" not in kwargs and not kwargs.get("capture_output")
         result_path.write_text(raw)
@@ -241,4 +261,161 @@ def test_run_rejects_both_inputs(monkeypatch, source):
     )
     assert result.exit_code == 2
     assert "exactly one" in result.stderr
+    call.assert_not_called()
+
+
+CLOUD_ID = "00000000-0000-4000-8000-000000000000"
+
+
+@pytest.mark.parametrize(
+    "flags,device_args,cloud",
+    [
+        (
+            ["-d", "emulator-5554"],
+            [
+                "--device-target",
+                "local",
+                "--device-platform",
+                "android",
+                "--device-id",
+                "emulator-5554",
+            ],
+            False,
+        ),
+        (
+            ["-P", "android", "-d", "http://127.0.0.1:8080"],
+            [
+                "--device-target",
+                "local",
+                "--device-platform",
+                "android",
+                "--device-url",
+                "http://127.0.0.1:8080",
+            ],
+            False,
+        ),
+        (
+            ["-P", "ios", "-d", "http://127.0.0.1:6643/"],
+            [
+                "--device-target",
+                "local",
+                "--device-platform",
+                "ios",
+                "--device-url",
+                "http://127.0.0.1:6643",
+            ],
+            False,
+        ),
+        (
+            ["-t", "cloud", "-d", CLOUD_ID],
+            ["--device-target", "cloud", "--device-id", CLOUD_ID],
+            True,
+        ),
+        (
+            ["-d", CLOUD_ID],
+            ["--device-target", "cloud", "--device-id", CLOUD_ID],
+            True,
+        ),
+    ],
+)
+def test_run_device_mapping(monkeypatch, source, flags, device_args, cloud):
+    monkeypatch.setenv("MOBILERUN_API_KEY", "unit-script-env-key")
+    monkeypatch.setenv("SCRIPT_CUSTOM_VAR", "inherited")
+
+    def run(command, **kwargs):
+        assert "unit-script-env-key" not in " ".join(command)
+        if "-c" in command:
+            return subprocess.CompletedProcess(command, 0)
+        assert command[-len(device_args) :] == device_args
+        if cloud:
+            assert kwargs["env"]["MOBILERUN_API_KEY"] == "unit-script-env-key"
+            assert (
+                kwargs["env"]["MOBILERUN_API_BASE_URL"] == "https://api.example.com/v1"
+            )
+            assert kwargs["env"]["SCRIPT_CUSTOM_VAR"] == "inherited"
+        else:
+            assert "env" not in kwargs  # inherit the user's environment unchanged
+        Path(command[command.index("--result-file") + 1]).write_text('{"ok": true}')
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(script.subprocess, "run", run)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "script",
+            "run",
+            source,
+            "--local",
+            "--input",
+            "{}",
+            "--api-url",
+            "https://api.example.com/v1",
+            *flags,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"ok": True}
+    assert "unit-script-env-key" not in result.output
+
+
+@pytest.mark.parametrize("credential", ["env", "saved", "legacy"])
+def test_run_cloud_env_binding_and_credentials(monkeypatch, source, credential):
+    monkeypatch.setenv("MOBILERUN_DEVICE", CLOUD_ID)
+    monkeypatch.setenv("MOBILERUN_TARGET", "cloud")
+    monkeypatch.setenv("MOBILERUN_API_BASE_URL", "https://env.example.com/v1")
+    monkeypatch.setattr(
+        deviceauth, "load_credentials", lambda: {"access_token": "unit-saved-key"}
+    )
+    if credential == "env":
+        monkeypatch.setenv("MOBILERUN_API_KEY", "unit-env-key")
+        monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "unit-legacy-key")
+    elif credential == "legacy":
+        monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", "unit-legacy-key")
+    expected = {
+        "env": "unit-env-key",
+        "saved": "unit-saved-key",
+        "legacy": "unit-legacy-key",
+    }[credential]
+
+    def run(command, **kwargs):
+        if "-c" in command:
+            return subprocess.CompletedProcess(command, 0)
+        assert command[-4:] == ["--device-target", "cloud", "--device-id", CLOUD_ID]
+        assert kwargs["env"]["MOBILERUN_API_KEY"] == expected
+        assert kwargs["env"]["MOBILERUN_API_BASE_URL"] == "https://env.example.com/v1"
+        assert expected not in " ".join(command)
+        Path(command[command.index("--result-file") + 1]).write_text('{"ok": true}')
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(script.subprocess, "run", run)
+    result = CliRunner().invoke(
+        cli, ["script", "run", source, "--local", "--input", "{}"]
+    )
+    assert result.exit_code == 0, result.output
+    assert expected not in result.output
+
+
+def test_run_cloud_without_credential_does_not_start_child(monkeypatch, source):
+    call = Mock(
+        side_effect=AssertionError("must require a credential before any child")
+    )
+    monkeypatch.setattr(script.subprocess, "run", call)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "script",
+            "run",
+            source,
+            "--local",
+            "-t",
+            "cloud",
+            "-d",
+            CLOUD_ID,
+            "--input",
+            "{}",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "MOBILERUN_API_KEY" in result.stderr
+    assert "mobilerun auth login" in result.stderr
     call.assert_not_called()

@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -1494,6 +1494,9 @@ langfuse = [
     { name = "llama-index-instrumentation" },
     { name = "openinference-instrumentation-llama-index" },
 ]
+routines = [
+    { name = "mobilerun-routines", extra = ["device", "local"] },
+]
 typesafe = [
     { name = "typesafe-sdk" },
 ]
@@ -1538,6 +1541,7 @@ requires-dist = [
     { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
     { name = "mobilerun-core", extras = ["local"], specifier = ">=1.12.0" },
     { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
+    { name = "mobilerun-routines", extras = ["device", "local"], marker = "extra == 'routines'", git = "https://github.com/droidrun/mobilerun-routines?rev=aade71a8eb36baea614e2b87c83f444bff380fa2" },
     { name = "mobilerun-sdk", git = "https://github.com/droidrun/mobilerun-sdk-python?rev=871123bcb8ed72fc577e4adfb7460b9ce0bbb246" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
@@ -1555,7 +1559,7 @@ requires-dist = [
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.7.5,<0.8.0" },
     { name = "urllib3", specifier = ">=2.8.0" },
 ]
-provides-extras = ["anthropic", "deepseek", "typesafe", "dev", "langfuse"]
+provides-extras = ["anthropic", "deepseek", "routines", "typesafe", "dev", "langfuse"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1603,6 +1607,22 @@ wheels = [
 [package.optional-dependencies]
 cloud = [
     { name = "mobilerun-sdk" },
+]
+
+[[package]]
+name = "mobilerun-routines"
+version = "0.5.0"
+source = { git = "https://github.com/droidrun/mobilerun-routines?rev=aade71a8eb36baea614e2b87c83f444bff380fa2#aade71a8eb36baea614e2b87c83f444bff380fa2" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+device = [
+    { name = "mobilerun-core" },
+]
+local = [
+    { name = "mobilerun-core", extra = ["local"] },
 ]
 
 [[package]]

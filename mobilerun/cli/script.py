@@ -18,13 +18,16 @@ from mobilerun.cli.options import (
     Group,
     api_url_option,
     convert_api_error,
+    device_option,
     emit,
     emit_rows,
     examples,
     input_allowed,
     json_option,
     no_input_option,
+    platform_option,
     redact_secrets,
+    target_option,
     verbose_option,
 )
 
@@ -51,7 +54,7 @@ def _interpreter(python_path):
     if result.returncode:
         click.echo(
             f"mobilerun-routines is not installed in {interpreter}. "
-            "Install it with: pip install mobilerun-routines",
+            'Install it with: pip install "mobilerun[routines]"',
             err=True,
         )
         raise click.exceptions.Exit(1)
@@ -130,10 +133,25 @@ def check_script(path, python_path, json_output, verbose):
     "--state-file", type=click.Path(dir_okay=False), help="Read and save script state."
 )
 @python_option
+@device_option
+@target_option
+@platform_option
+@api_url_option
 @json_option
 @verbose_option
 def run_script(
-    path, local, input_json, input_file, state_file, python_path, json_output, verbose
+    path,
+    local,
+    input_json,
+    input_file,
+    state_file,
+    python_path,
+    device,
+    target,
+    platform,
+    api_url,
+    json_output,
+    verbose,
 ):
     """Run a script and print its result."""
     if (input_json is None) == (input_file is None):
@@ -147,6 +165,37 @@ def run_script(
     except (ValueError, OSError) as exc:
         option = "--input" if input_json is not None else "--input-file"
         raise click.BadParameter(str(exc), param_hint=option) from None
+    device_args = []
+    child_options = {}
+    if device:
+        import asyncio
+
+        from mobilerun.agent.utils.android_device import is_portal_http_url
+        from mobilerun.cli.selection import require_cloud_api_key, select_device
+
+        selection = asyncio.run(
+            select_device(device=device, target=target, platform=platform)
+        )
+        if selection.backend == "cloud":
+            child_options["env"] = {
+                **os.environ,
+                "MOBILERUN_API_KEY": require_cloud_api_key(),
+                "MOBILERUN_API_BASE_URL": api_url,
+            }
+            device_args = ["--device-target", "cloud", "--device-id", selection.device]
+        else:
+            device_args = [
+                "--device-target",
+                "local",
+                "--device-platform",
+                selection.platform,
+                (
+                    "--device-url"
+                    if is_portal_http_url(selection.device)
+                    else "--device-id"
+                ),
+                selection.device,
+            ]
     interpreter = _interpreter(python_path)
     with tempfile.TemporaryDirectory(prefix="mobilerun-script-") as directory:
         input_path = Path(directory) / "input.json"
@@ -162,11 +211,14 @@ def run_script(
             str(input_path),
             "--result-file",
             str(result_path),
+            *device_args,
         ]
         if state_file is not None:
             command.extend(["--state-file", state_file])
         # Inherit stderr so script logs appear immediately while it runs.
-        result = subprocess.run(command, stdout=subprocess.PIPE, text=True, check=False)
+        result = subprocess.run(
+            command, stdout=subprocess.PIPE, text=True, check=False, **child_options
+        )
         if result_path.exists():
             raw = result_path.read_text(encoding="utf-8")
             emit(
