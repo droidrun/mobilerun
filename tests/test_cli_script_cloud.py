@@ -5,13 +5,12 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, call
-from uuid import UUID
 
 import httpx
 import pytest
 from click.testing import CliRunner
 from mobilerun_core.connection import cloud
-from mobilerun_sdk import APIStatusError, APITimeoutError
+from mobilerun_sdk import APIConnectionError, APIStatusError, APITimeoutError
 from mobilerun_sdk.types.script import Script
 from mobilerun_sdk.types.script_source import ScriptSource
 from mobilerun_sdk.types.script_source_response import ScriptSourceResponse
@@ -94,14 +93,11 @@ def invoke(*args, **kwargs):
     return CliRunner().invoke(cli, ["script", *map(str, args)], **kwargs)
 
 
-def test_push_default_name_idempotency_and_exact_source(sdk, file):
+def test_push_default_name_and_exact_source(sdk, file):
     first = invoke("push", file, "-j")
     second = invoke("push", file, "-j")
     assert first.exit_code == second.exit_code == 0, first.output + second.output
     calls = sdk.scripts.create.call_args_list
-    keys = [entry.kwargs["idempotency_key"] for entry in calls]
-    assert keys[0] != keys[1]
-    assert all(UUID(key).version == 4 for key in keys)
     assert all(entry.kwargs["name"] == "hello.py" for entry in calls)
     assert all(entry.kwargs["source"].encode() == file.read_bytes() for entry in calls)
     assert "manifest" not in calls[0].kwargs
@@ -481,15 +477,58 @@ def test_push_poll_timeout_respects_wait_budget(sdk, file, clock, expire):
 
     def request_timeout(*args, **kwargs):
         if expire:
-            clock.now += kwargs["timeout"]
+            clock.now += kwargs["timeout"].read
         raise APITimeoutError(request=httpx.Request("GET", "https://example.test"))
 
     sdk.scripts.retrieve.side_effect = request_timeout
     result = invoke("push", file, "-j")
-    assert result.exit_code == (0 if expire else 1), result.output
+    assert result.exit_code == 0, result.output
     sdk.client.with_options.assert_called_once_with(max_retries=0)
-    if expire:
-        assert "still pending" in result.stderr
-        assert json.loads(result.stdout)["status"] == "pending_inspection"
+    assert "still pending" in result.stderr
+    assert json.loads(result.stdout)["status"] == "pending_inspection"
+    timeout = sdk.scripts.retrieve.call_args.kwargs["timeout"]
+    assert timeout == httpx.Timeout(10)
+
+
+@pytest.mark.parametrize("kind", ["connection", "rate_limit", "server"])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_push_poll_error_keeps_created_version(sdk, file, clock, kind, json_output):
+    sdk.scripts.create.return_value.data = record(status="pending_inspection")
+    request = httpx.Request("GET", "https://example.test/v1/sandbox/scripts/" + ID2)
+    error = (
+        APIConnectionError(request=request)
+        if kind == "connection"
+        else APIStatusError(
+            "poll failed",
+            response=httpx.Response(
+                429 if kind == "rate_limit" else 503, request=request
+            ),
+            body={"message": "poll failed"},
+        )
+    )
+    sdk.scripts.retrieve.side_effect = error
+    result = invoke("push", file, *(["-j"] if json_output else []))
+    assert result.exit_code == 0, result.output
+    assert "mobilerun script show hello.py" in result.stderr
+    if json_output:
+        document = json.loads(result.stdout)
+        assert document["id"] == ID2
+        assert document["version"] == 2
+        assert document["status"] == "pending_inspection"
     else:
-        assert json.loads(result.stdout)["error"] == "Request timed out"
+        assert result.stdout == f"hello.py\t2\t{ID2}\tpending_inspection\n"
+    sdk.scripts.retrieve.assert_called_once()
+
+
+def test_push_poll_uses_remaining_budget(sdk, file, clock):
+    sdk.scripts.create.return_value.data = record(status="pending_inspection")
+
+    def retrieve(*args, **kwargs):
+        assert kwargs["timeout"] == httpx.Timeout(10 if clock.now == 1 else 2)
+        clock.now = 56 if clock.now == 1 else 60
+        return SimpleNamespace(data=record(status="pending_inspection"))
+
+    sdk.scripts.retrieve.side_effect = retrieve
+    result = invoke("push", file, "-j")
+    assert result.exit_code == 0, result.output
+    assert sdk.scripts.retrieve.call_count == 2

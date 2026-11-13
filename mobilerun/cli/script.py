@@ -11,7 +11,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import click
 
@@ -258,7 +258,8 @@ def _print_script(item, json_output, *, metadata=False):
 
 
 def _wait_for_inspection(client, item):
-    from mobilerun_sdk import APITimeoutError
+    import httpx
+    from mobilerun_sdk import APIError
 
     # Retried requests could outlive the inspection wait budget.
     poller = client.with_options(max_retries=0)
@@ -273,10 +274,11 @@ def _wait_for_inspection(client, item):
         if remaining <= 0:
             break
         try:
-            item = poller.scripts.retrieve(item.id, timeout=remaining).data
-        except APITimeoutError:
-            if time.monotonic() < deadline:
-                raise
+            item = poller.scripts.retrieve(
+                item.id, timeout=httpx.Timeout(min(remaining, 10))
+            ).data
+        except APIError:
+            # The upload succeeded: retain its identity even if polling fails.
             break
         delay = 2
     return item
@@ -314,7 +316,7 @@ def push_script(file, name, description, manifest, wait, api_url, json_output, v
         if not isinstance(params["manifest"], dict):
             raise click.BadParameter("Expected a JSON object.", param_hint="--manifest")
     with _script_client(api_url) as client:
-        item = client.scripts.create(**params, idempotency_key=str(uuid4())).data
+        item = client.scripts.create(**params).data
         if wait:
             item = _wait_for_inspection(client, item)
     _print_script(item, json_output)
