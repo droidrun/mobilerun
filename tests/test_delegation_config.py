@@ -7,7 +7,7 @@ import yaml
 from llama_index.core.llms.mock import MockLLM
 from selector_helpers import CompletedRun
 
-import mobilerun.cli.run as cli_main
+import mobilerun.cli.run as cli_run
 from mobilerun import DelegationConfig, MobileAgent, MobileConfig
 from mobilerun.agent.droid import droid_agent
 from mobilerun.agent.selectors import (
@@ -187,19 +187,19 @@ def test_cli_runs_new_config_with_existing_device_and_step_flags(monkeypatch, tm
         "load_llms_from_profiles",
         Mock(return_value={"app_opener": MockLLM()}),
     )
-    monkeypatch.setattr(cli_main, "_setup_cli_logging", lambda _: None)
-    monkeypatch.setattr(cli_main, "print_telemetry_message", lambda **kw: None)
-    monkeypatch.setattr(cli_main, "_cleanup_android_keyboard", AsyncMock())
+    monkeypatch.setattr(cli_run, "_setup_cli_logging", lambda _: None)
+    monkeypatch.setattr(cli_run, "print_telemetry_message", lambda **kw: None)
+    monkeypatch.setattr(cli_run, "_cleanup_android_keyboard", AsyncMock())
     agents = []
 
     def initialize(**kwargs):
         agents.append(MobileAgent(**kwargs))
         return SimpleNamespace(run=lambda: CompletedRun())
 
-    monkeypatch.setattr(cli_main, "MobileAgent", initialize)
+    monkeypatch.setattr(cli_run, "MobileAgent", initialize)
     assert (
         asyncio.run(
-            cli_main.run_command(
+            cli_run.run_command(
                 "Check timer and write a note",
                 config_path=str(config_path),
                 device="emulator-5554",

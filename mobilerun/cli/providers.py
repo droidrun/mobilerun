@@ -38,11 +38,24 @@ PROVIDERS = {
     "openrouter": Provider(None, "api_key", "api_base", "OpenRouter"),
     "deepseek": Provider(None, "api_key", "base_url", "DeepSeek"),
 }
-provider_option = click.option(
-    "-p",
-    "--provider",
-    type=click.Choice(list(PROVIDERS), case_sensitive=False),
-    help="LLM provider.",
+
+
+def _provider_option(names, note=""):
+    return click.option(
+        "-p",
+        "--provider",
+        type=click.Choice(names, case_sensitive=False),
+        metavar="PROVIDER",
+        help="LLM provider: "
+        + ", ".join(names)
+        + "."
+        + (" " + note + "." if note else ""),
+    )
+
+
+provider_option = _provider_option(list(PROVIDERS))
+run_provider_option = _provider_option(
+    [*PROVIDERS, "TypeSafe"], note="TypeSafe for the Jev decision model"
 )
 
 
