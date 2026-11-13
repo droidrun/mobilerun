@@ -20,8 +20,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mobilerun")
 
 
+def _runnable(name: object, request: SelectionRequest) -> bool:
+    return (
+        isinstance(name, str)
+        and name != "invalid"
+        and (not request.tools or name in request.tools)
+    )
+
+
 def _usable(selection: ActionSelection | None, request: SelectionRequest) -> bool:
-    """An error placeholder (executor 'invalid', failure, parse error) is not usable."""
+    """Only a selection with a call the registry can run is usable."""
     if (
         selection is None
         or selection.failure is not None
@@ -29,7 +37,10 @@ def _usable(selection: ActionSelection | None, request: SelectionRequest) -> boo
     ):
         return False
     if selection.actions:
-        return any(action.name != "invalid" for action in selection.actions)
+        return any(
+            action.error is None and _runnable(action.name, request)
+            for action in selection.actions
+        )
     # The executor also runs a selection given only as action JSON.
     if request.protocol != "executor" or not selection.action_json:
         return False
@@ -38,11 +49,7 @@ def _usable(selection: ActionSelection | None, request: SelectionRequest) -> boo
     except (TypeError, ValueError):
         return False
     name = action.get("action") if isinstance(action, dict) else None
-    return (
-        isinstance(name, str)
-        and name != "invalid"
-        and (not request.tools or name in request.tools)
-    )
+    return _runnable(name, request)
 
 
 class FallbackSelector(BaseActionSelector):

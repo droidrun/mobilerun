@@ -877,6 +877,28 @@ def test_fallback_keeps_valid_executor_json_selections(action_json, tools, kept)
     assert selection is (chosen if kept else fallback_choice)
 
 
+@pytest.mark.parametrize(
+    ("call", "kept"),
+    [
+        (ToolCall("click", {"index": 2}), True),
+        (ToolCall("teleport"), False),
+        (ToolCall("click", error="index must be an integer"), False),
+        (ToolCall("invalid"), False),
+    ],
+)
+def test_fallback_keeps_only_calls_the_registry_can_run(call, kept):
+    chosen = ActionSelection([call])
+    fallback_choice = ActionSelection([ToolCall("back")])
+    selection = asyncio.run(
+        FallbackSelector(
+            StubSelector(select=AsyncMock(return_value=chosen)),
+            [StubSelector(select=AsyncMock(return_value=fallback_choice))],
+        ).select(SelectionRequest("Select", tools={"click": None, "back": None}))
+    )
+
+    assert selection is (chosen if kept else fallback_choice)
+
+
 def test_fallback_ignores_json_only_selections_outside_the_executor():
     chosen = ActionSelection(action_json='{"action": "click", "index": 2}')
     fallback_choice = ActionSelection([ToolCall("back")])

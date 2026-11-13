@@ -469,6 +469,18 @@ class MobileAgent(Workflow):
                 role = "executor" if self.config.agent.reasoning else "fast_agent"
                 if role in decision_models:
                     self.action_selector = DecisionSelector(decision_models[role])
+        if (
+            self._screenshot_only
+            and self.action_selector is not None
+            and self.action_selector.requires_action_candidates
+            and not self.action_selector.locates_points
+            and not self.action_selector.llms
+        ):
+            # Screenshot-only states offer no elements, only located taps.
+            raise ValueError(
+                "This decision model cannot locate taps on a screenshot, so it "
+                "cannot run with vision_only or a visual-remote backend."
+            )
 
         self._stream_screenshots = (
             os.environ.get("MOBILERUN_STREAM_SCREENSHOTS")

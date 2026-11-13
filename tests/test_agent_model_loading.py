@@ -917,3 +917,20 @@ def test_action_selectors_requires_a_selector_or_dictionary(value):
 def test_action_selector_dictionary_rejects_invalid_selectors(selector):
     with pytest.raises(TypeError, match="fast_agent.*must implement ActionSelector"):
         MobileAgent("Select", action_selectors={"fast_agent": selector})
+
+
+@pytest.mark.parametrize("locates", [False, True])
+def test_screenshot_only_needs_a_decision_model_that_locates_taps(locates):
+    model = SimpleNamespace(decide=AsyncMock(), locates_points=locates)
+    provider = SimpleNamespace(requires_coordinate_tools=True)
+
+    def build():
+        return MobileAgent(
+            "Select", action_selectors=DecisionSelector(model), state_provider=provider
+        )
+
+    if locates:
+        assert build().action_selector.model is model
+    else:
+        with pytest.raises(ValueError, match="cannot locate taps"):
+            build()
