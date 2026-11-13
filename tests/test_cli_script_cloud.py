@@ -10,7 +10,12 @@ import httpx
 import pytest
 from click.testing import CliRunner
 from mobilerun_core.connection import cloud
-from mobilerun_sdk import APIConnectionError, APIStatusError, APITimeoutError
+from mobilerun_sdk import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    NotFoundError,
+)
 from mobilerun_sdk.types.script import Script
 from mobilerun_sdk.types.script_source import ScriptSource
 from mobilerun_sdk.types.script_source_response import ScriptSourceResponse
@@ -367,9 +372,7 @@ def test_delete_id(sdk):
     assert result.stdout == f"hello.py\t2\t{ID2}\n"
 
 
-@pytest.mark.parametrize(
-    "args", [["hello.py"], ["hello.py", "--version", 1, "--all"], [ID2, "--all"]]
-)
+@pytest.mark.parametrize("args", [["hello.py"], ["hello.py", "--version", 1, "--all"]])
 def test_delete_usage(sdk, args):
     result = invoke("delete", *args, "--yes")
     assert result.exit_code == 2, result.output
@@ -604,3 +607,81 @@ def test_pull_publish_failure_keeps_original(sdk, monkeypatch, tmp_path, operati
     assert "publish failed" in json.loads(result.stdout)["error"]
     assert output.read_bytes() == b"original"
     assert not list(tmp_path.glob(".mobilerun-pull-*"))
+
+
+def not_found():
+    request = httpx.Request("GET", "https://example.test/v1/sandbox/scripts/" + ID1)
+    return NotFoundError(
+        "missing",
+        response=httpx.Response(404, request=request),
+        body={"message": "missing"},
+    )
+
+
+@pytest.mark.parametrize(
+    "command,flags",
+    [
+        ("show", []),
+        ("pull", []),
+        ("delete", ["--version", 1, "--yes"]),
+        ("delete", ["--all", "--yes"]),
+    ],
+)
+def test_uuid_shaped_name_falls_back_after_not_found(
+    sdk, monkeypatch, tmp_path, command, flags
+):
+    monkeypatch.chdir(tmp_path)
+    sdk.scripts.retrieve.side_effect = not_found()
+    sdk.scripts.list.return_value = page(record(name=ID1))
+    if "--version" in flags:
+        sdk.scripts.list.return_value = page(record(name=ID1, version=1))
+    result = invoke(command, ID1, *flags, "-j")
+    assert result.exit_code == 0, result.output
+    sdk.scripts.retrieve.assert_called_once_with(ID1)
+    sdk.scripts.list.assert_called_once_with(page=1, name=ID1)
+    if command == "delete":
+        sdk.scripts.delete.assert_called_once_with(ID2)
+        assert json.loads(result.stdout)["deleted"][0]["name"] == ID1
+    elif command == "pull":
+        assert (tmp_path / (ID1 + ".py")).read_bytes() == SOURCE.encode()
+    else:
+        assert json.loads(result.stdout)["name"] == ID1
+
+
+@pytest.mark.parametrize(
+    "name", [ID1.replace("-", ""), "{" + ID1 + "}", "urn:uuid:" + ID1]
+)
+def test_noncanonical_uuid_is_a_name(sdk, name):
+    result = invoke("show", name, "-j")
+    assert result.exit_code == 0, result.output
+    sdk.scripts.retrieve.assert_not_called()
+    sdk.scripts.list.assert_called_once_with(page=1, name=name)
+
+
+def test_delete_all_rejects_resolved_id(sdk):
+    result = invoke("delete", ID2, "--all", "--yes")
+    assert result.exit_code == 2, result.output
+    assert "--all requires a script name" in result.stderr
+    sdk.scripts.list.assert_not_called()
+    sdk.scripts.delete.assert_not_called()
+
+
+def test_delete_uuid_name_still_requires_version_or_all(sdk):
+    sdk.scripts.retrieve.side_effect = not_found()
+    result = invoke("delete", ID1, "--yes")
+    assert result.exit_code == 2, result.output
+    assert "--version N or --all" in result.stderr
+    sdk.scripts.delete.assert_not_called()
+
+
+def test_uuid_retrieve_forbidden_does_not_fall_back(sdk):
+    request = httpx.Request("GET", "https://example.test/v1/sandbox/scripts/" + ID1)
+    sdk.scripts.retrieve.side_effect = APIStatusError(
+        "forbidden",
+        response=httpx.Response(403, request=request),
+        body={"message": "forbidden"},
+    )
+    result = invoke("show", ID1, "-j")
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["status"] == 403
+    sdk.scripts.list.assert_not_called()

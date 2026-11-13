@@ -11,7 +11,6 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from uuid import UUID
 
 import click
 
@@ -192,14 +191,6 @@ def _script_client(api_url):
         client.close()
 
 
-def _is_id(value):
-    try:
-        UUID(value)
-    except ValueError:
-        return False
-    return True
-
-
 def _script_versions(client, **filters):
     items = []
     page = 1
@@ -218,11 +209,25 @@ def _named_versions(client, name):
     return sorted(versions, key=lambda item: item.version, reverse=True)
 
 
+def _lookup_script_versions(client, name_or_id):
+    from mobilerun_core.detect import is_uuid
+    from mobilerun_sdk import NotFoundError
+
+    if is_uuid(name_or_id):
+        try:
+            return [client.scripts.retrieve(name_or_id).data], True
+        except NotFoundError:
+            # Canonical UUIDs are also valid script names.
+            pass
+    return _named_versions(client, name_or_id), False
+
+
 def _resolve_script(client, name_or_id, version):
-    if _is_id(name_or_id):
-        versions = [client.scripts.retrieve(name_or_id).data]
-    else:
-        versions = _named_versions(client, name_or_id)
+    versions, _ = _lookup_script_versions(client, name_or_id)
+    return _select_script_version(versions, name_or_id, version)
+
+
+def _select_script_version(versions, name_or_id, version):
     if version is None:
         return versions[0]
     for item in versions:
@@ -479,22 +484,26 @@ def delete_script(
     name_or_id, version, all_versions, yes, no_input, api_url, json_output, verbose
 ):
     """Delete one script version, or all versions of a name."""
-    is_id = _is_id(name_or_id)
+    from mobilerun_core.detect import is_uuid
+
     if version is not None and all_versions:
         raise click.UsageError("Choose --version or --all, not both.")
-    if is_id and all_versions:
-        raise click.UsageError("--all requires a script name, not an id.")
-    if not is_id and version is None and not all_versions:
+    if not is_uuid(name_or_id) and version is None and not all_versions:
         raise click.UsageError("A script name requires --version N or --all.")
     if not yes and not input_allowed(no_input):
         raise click.UsageError(
             "Deletion requires --yes when input is unavailable or --no-input is set."
         )
     with _script_client(api_url) as client:
+        versions, by_id = _lookup_script_versions(client, name_or_id)
+        if by_id and all_versions:
+            raise click.UsageError("--all requires a script name, not an id.")
+        if not by_id and version is None and not all_versions:
+            raise click.UsageError("A script name requires --version N or --all.")
         items = (
-            _named_versions(client, name_or_id)
+            versions
             if all_versions
-            else [_resolve_script(client, name_or_id, version)]
+            else [_select_script_version(versions, name_or_id, version)]
         )
         if not yes and not click.confirm(
             f"Delete {len(items)} version(s) of {name_or_id}?", err=True
