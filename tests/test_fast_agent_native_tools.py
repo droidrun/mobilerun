@@ -15,6 +15,7 @@ from llama_index.llms.openai.utils import to_openai_message_dicts
 from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.droid.state import MobileAgentState
 from mobilerun.agent.fast_agent.fast_agent import FastAgent
+from mobilerun.agent.fast_agent.native_tools import parse_native_tool_calls
 from mobilerun.agent.tool_registry import ToolRegistry
 from mobilerun.agent.utils.chat_utils import limit_history
 from mobilerun.agent.utils.inference import acall_with_retries
@@ -88,8 +89,8 @@ class _Registry:
     def get_tool_descriptions_xml(self):
         return '<tool name="click"/><tool name="complete"/>'
 
-    def get_param_types(self):
-        return {"index": "number", "success": "boolean"}
+    def get_tool_param_types(self):
+        return {"click": {"index": "number"}, "complete": {"success": "boolean"}}
 
     def get_function_tool_specs(self):
         return [CLICK_SPEC]
@@ -231,6 +232,26 @@ def test_invalid_and_string_arguments():
     first_result = [m for m in responder.requests[1][0] if m.role == "tool"][0]
     assert first_result.content == (
         "Error: Invalid arguments for click: arguments are not valid JSON"
+    )
+
+
+def test_string_encoded_object_and_integer_arguments_are_coerced():
+    tool_param_types = {"send": {"payload": "object", "count": "integer"}}
+    message = _reply(
+        "",
+        _call("call_1", "send", {"payload": '{"a": [1, 2]}', "count": "3"}),
+        _call("call_2", "send", {"payload": "[1]", "count": "3"}),
+        _call("call_3", "send", {"payload": "{}", "count": "1.0000000000000001"}),
+    )
+
+    calls = parse_native_tool_calls(message, tool_param_types=tool_param_types).calls
+
+    assert calls[0].error is None
+    assert calls[0].parameters == {"payload": {"a": [1, 2]}, "count": 3}
+    assert type(calls[0].parameters["count"]) is int
+    assert calls[1].error == "parameter 'payload' expected object, got '[1]'"
+    assert calls[2].error == (
+        "parameter 'count' expected integer, got '1.0000000000000001'"
     )
 
 

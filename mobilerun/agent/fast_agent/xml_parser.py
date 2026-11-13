@@ -8,8 +8,10 @@ for injection back into the conversation.
 import json
 import logging
 import re
+import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from html import escape
 from typing import Any, Dict, List, Optional, Tuple
@@ -87,14 +89,19 @@ class ToolResult:
 
 
 def parse_tool_calls(
-    text: str, param_types: Optional[Dict[str, str]] = None
+    text: str,
+    param_types: Optional[Dict[str, Any]] = None,
+    tool_param_types: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[str, List[ToolCall]]:
     """Parse tool calls from LLM response text.
 
     Args:
         text: Raw LLM response text.
-        param_types: Optional {param_name: type_string} map for coercion.
-                     If None, all values are kept as strings.
+        param_types: Optional {param_name: type_string} map for coercion,
+                     shared by every tool. If None, all values are kept as strings.
+        tool_param_types: Optional {tool_name: {param_name: type_string}} map.
+                     When given, each call is coerced with its own tool's types
+                     only, and ``param_types`` is ignored.
 
     Returns:
         Tuple of (text_before_tool_calls, list_of_tool_calls).
@@ -103,12 +110,14 @@ def parse_tool_calls(
     if OPEN_TAG not in text:
         return text.strip(), []
 
-    result = parse_tool_calls_detailed(text, param_types)
+    result = parse_tool_calls_detailed(text, param_types, tool_param_types)
     return result.thought, result.calls
 
 
 def parse_tool_calls_detailed(
-    text: str, param_types: Optional[Dict[str, str]] = None
+    text: str,
+    param_types: Optional[Dict[str, Any]] = None,
+    tool_param_types: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> ToolCallParseResult:
     """Parse tool calls and classify whether markup was absent, valid, or malformed.
 
@@ -168,7 +177,7 @@ def parse_tool_calls_detailed(
     # code and literal DSML. Provider-specific markup is malformed only
     # when it occurs outside a trustworthy canonical parameter payload.
     if block and not _has_noncanonical_markup(block):
-        calls = _parse_tool_call_block(block, param_types)
+        calls = _parse_tool_call_block(block, param_types, tool_param_types)
 
     end = part_start + close_idx + len(CLOSE_TAG)
     return ToolCallParseResult(
@@ -261,7 +270,9 @@ def extract_add_memory(text: str) -> str:
 
 
 def _parse_tool_call_block(
-    block: str, param_types: Optional[Dict[str, str]]
+    block: str,
+    param_types: Optional[Dict[str, Any]],
+    tool_param_types: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[ToolCall]:
     block = _sanitize_param_content(block)
     # Comments and processing instructions are dropped by the XML parser,
@@ -295,6 +306,7 @@ def _parse_tool_call_block(
             logger.warning("Tool call without a name in XML block, skipping block")
             return []
 
+        types = param_types_for_tool(name, param_types, tool_param_types)
         params: Dict[str, Any] = {}
         error: Optional[str] = None
         for param in invoke:
@@ -305,15 +317,28 @@ def _parse_tool_call_block(
                 )
                 return []
             try:
-                params[param_name] = _coerce_param(
-                    param_name, param.text or "", param_types
-                )
+                params[param_name] = _coerce_param(param_name, param.text or "", types)
             except ValueError as e:
                 error = str(e)
                 break
 
         calls.append(ToolCall(name=name, parameters=params, error=error))
     return calls
+
+
+def param_types_for_tool(
+    tool_name: str,
+    param_types: Optional[Dict[str, Any]],
+    tool_param_types: Optional[Dict[str, Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """Return the type map to coerce one tool's parameters with.
+
+    A per-tool map wins, so a parameter of another tool with the same name
+    never changes how this tool's parameters are coerced.
+    """
+    if tool_param_types is not None:
+        return tool_param_types.get(tool_name, {})
+    return param_types
 
 
 def _has_text_outside_parameters(root: ET.Element) -> bool:
@@ -377,7 +402,7 @@ def _sanitize_param_content(block: str) -> str:
 
 
 def _coerce_param(
-    name: str, value: str, param_types: Optional[Dict[str, str]] = None
+    name: str, value: str, param_types: Optional[Dict[str, Any]] = None
 ) -> Any:
     """Coerce string parameter value to expected type.
 
@@ -385,11 +410,19 @@ def _coerce_param(
         name: Parameter name.
         value: Raw string value from XML.
         param_types: Optional type map. If None, returns value as-is.
+            A type may be a JSON Schema type list such as ["array", "null"].
     """
     if param_types is None:
         return value
 
     expected = param_types.get(name, "string")
+    if isinstance(expected, list):
+        non_null = [t for t in expected if t != "null"]
+        nullable = len(non_null) < len(expected)
+        # Several possible types: keep the raw string.
+        expected = non_null[0] if len(non_null) == 1 else "string"
+        if nullable and expected != "string" and value.strip() == "null":
+            return None
 
     if expected == "boolean":
         return value.strip().lower() == "true"
@@ -397,17 +430,19 @@ def _coerce_param(
     if expected == "integer":
         value = value.strip()
         try:
-            return int(value)
-        except ValueError:
-            try:
-                as_float = float(value)
-            except ValueError:
-                as_float = None
-            if as_float is not None and as_float.is_integer():
-                return int(as_float)
-            raise ValueError(
-                f"parameter '{name}' expected integer, got '{value}'"
-            ) from None
+            number = Decimal(value)
+        except InvalidOperation:
+            number = None
+        # Decimal keeps every digit, so "1.0000000000000001" is not integral.
+        # The digit limit matches int(str) and keeps "1e999999999" cheap.
+        if (
+            number is None
+            or not number.is_finite()
+            or number != number.to_integral_value()
+            or number.adjusted() >= sys.get_int_max_str_digits()
+        ):
+            raise ValueError(f"parameter '{name}' expected integer, got '{value}'")
+        return int(number)
 
     if expected == "number":
         value = value.strip()
@@ -425,13 +460,14 @@ def _coerce_param(
         value = value.strip()
         try:
             parsed = json.loads(value)
-            if isinstance(parsed, list):
-                return parsed
-            return [parsed]  # Single element — wrap in list
-        except (json.JSONDecodeError, ValueError, RecursionError):
-            raise ValueError(
-                f"parameter '{name}' expected list, got '{value}'"
-            ) from None
+        except (ValueError, RecursionError):
+            parsed = None
+        # null is only valid when the schema allows it (handled above).
+        if parsed is None:
+            raise ValueError(f"parameter '{name}' expected {expected}, got '{value}'")
+        if isinstance(parsed, list):
+            return parsed
+        return [parsed]  # Single element — wrap in list
 
     if expected == "object":
         value = value.strip()
@@ -440,9 +476,7 @@ def _coerce_param(
         except (ValueError, RecursionError):
             parsed = None
         if not isinstance(parsed, dict):
-            raise ValueError(
-                f"parameter '{name}' expected object, got '{value}'"
-            ) from None
+            raise ValueError(f"parameter '{name}' expected object, got '{value}'")
         return parsed
 
     return value

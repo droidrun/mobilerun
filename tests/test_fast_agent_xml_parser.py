@@ -1,5 +1,8 @@
 import unittest
 
+from llama_index.core.base.llms.types import ChatMessage, ToolCallBlock
+
+from mobilerun.agent.fast_agent.native_tools import parse_native_tool_calls
 from mobilerun.agent.fast_agent.xml_parser import (
     ToolCallParseStatus,
     extract_add_memory,
@@ -7,6 +10,8 @@ from mobilerun.agent.fast_agent.xml_parser import (
     parse_tool_calls,
     parse_tool_calls_detailed,
 )
+from mobilerun.agent.tool_registry import ToolRegistry
+from mobilerun.mcp.adapter import schema_to_parameters
 
 
 class FastAgentXmlParserTest(unittest.TestCase):
@@ -799,7 +804,15 @@ Tool calls follow."""
         self.assertIs(type(calls[0].parameters["count"]), int)
 
     def test_integer_type_rejects_non_integers_and_accepts_whole_floats(self):
-        for value, expected in [("1e3", 1000), ("5.0", 5), ("-3", -3)]:
+        for value, expected in [
+            ("1e3", 1000),
+            ("5.0", 5),
+            ("-3", -3),
+            ("1.0000000000000000", 1),
+            ("9007199254740993", 9007199254740993),
+            ("9007199254740993.0", 9007199254740993),
+            ("1e999", 10**999),
+        ]:
             with self.subTest(value=value):
                 _, calls = parse_tool_calls(
                     f'<function_calls><invoke name="t"><parameter name="n">{value}'
@@ -807,7 +820,16 @@ Tool calls follow."""
                     {"n": "integer"},
                 )
                 self.assertEqual(calls[0].parameters["n"], expected)
-        for value in ["2.5", "nan", "inf", "1e999", "abc", ""]:
+        for value in [
+            "2.5",
+            "1.0000000000000001",
+            "9007199254740992.5",
+            "nan",
+            "inf",
+            "1e5000",
+            "abc",
+            "",
+        ]:
             with self.subTest(value=value):
                 _, calls = parse_tool_calls(
                     f'<function_calls><invoke name="t"><parameter name="n">{value}'
@@ -825,6 +847,93 @@ Tool calls follow."""
                     {"o": "object"},
                 )
                 self.assertIn("expected object", calls[0].error)
+
+    def test_array_rejects_null_unless_the_schema_allows_it(self):
+        for kind in ("list", "array"):
+            with self.subTest(kind=kind):
+                _, calls = parse_tool_calls(
+                    '<function_calls><invoke name="t"><parameter name="p">null'
+                    "</parameter></invoke></function_calls>",
+                    {"p": kind},
+                )
+                self.assertEqual(
+                    calls[0].error, f"parameter 'p' expected {kind}, got 'null'"
+                )
+
+        _, calls = parse_tool_calls(
+            '<function_calls><invoke name="t"><parameter name="p">null'
+            '</parameter><parameter name="q">[1]</parameter>'
+            "</invoke></function_calls>",
+            {"p": ["array", "null"], "q": ["array", "null"]},
+        )
+        self.assertIsNone(calls[0].error)
+        self.assertEqual(calls[0].parameters, {"p": None, "q": [1]})
+
+    def test_coercion_is_scoped_to_the_invoked_tool(self):
+        registry = ToolRegistry()
+        registry.register(
+            "complete",
+            lambda **_: None,
+            {
+                "success": {"type": "boolean", "required": True},
+                "message": {"type": "string", "required": True},
+            },
+            "Finish the task.",
+        )
+        # MCP tools are registered after the built-ins.
+        registry.register_from_dict(
+            {
+                "send": {
+                    "parameters": schema_to_parameters(
+                        {
+                            "properties": {
+                                "message": {"type": "object"},
+                                "retries": {"type": "integer"},
+                            }
+                        }
+                    ),
+                    "function": lambda **_: None,
+                }
+            }
+        )
+        tool_param_types = registry.get_tool_param_types()
+
+        _, calls = parse_tool_calls(
+            "<function_calls>"
+            '<invoke name="complete"><parameter name="success">true</parameter>'
+            '<parameter name="message">Done</parameter></invoke>'
+            '<invoke name="send"><parameter name="message">{"text": "hi"}'
+            '</parameter><parameter name="retries">2</parameter></invoke>'
+            "</function_calls>",
+            tool_param_types=tool_param_types,
+        )
+        self.assertIsNone(calls[0].error)
+        self.assertEqual(calls[0].parameters, {"success": True, "message": "Done"})
+        self.assertIsNone(calls[1].error)
+        self.assertEqual(calls[1].parameters, {"message": {"text": "hi"}, "retries": 2})
+
+        message = ChatMessage(
+            role="assistant",
+            blocks=[
+                ToolCallBlock(
+                    tool_call_id="c1",
+                    tool_name="complete",
+                    tool_kwargs={"success": True, "message": "Done"},
+                ),
+                ToolCallBlock(
+                    tool_call_id="c2",
+                    tool_name="send",
+                    tool_kwargs={"message": '{"text": "hi"}', "retries": "2"},
+                ),
+            ],
+        )
+        calls = parse_native_tool_calls(
+            message, tool_param_types=tool_param_types
+        ).calls
+        self.assertIsNone(calls[0].error)
+        self.assertEqual(calls[0].parameters, {"success": True, "message": "Done"})
+        self.assertIsNone(calls[1].error)
+        self.assertEqual(calls[1].parameters, {"message": {"text": "hi"}, "retries": 2})
 
     def test_deeply_nested_json_is_a_parameter_error_not_a_crash(self):
         for kind in ("list", "array", "object"):

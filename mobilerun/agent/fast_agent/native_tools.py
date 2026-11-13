@@ -15,6 +15,7 @@ from mobilerun.agent.fast_agent.xml_parser import (
     ToolCallParseStatus,
     ToolResult,
     _coerce_param,
+    param_types_for_tool,
 )
 
 
@@ -43,11 +44,20 @@ def native_tool_kwargs(
 
 
 def parse_native_tool_calls(
-    message: ChatMessage, param_types: Optional[Dict[str, str]] = None
+    message: ChatMessage,
+    param_types: Optional[Dict[str, Any]] = None,
+    tool_param_types: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> ToolCallParseResult:
-    """Split a native tool-calling response into its text and tool calls."""
+    """Split a native tool-calling response into its text and tool calls.
+
+    ``tool_param_types`` ({tool_name: {param_name: type}}) scopes coercion to
+    the invoked tool and takes precedence over the shared ``param_types``.
+    """
     calls = [
-        _to_tool_call(block, param_types)
+        _to_tool_call(
+            block,
+            param_types_for_tool(block.tool_name, param_types, tool_param_types),
+        )
         for block in message.blocks
         if isinstance(block, ToolCallBlock)
     ]
@@ -80,7 +90,7 @@ def tool_result_messages(
 
 
 def _to_tool_call(
-    block: ToolCallBlock, param_types: Optional[Dict[str, str]]
+    block: ToolCallBlock, param_types: Optional[Dict[str, Any]]
 ) -> ToolCall:
     name = block.tool_name
     call_id = block.tool_call_id

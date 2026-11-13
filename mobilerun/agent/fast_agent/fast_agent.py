@@ -185,7 +185,7 @@ class FastAgent(Workflow):
 
         # Build tool descriptions and param types from registry
         self.tool_descriptions = self.registry.get_tool_descriptions_xml()
-        self.param_types = self.registry.get_param_types()
+        self.tool_param_types = self.registry.get_tool_param_types()
         self.tool_specs = (
             self.registry.get_function_tool_specs() if self.native_tools else None
         )
@@ -459,9 +459,13 @@ class FastAgent(Workflow):
 
         # Parse tool calls from response
         if self.native_tools:
-            parse_result = parse_native_tool_calls(response.message, self.param_types)
+            parse_result = parse_native_tool_calls(
+                response.message, tool_param_types=self.tool_param_types
+            )
         else:
-            parse_result = parse_tool_calls_detailed(response_text, self.param_types)
+            parse_result = parse_tool_calls_detailed(
+                response_text, tool_param_types=self.tool_param_types
+            )
         thought = parse_result.thought
         tool_calls = parse_result.calls
 

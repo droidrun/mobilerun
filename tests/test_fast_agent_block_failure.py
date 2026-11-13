@@ -76,8 +76,8 @@ class _Registry:
     def get_tool_descriptions_xml(self):
         return '<tool name="click"/><tool name="complete"/>'
 
-    def get_param_types(self):
-        return {"index": "number", "success": "boolean"}
+    def get_tool_param_types(self):
+        return {"click": {"index": "number"}, "complete": {"success": "boolean"}}
 
     async def execute(self, name, parameters, _action_ctx, workflow_ctx=None):
         self.executed.append((name, parameters))

@@ -273,6 +273,24 @@ class ToolRegistry:
                 param_types[param_name] = param_info.get("type", "string")
         return param_types
 
+    def get_tool_param_types(
+        self, exclude: Optional[Set[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """Build a ``{tool_name: {param_name: type}}`` map for coercion.
+
+        Unlike :meth:`get_param_types`, tools with a parameter of the same
+        name do not override each other.
+        """
+        exclude = exclude or set()
+        return {
+            name: {
+                param_name: param_info.get("type", "string")
+                for param_name, param_info in entry.params.items()
+            }
+            for name, entry in self.tools.items()
+            if name not in exclude
+        }
+
     # -- internal helpers ----------------------------------------------------
 
     @staticmethod
