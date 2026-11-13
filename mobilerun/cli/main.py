@@ -11,6 +11,7 @@ import sys
 import tomllib
 import warnings
 from contextlib import nullcontext
+from dataclasses import replace
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,7 @@ from mobilerun.agent.utils.oauth.openai_oauth_llm import (
 from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 from mobilerun.cli.configure_wizard import (
     ConfigureWizardCallbacks,
+    ensure_llm_delegation,
     run_configure_wizard,
 )
 from mobilerun.cli.device_commands import (
@@ -73,6 +75,7 @@ from mobilerun.cli.oauth_actions import (
     save_anthropic_setup_token,
 )
 from mobilerun.config_manager import ConfigLoader, MobileConfig
+from mobilerun.config_manager.config_manager import DecisionProfile
 from mobilerun.config_manager.credential_paths import (
     ANTHROPIC_OAUTH_CREDENTIAL_PATH,
     GEMINI_OAUTH_CREDENTIAL_PATH,
@@ -151,6 +154,7 @@ async def run_command(
     save_trajectory: str | None = None,
     ios: bool = False,
     temperature: float | None = None,
+    delegate: bool | None = None,
     **kwargs,
 ) -> bool:
     """Run a command on your Android device using natural language.
@@ -221,6 +225,26 @@ async def run_command(
             config.agent.reasoning = reasoning
         if stream is not None:
             config.agent.streaming = stream
+
+        # A decision model picks actions in place of the action LLM.
+        if provider and provider.strip().lower() == "typesafe":
+            role = _action_role(config)
+            existing = config.decision_profiles.get(role)
+            endpoint = base_url or api_base
+            if existing is not None and existing.provider.lower() == "typesafe":
+                config.decision_profiles[role] = replace(
+                    existing,
+                    model=model or existing.model,
+                    base_url=endpoint or existing.base_url,
+                )
+            else:
+                config.decision_profiles[role] = DecisionProfile(
+                    model=model, base_url=endpoint
+                )
+            # Endpoints given with -p belong to that provider, not the helper LLMs.
+            provider = model = base_url = api_base = None
+        if delegate is not None:
+            _apply_delegate_flag(config, delegate)
 
         # Device overrides
         if device is not None:
@@ -353,6 +377,25 @@ async def run_command(
         await _cleanup_android_keyboard(
             config, getattr(droid_agent, "android_serial", None)
         )
+
+
+def _action_role(config: MobileConfig) -> str:
+    return "executor" if config.agent.reasoning else "fast_agent"
+
+
+def _apply_delegate_flag(config: MobileConfig, delegate: bool) -> None:
+    """Turn the decision model's hand-off to the configured LLM on or off."""
+    if not delegate:
+        config.agent.delegation = None
+        return
+    delegation = config.agent.delegation
+    role = _action_role(config)
+    if ((delegation and delegation.primary) or role) not in config.decision_profiles:
+        raise ValueError(
+            "--delegate needs a decision model picking actions: pass "
+            "-p TypeSafe or set decision_profiles in the config."
+        )
+    ensure_llm_delegation(config, role)
 
 
 async def _cleanup_android_keyboard(
@@ -502,14 +545,19 @@ except Exception:
 @click.option(
     "--provider",
     "-p",
-    help="LLM provider (OpenAI, openai_oauth, XAI, Ollama, Anthropic, anthropic_oauth, GoogleGenAI, gemini_oauth_code_assist, DeepSeek)",
+    help="LLM provider (OpenAI, openai_oauth, XAI, Ollama, Anthropic, anthropic_oauth, GoogleGenAI, gemini_oauth_code_assist, DeepSeek), or TypeSafe for the Jev decision model",
     default=None,
 )
 @click.option(
     "--model",
     "-m",
-    help="LLM model name",
+    help="LLM model name (optional for TypeSafe)",
     default=None,
+)
+@click.option(
+    "--delegate/--no-delegate",
+    default=None,
+    help="With a decision model, hand typing and unsure steps to the configured LLM",
 )
 @click.option("--temperature", type=float, help="Temperature for LLM", default=None)
 @click.option("--steps", type=int, help="Maximum number of steps", default=None)
@@ -592,6 +640,7 @@ async def run(
     device_id: str | None,
     save_trajectory: str | None,
     ios: bool,
+    delegate: bool | None,
 ):
     """Run a command on your mobile device using natural language."""
 
@@ -617,6 +666,7 @@ async def run(
         temperature=temperature,
         save_trajectory=save_trajectory,
         ios=ios,
+        delegate=delegate,
     )
 
     # Exit with appropriate code

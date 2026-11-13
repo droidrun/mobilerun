@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,7 +32,12 @@ from mobilerun.cli.configure_prompts import (
     text_prompt,
 )
 from mobilerun.config_manager import ConfigLoader
-from mobilerun.config_manager.env_keys import load_env_key_sources, resolve_env_key
+from mobilerun.config_manager.config_manager import DecisionProfile, DelegationConfig
+from mobilerun.config_manager.env_keys import (
+    load_env_key_sources,
+    resolve_env_key,
+    save_env_keys,
+)
 
 _BACK = "__back__"
 _CUSTOM_MINIMAX_BASE_URL = "__custom_minimax_base_url__"
@@ -42,7 +48,9 @@ _ALL_CONFIG_ROLES = (
     "fast_agent",
     "app_opener",
     "structured_output",
+    "delegate",
 )
+_DECISION_ROLES = ("fast_agent", "executor")
 
 
 @dataclass
@@ -492,6 +500,108 @@ def _configure_advanced_settings(
         default_selection = selected
 
 
+def _decision_mode(config) -> str:
+    if not any(role in config.decision_profiles for role in _DECISION_ROLES):
+        return "off"
+    return "delegate" if config.agent.delegation is not None else "alone"
+
+
+def ensure_llm_delegation(config, role: str) -> None:
+    """Make the decision model hand typing and unsure steps to an LLM.
+
+    A delegation that already names a separate LLM profile is kept.
+    """
+    delegation = config.agent.delegation
+    if delegation is not None:
+        target = delegation.delegate
+        if (
+            target in config.llm_profiles
+            and target not in config.decision_profiles
+            and target != (delegation.primary or role)
+        ):
+            return
+    if "delegate" not in config.llm_profiles:
+        source = role if role in config.llm_profiles else "fast_agent"
+        if source not in config.llm_profiles:
+            source = next(iter(config.llm_profiles), None)
+        if source is None:
+            raise ValueError(
+                "Delegation needs an LLM profile to hand steps to, and the "
+                "config has none."
+            )
+        config.llm_profiles["delegate"] = deepcopy(config.llm_profiles[source])
+    config.agent.delegation = DelegationConfig()
+
+
+def _prompt_typesafe_key_source() -> str:
+    """Pick, or paste and save, the TypeSafe key; returns api_key_source."""
+    sources = load_env_key_sources()["typesafe"]
+    choices: list[SelectChoice] = []
+    if sources.shell:
+        choices.append(SelectChoice(value="env", label="Use env key"))
+    if sources.saved:
+        choices.append(SelectChoice(value="file", label="Use saved key"))
+    choices.append(SelectChoice(value="paste", label="Paste new key"))
+    source = _select_with_back("TypeSafe API key", choices, default=choices[0].value)
+    if source != "paste":
+        return source
+    key = text_prompt("API key", secret=True).strip()
+    if not key:
+        return _BACK
+    save_env_keys({"typesafe": key})
+    return "file"
+
+
+def _configure_decision_model(console: Console, config) -> None:
+    """Let TypeSafe's Jev pick actions, alone or handing steps to the LLM."""
+    current = _decision_mode(config)
+    mode = _select_with_back(
+        "Decision model",
+        [
+            SelectChoice(value="off", label="Off: the LLM picks every action"),
+            SelectChoice(
+                value="alone", label="TypeSafe Jev picks actions (cannot type)"
+            ),
+            SelectChoice(
+                value="delegate",
+                label="TypeSafe Jev picks actions; the LLM types and takes unsure steps",
+            ),
+        ],
+        default=current,
+    )
+    if mode == _BACK:
+        return
+    if mode == "off":
+        for role in _DECISION_ROLES:
+            config.decision_profiles.pop(role, None)
+        if current != "off":
+            config.agent.delegation = None
+        console.print("Decision model: off")
+        return
+    source = _prompt_typesafe_key_source()
+    if source == _BACK:
+        return
+    for role in _DECISION_ROLES:
+        existing = config.decision_profiles.get(role)
+        config.decision_profiles[role] = (
+            replace(existing, api_key_source=source)
+            if existing is not None
+            else DecisionProfile(api_key_source=source)
+        )
+    if mode == "alone":
+        config.agent.delegation = None
+        console.print("Decision model: TypeSafe Jev")
+        return
+    role = "executor" if config.agent.reasoning else "fast_agent"
+    try:
+        ensure_llm_delegation(config, role)
+    except ValueError as error:
+        config.agent.delegation = None
+        console.print(f"[yellow]{error} Jev will run alone.[/]")
+        return
+    console.print("Decision model: TypeSafe Jev, handing steps to the LLM")
+
+
 def _configure_provider_model(
     console: Console,
     config,
@@ -747,6 +857,7 @@ def run_configure_wizard(
             "Configure",
             [
                 SelectChoice(value="provider_model", label="Provider / Model"),
+                SelectChoice(value="decision", label="Decision model"),
                 SelectChoice(value="advanced", label="Advanced settings"),
                 SelectChoice(value="finish", label="Finish"),
             ],
@@ -779,6 +890,9 @@ def run_configure_wizard(
             )
             if completed:
                 provider_configured = True
+
+        elif action == "decision":
+            _configure_decision_model(console, config)
 
         elif action == "advanced":
             state.used_advanced_settings = True
