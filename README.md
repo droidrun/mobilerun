@@ -141,6 +141,8 @@ mobilerun run "What app is currently open?" --vision
 mobilerun run "Find a contact named John and send him an email" --reasoning
 mobilerun run "Take a screenshot" --platform ios
 mobilerun run "Open Settings" --max-steps 30 --verbose
+mobilerun run "Open Settings" -p TypeSafe --no-delegate
+mobilerun run "Open Settings" -p TypeSafe --delegate-model openai/gpt-6.1-sol
 ```
 
 ### CLI commands and environment
@@ -188,6 +190,10 @@ share these provider names: `openai`, `openai-oauth`, `anthropic`,
 `anthropic-oauth`, `gemini`, `gemini-oauth`, `xai`, `ollama`, `openai-like`,
 `minimax`, and `zai` (case-insensitive). `-u`/`--llm-url` sets the LLM endpoint;
 `--api-url` sets the cloud device API endpoint.
+
+`run -p TypeSafe` uses the Jev decision model and delegates to the configured LLM
+by default. `--no-delegate` disables delegation; `--delegate-model PROVIDER/MODEL`
+or `--delegate-model MODEL` selects its helper LLM. The TypeSafe model is optional.
 
 | Variable | Meaning | Default / flag |
 | --- | --- | --- |

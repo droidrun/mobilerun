@@ -6,6 +6,7 @@ previously received.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from mobilerun.credential_manager.secret_gate import SecretRunState
@@ -18,6 +19,14 @@ if TYPE_CHECKING:
     from mobilerun.macro.recorder import MacroRecorder
     from mobilerun.tools.ui.provider import StateProvider
     from mobilerun.tools.ui.state import UIState
+
+
+@dataclass(frozen=True)
+class ActionCandidateApp:
+    """Installed app available to native decision action candidates."""
+
+    identifier: str
+    label: str
 
 
 class ActionContext:
@@ -43,6 +52,8 @@ class ActionContext:
         self.credential_manager = credential_manager
         self.streaming = streaming
         self.macro_recorder = macro_recorder
+        # Per-run installed-app cache for native decision action candidates.
+        self.action_candidate_apps: tuple[ActionCandidateApp, ...] | None = None
         self.approval_provider = approval_provider
         # Approvals and spec cache live exactly as long as this context (one run).
         self.secret_run = SecretRunState()

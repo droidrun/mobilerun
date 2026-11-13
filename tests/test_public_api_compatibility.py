@@ -48,5 +48,5 @@ def test_compatibility_package_uses_matching_exact_pins():
     mobilerun_extras = mobilerun_project["optional-dependencies"]
     droidrun_extras = droidrun_project["optional-dependencies"]
     assert mobilerun_extras["deepseek"] == []
-    for extra in ("anthropic", "deepseek", "langfuse", "dev"):
+    for extra in ("anthropic", "deepseek", "langfuse", "typesafe", "dev"):
         assert droidrun_extras[extra] == [f"mobilerun[{extra}]=={version}"]

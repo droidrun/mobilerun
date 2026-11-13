@@ -15,6 +15,7 @@ from llama_index.llms.openai.utils import to_openai_message_dicts
 from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.droid.state import MobileAgentState
 from mobilerun.agent.fast_agent.fast_agent import FastAgent
+from mobilerun.agent.selectors import LlamaIndexLLMSelector
 from mobilerun.agent.tool_registry import ToolRegistry
 from mobilerun.agent.utils.chat_utils import limit_history
 from mobilerun.agent.utils.inference import acall_with_retries
@@ -70,6 +71,9 @@ class _PromptResolver:
 class _StateProvider:
     requires_coordinate_tools = False
 
+    def get_action_candidates(self, state):
+        return ()
+
     async def get_state(self):
         return SimpleNamespace(
             formatted_text="Settings home",
@@ -90,6 +94,9 @@ class _Registry:
 
     def get_param_types(self):
         return {"index": "number", "success": "boolean"}
+
+    def get_signatures(self):
+        return {"click": {"parameters": {"index": {"type": "number"}}}, "complete": {}}
 
     def get_function_tool_specs(self):
         return [CLICK_SPEC]
@@ -113,15 +120,27 @@ def _run(
     tool_calling="auto",
     parallel_tools=True,
     native_tool_api="responses",
+    use_selector=False,
+    selector=None,
 ):
     async def _go():
         shared_state = MobileAgentState()
         registry = _Registry(shared_state)
         responder = _Responder(responses)
+        llm = SimpleNamespace(
+            supports_native_tool_calls=native, native_tool_api=native_tool_api
+        )
+        selection_kwargs = (
+            {"action_selector": selector(llm)}
+            if selector
+            else (
+                {"action_selector": LlamaIndexLLMSelector(llm)}
+                if use_selector
+                else {"llm": llm}
+            )
+        )
         agent = FastAgent(
-            llm=SimpleNamespace(
-                supports_native_tool_calls=native, native_tool_api=native_tool_api
-            ),
+            **selection_kwargs,
             agent_config=SimpleNamespace(
                 fast_agent=SimpleNamespace(
                     vision=False,
@@ -142,11 +161,11 @@ def _run(
         )
         with (
             patch(
-                "mobilerun.agent.fast_agent.fast_agent.acall_with_retries",
+                "mobilerun.agent.selectors.llama_index_llm.acall_with_retries",
                 new=responder,
             ),
             patch(
-                "mobilerun.agent.fast_agent.fast_agent.get_usage_from_response",
+                "mobilerun.agent.selectors.llama_index_llm.get_usage_from_response",
                 return_value=None,
             ),
         ):
@@ -156,10 +175,12 @@ def _run(
     return asyncio.run(_go())
 
 
-def test_native_tools_are_sent_and_answered_with_tool_messages():
+@pytest.mark.parametrize("use_selector", [False, True])
+def test_native_tools_are_sent_and_answered_with_tool_messages(use_selector):
     result, responder, registry, shared_state = _run(
         [_reply("I'll tap it.", _call("call_1", "click", {"index": 3})), _complete()],
         parallel_tools=False,
+        use_selector=use_selector,
     )
 
     assert result["success"] is True
@@ -389,3 +410,39 @@ def test_openai_xai_and_deepseek_llms_use_native_tools(monkeypatch):
     assert deepseek.class_name() == "OpenAILike"
     assert OpenAIOAuth.supports_native_tool_calls
     assert GrokOAuth.supports_native_tool_calls
+
+
+def test_delegated_actions_without_native_ids_stay_a_valid_native_exchange():
+    from unittest.mock import AsyncMock
+
+    from selector_helpers import StubSelector
+
+    from mobilerun.agent.fast_agent.xml_parser import ToolCall
+    from mobilerun.agent.selectors import ActionSelection, DelegatingSelector
+
+    delegate = StubSelector(
+        select=AsyncMock(
+            return_value=ActionSelection([ToolCall("click", {"index": 3})])
+        )
+    )
+    result, responder, registry, shared_state = _run(
+        [_reply("", _call("call_d", "delegate", {})), _complete()],
+        selector=lambda llm: DelegatingSelector(LlamaIndexLLMSelector(llm), delegate),
+    )
+
+    assert result["success"] is True
+    assert registry.executed[0] == ("click", {"index": 3})
+    first_tools = responder.requests[0][1]["tools"]
+    assert [spec["name"] for spec in first_tools] == ["click", "delegate"]
+
+    items = to_openai_message_dicts(responder.requests[1][0][1:], is_responses_api=True)
+    calls = [item for item in items if item.get("type") == "function_call"]
+    outputs = [item for item in items if item.get("type") == "function_call_output"]
+    assert [call["name"] for call in calls] == ["click"]
+    assert calls[0]["call_id"] == outputs[0]["call_id"]
+    assert calls[0]["call_id"].startswith("call_")
+    assert not any(
+        isinstance(block, ToolCallBlock) and block.tool_name == "delegate"
+        for message in shared_state.message_history
+        for block in message.blocks
+    )
