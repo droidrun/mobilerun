@@ -236,8 +236,21 @@ class StateProvider:
         elements = UIState._collect_all(state.elements)
         screen_area = (state.screen_width or 0) * (state.screen_height or 0)
         borrowed = _borrowed_details(elements, screen_area)
+        field_labels = {
+            id(element): label
+            for element in elements
+            if _kind(element) in _TEXT_KINDS
+            and not (element.get("details") or {}).get("description")
+            and not (element.get("details") or {}).get("hint")
+            and (bounds := _parse_bounds(element)) is not None
+            and (label := _label_beside(element, bounds, elements))
+        }
         toggle_names, duplicates = _toggle_names(elements, borrowed, screen_area)
-        duplicates |= _same_named_wrappers(elements, borrowed, toggle_names)
+        duplicates |= _same_named_wrappers(
+            elements, borrowed, toggle_names, field_labels
+        )
+        hidden, submit_keys = _hidden_ios_elements(elements, screen_area)
+        duplicates |= hidden
         focused = _focused_element(state.phone_state, elements)
         # One tap target per bounds: iOS reports a cell and the button filling
         # it as two elements. Keep the best-named one, in tree order.
@@ -271,7 +284,14 @@ class StateProvider:
             except (KeyError, TypeError, ValueError):
                 continue
             label = _candidate_label(
-                element, borrowed, toggle_names, focused, center[1], state.screen_height
+                element,
+                borrowed,
+                toggle_names,
+                focused,
+                center[1],
+                state.screen_height,
+                field_labels,
+                submit_keys,
             )
             element_options = []
             # Text fields focus on tap even when not marked clickable (iOS).
@@ -669,13 +689,27 @@ def _display_name(element: dict) -> str:
     return own
 
 
-def _name_and_contents(element: dict, kind: str, name: str) -> tuple[str, str | None]:
-    """A field's name and what it holds, from wherever the platform reports them."""
+def _name_and_contents(
+    element: dict, kind: str, name: str, label: str = ""
+) -> tuple[str, str | None]:
+    """A field's name and what it holds, from wherever the platform reports them.
+
+    ``label`` is the text beside a field that has no name of its own.
+    """
     facts = element.get("details") or {}
-    description = str(facts.get("description") or "").strip()
-    hint = str(facts.get("hint") or "").strip()
+    description = str(facts.get("description") or "").strip() or label
+    hint = str(facts.get("hint") or element.get("placeholder") or "").strip()
     if facts.get("password"):
         return description or hint or name, None
+    if kind in _TEXT_KINDS and "type" in element:
+        # Legacy iOS portal: text is the label (or placeholder), contents are the value.
+        text = _own_text(element)
+        own_label = str(element.get("label") or "").strip()
+        field_name = label or (own_label if own_label != hint else "") or hint or name
+        value = str(element.get("value") or "").strip()
+        if value and value not in {hint, field_name}:
+            return field_name, f'contains "{value}"'
+        return field_name, None
     if kind in _TEXT_KINDS:
         text = _own_text(element)
         field_name = description or hint
@@ -684,6 +718,7 @@ def _name_and_contents(element: dict, kind: str, name: str) -> tuple[str, str | 
             return field_name or name, None
         if field_name and text:
             return field_name, f'contains "{text}"'
+        name = field_name or name
     # iOS debugDescription: the value is reported apart from the label, and
     # an empty field reports its placeholder as its value.
     value = str(element.get("value") or "").strip()
@@ -789,14 +824,9 @@ def _borrowed_details(elements: list[dict], screen_area: int) -> dict[int, dict]
     for element in elements:
         if not _visible(element) or (bounds := _parse_bounds(element)) is None:
             continue
-        actionable = _is_actionable(element)
-        # A clickable element names itself, but a clickable switch inside a
-        # row still tells the row its state.
-        text = (
-            ""
-            if actionable or _kind(element) in _TEXT_KINDS
-            else _display_name(element)
-        )
+        if _is_actionable(element):
+            continue  # It is an option of its own, with its own name and state.
+        text = "" if _kind(element) in _TEXT_KINDS else _display_name(element)
         state = _check_state(element)
         if not (text or state):
             continue
@@ -818,8 +848,7 @@ def _borrowed_details(elements: list[dict], screen_area: int) -> dict[int, dict]
         if text and text not in texts and len(texts) < _MAX_BORROWED_TEXTS:
             texts.append(text)
         if state and details["widget"] is None:
-            # The kind only carries over from a widget that is not itself an option.
-            details["widget"] = ("" if actionable else _kind(element), state)
+            details["widget"] = (_kind(element), state)
     return borrowed
 
 
@@ -911,10 +940,236 @@ def _toggle_names(
     return names, dropped
 
 
+_LIST_CLASSES = {"CollectionView", "Table", "ScrollView"}
+_BAR_CLASSES = {"NavigationBar", "Toolbar", "TabBar"}
+
+
+def _sheet_frame(
+    sheet: dict, bar: dict, elements: list[dict]
+) -> tuple[int, int, int, int] | None:
+    """The visible frame of a sheet: the largest on-screen element holding its
+    navigation bar below the full-window container (a detent sheet leaves the
+    page above it reachable)."""
+    root = _parse_bounds(sheet)
+    frames = [
+        box
+        for e in elements
+        if e is not sheet
+        and _contains(sheet, e)
+        and _contains(e, bar)
+        and (box := _parse_bounds(e)) is not None
+        and box[0] >= 0
+        and box[1] >= 0
+        and box != root
+    ]
+    return max(frames, key=_area) if frames else root
+
+
+# Return keys worth offering; the rest of the keyboard is typed by the delegate.
+_SUBMIT_KEYS = {
+    "search",
+    "go",
+    "done",
+    "return",
+    "send",
+    "next",
+    "join",
+    "continue",
+    "route",
+}
+
+
+def _parents(elements: list[dict]) -> dict[int, dict | None]:
+    """Each element's parent, from the pre-order indices and descendant counts."""
+    parents: dict[int, dict | None] = {}
+    stack: list[tuple[dict, int]] = []
+    for element in elements:
+        index = element.get("index")
+        while stack and not (type(index) is int and index <= stack[-1][1]):
+            stack.pop()
+        parents[id(element)] = stack[-1][0] if stack else None
+        size = element.get("descendants")
+        if type(index) is int and type(size) is int:
+            stack.append((element, index + size))
+    return parents
+
+
+def _hidden_ios_elements(
+    elements: list[dict], screen_area: int
+) -> tuple[set[int], set[int]]:
+    """iOS elements a tap cannot reach, and the keyboard keys to keep.
+
+    The tree keeps everything below a sheet, a floating bar or the keyboard,
+    with nothing marking it as covered. Later elements are drawn on top, so:
+    a sheet (a later part of a window with its own navigation bar) hides the
+    earlier parts it covers, an option whose tap point lies on a later
+    option is covered by it, and the keyboard is typed by the delegate except
+    for its return key.
+    """
+    nested = [e for e in elements if type(e.get("descendants")) is int]
+    if not nested or not any(_is_ios(e) for e in elements):
+        return set(), set()
+    parents = _parents(elements)
+    hidden: set[int] = set()
+    submit_keys: set[int] = set()
+
+    def centre(element: dict) -> tuple[int, int] | None:
+        box = _parse_bounds(element)
+        if box is None or box[2] <= box[0] or box[3] <= box[1]:
+            return None
+        return (box[0] + box[2]) // 2, (box[1] + box[3]) // 2
+
+    def within(point: tuple[int, int] | None, box: tuple[int, ...] | None) -> bool:
+        return (
+            point is not None
+            and box is not None
+            and box[0] <= point[0] < box[2]
+            and box[1] <= point[1] < box[3]
+        )
+
+    for window in (e for e in elements if _short_class(e) == "Window"):
+        children = [e for e in elements if parents.get(id(e)) is window]
+        # A sheet hides the earlier parts of its window that it covers.
+        for later, sheet in enumerate(children):
+            bar = next(
+                (
+                    e
+                    for e in elements
+                    if _short_class(e) == "NavigationBar" and _contains(sheet, e)
+                ),
+                None,
+            )
+            if bar is None:
+                continue
+            cover = _sheet_frame(sheet, bar, elements)
+            for below in children[:later]:
+                hidden |= {
+                    id(e)
+                    for e in elements
+                    if (e is below or _contains(below, e)) and within(centre(e), cover)
+                }
+    # The keys are typed by the delegate, except the return key. The keyboard
+    # covers whatever lies behind it in any window; an input accessory bar
+    # above the keys (a chat composer) stays.
+    for keyboard in (e for e in elements if _short_class(e) == "Keyboard"):
+        board = _parse_bounds(keyboard)
+        if board is None:
+            continue
+        own_window = next(
+            (
+                w
+                for w in elements
+                if _short_class(w) == "Window" and _contains(w, keyboard)
+            ),
+            None,
+        )
+        for element in elements:
+            if _short_class(element) == "Window" or _contains(element, keyboard):
+                continue  # The keyboard's own ancestors are not covered by it.
+            point = centre(element)
+            if not (
+                element is keyboard
+                or _contains(keyboard, element)
+                or (
+                    point is not None
+                    and point[1] >= board[1]
+                    and board[0] <= point[0] < board[2]
+                )
+            ):
+                continue
+            names = {
+                _display_name(element).strip().lower(),
+                str(element.get("resourceId") or "").strip().lower(),
+            }
+            on_keyboard = own_window is not None and _contains(own_window, element)
+            if on_keyboard and names & _SUBMIT_KEYS:
+                submit_keys.add(id(element))
+            else:
+                hidden.add(id(element))
+    # Bars are drawn over the content scrolling under them, whatever the order.
+    bars = [e for e in elements if _short_class(e) in _BAR_CLASSES]
+    on_bar = {id(e) for e in elements for bar in bars if e is bar or _contains(bar, e)}
+    lists = [e for e in elements if _short_class(e) in _LIST_CLASSES]
+
+    def in_list(element: dict) -> dict | None:
+        """The innermost list holding ``element``."""
+        holders = [
+            lst for lst in lists if lst is not element and _contains(lst, element)
+        ]
+        return holders[-1] if holders else None
+
+    # A later list drawn over an earlier one (search suggestions over the
+    # page) hides it; a list nested in another is part of it.
+    for position, lower in enumerate(lists):
+        for upper in lists[position + 1 :]:
+            if _contains(lower, upper) or _contains(upper, lower):
+                continue
+            cover = _parse_bounds(upper)
+            hidden |= {
+                id(e)
+                for e in elements
+                if _contains(lower, e)
+                and id(e) not in on_bar
+                and within(centre(e), cover)
+            }
+    # An option whose tap point lies on a later, separate option is covered.
+    offered = [e for e in elements if _offerable(e) and id(e) not in hidden]
+    small = [
+        e
+        for e in offered
+        if (box := _parse_bounds(e)) is not None
+        and (not screen_area or _area(box) < screen_area * _MAX_OWNER_SCREEN_SHARE)
+    ]
+
+    def window_part(element: dict) -> dict | None:
+        """The top-level child of the window holding ``element``."""
+        node = element
+        while (parent := parents.get(id(node))) is not None:
+            if _short_class(parent) == "Window":
+                return node
+            node = parent
+        return None
+
+    for element in offered:
+        point, holder = centre(element), in_list(element)
+        part = window_part(element)
+        for cover in small:
+            # Bars sit over their own page's content, but not over an overlay
+            # presented later (an action sheet over the tab bar).
+            if id(element) in on_bar and window_part(cover) is part:
+                continue
+            # A row scrolled under something covers nothing outside its list.
+            cover_list = in_list(cover)
+            if cover_list is not None and cover_list is not holder:
+                continue
+            if (
+                cover["index"] > element["index"]
+                and not _contains(element, cover)
+                and not _contains(cover, element)
+                and _parse_bounds(cover) != _parse_bounds(element)
+                and within(point, _parse_bounds(cover))
+            ):
+                hidden.add(id(element))
+                break
+    return hidden - submit_keys, submit_keys
+
+
 def _option_name(
-    element: dict, borrowed: dict[int, dict], toggle_names: dict[int, str]
+    element: dict,
+    borrowed: dict[int, dict],
+    toggle_names: dict[int, str],
+    field_labels: dict[int, str],
 ) -> str:
     texts = (borrowed.get(id(element)) or {}).get("texts") or []
+    facts = element.get("details") or {}
+    if _kind(element) in _TEXT_KINDS:  # A field is known by its name, not its contents.
+        name = (
+            facts.get("description")
+            or facts.get("hint")
+            or field_labels.get(id(element))
+        )
+        if name:
+            return str(name).strip().lower()
     return (
         (_display_name(element) or toggle_names.get(id(element)) or ", ".join(texts))
         .strip()
@@ -923,7 +1178,10 @@ def _option_name(
 
 
 def _same_named_wrappers(
-    elements: list[dict], borrowed: dict[int, dict], toggle_names: dict[int, str]
+    elements: list[dict],
+    borrowed: dict[int, dict],
+    toggle_names: dict[int, str],
+    field_labels: dict[int, str] | None = None,
 ) -> set[int]:
     """Rows whose nested button or switch is an option with the same name.
 
@@ -931,7 +1189,10 @@ def _same_named_wrappers(
     iOS cell and the button filling it, would otherwise be two equal options.
     """
     offered = [element for element in elements if _offerable(element)]
-    names = {id(e): _option_name(e, borrowed, toggle_names) for e in offered}
+    names = {
+        id(e): _option_name(e, borrowed, toggle_names, field_labels or {})
+        for e in offered
+    }
     wrappers = set()
     for container in offered:
         if (
@@ -942,9 +1203,12 @@ def _same_named_wrappers(
         for inner in offered:
             if (
                 inner is not container
-                # A row may open a page while only its switch toggles; same-kind
-                # toggle twins are handled by _toggle_names.
-                and _kind(inner) not in _TOGGLE_KINDS
+                # A row may open a page while only its switch toggles, so a
+                # toggle replaces only its iOS twin of the same kind.
+                and (
+                    _kind(inner) not in _TOGGLE_KINDS
+                    or _kind(container) == _kind(inner)
+                )
                 and names[id(inner)] == name
                 and (inner_box := _parse_bounds(inner)) is not None
                 and inner_box != box
@@ -989,11 +1253,16 @@ def _candidate_label(
     focused: int | None,
     center_y: int,
     screen_height: int | None,
+    field_labels: dict[int, str] | None = None,
+    submit_keys: set[int] | None = None,
 ) -> str:
     """Describe an element: its kind, its name, and its state and position."""
+    field_labels = field_labels or {}
     inner = borrowed.get(id(element)) or {"texts": [], "widget": None}
     facts = element.get("details") or {}
     kind, state = _kind(element), _check_state(element)
+    if submit_keys and id(element) in submit_keys:
+        kind = "keyboard key"
     resource = str(element.get("resourceId") or "").rsplit("/", 1)[-1]
     if not (name := _display_name(element) or toggle_names.get(id(element), "")):
         if kind in _TEXT_KINDS:
@@ -1013,7 +1282,9 @@ def _candidate_label(
         # A row whose switch or checkbox is a separate element toggles it.
         inner_kind, inner_state = inner["widget"]
         kind, state = kind or inner_kind, state or inner_state
-    name, contents = _name_and_contents(element, kind, name)
+    name, contents = _name_and_contents(
+        element, kind, name, field_labels.get(id(element), "")
+    )
     notes = [note for note in (contents, state) if note]
     extra = str(facts.get("stateDescription") or "")
     if extra and not state and extra not in name:

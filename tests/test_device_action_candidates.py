@@ -952,9 +952,9 @@ def test_samsung_switch_widget_takes_its_row_name_and_tells_the_row_its_state():
             "boundsInScreen": {"left": 900, "top": 610, "right": 1000, "bottom": 690},
         },
     )
-    # The row may open a page of its own, so both stay.
+    # The row may open a page of its own, so both stay; only the switch has a state.
     assert _labels(elements) == [
-        "Click Extra brightness (off)",
+        "Click Extra brightness",
         'Click switch "Extra brightness" (off)',
     ]
 
@@ -1170,10 +1170,8 @@ def test_ios_cell_wrapping_its_own_controls_is_not_an_option():
     for node in (cell, *cell["children"], cell["children"][1]["children"][0]):
         node["boundsInScreen"]["top"] += 500
         node["boundsInScreen"]["bottom"] += 500
-    assert _labels(_tree(cell)) == [
-        'Click button "Bold Text"',
-        'Click switch "Bold Text" (off)',
-    ]
+    # The title button lies under the full-row switch drawn after it.
+    assert _labels(_tree(cell)) == ['Click switch "Bold Text" (off)']
 
 
 def test_ios_cell_holding_a_switch_is_not_named_by_its_value():
@@ -1194,7 +1192,7 @@ def test_ios_cell_holding_a_switch_is_not_named_by_its_value():
             ),
         ],
     }
-    assert _labels(_tree(cell)) == ["Click Snooze (on)", 'Click switch "Snooze" (on)']
+    assert _labels(_tree(cell)) == ["Click Snooze", 'Click switch "Snooze" (on)']
 
 
 def test_field_keeps_its_label_over_a_cell_with_the_same_bounds():
@@ -1333,3 +1331,347 @@ def test_legacy_ios_cells_labelled_zero_and_one_keep_their_names():
     )
     cells = [e for e in elements if e["type"] == "Cell"]
     assert _labels(cells) == ["Click 0", "Click 1", "Click 2"]
+
+
+def _ios_fixture(name, change=None):
+    """Option labels for a captured mobilerun-ios --local screen, optionally
+    after ``change`` edits the raw payload."""
+    import json
+    from pathlib import Path
+
+    from mobilerun.tools.filters import DetailedFilter
+    from mobilerun.tools.formatters.indexed_formatter import IndexedFormatter
+    from mobilerun.tools.ui.provider import AndroidStateProvider
+
+    path = Path(__file__).parent / "fixtures" / "ios_local" / f"{name}.json"
+    data = json.loads(path.read_text())["result"]
+    if change is not None:
+        change(data)
+    provider = AndroidStateProvider(
+        None, tree_filter=DetailedFilter(), tree_formatter=IndexedFormatter()
+    )
+    state = provider._state_from_data(data)
+    return [option.description for option in provider.get_action_candidates(state)]
+
+
+def _walk(node):
+    yield node
+    for child in node.get("children") or []:
+        yield from _walk(child)
+
+
+def test_real_iphone_sheet_hides_the_list_behind_it():
+    labels = _ios_fixture("clock_add_alarm_sheet")
+    assert not {'Click button "Add" (top of screen)', "Click No Alarm"} & set(labels)
+    assert not any("02:37" in label or "Alarms" in label for label in labels)
+    assert 'Click text field "Label" (contains "Alarm")' in labels
+    assert "Click Label" not in labels
+    assert ["Click Snooze", 'Click switch "Snooze" (on)'] == [
+        label for label in labels if "Snooze" in label and "Duration" not in label
+    ]
+
+
+def test_real_iphone_floating_search_bar_hides_the_rows_under_it():
+    labels = _ios_fixture("settings_root")
+    assert not any(
+        "Action Button" in label or "Appearance" in label for label in labels
+    )
+    assert 'Click search field "Search" (bottom of screen)' in labels
+    assert [label for label in labels if "Airplane" in label] == [
+        "Click Airplane Mode",
+        'Click switch "Airplane Mode" (off)',
+    ]
+
+
+def test_real_iphone_keyboard_and_the_page_under_suggestions_are_not_options():
+    labels = _ios_fixture("settings_search_keyboard")
+    assert not any(
+        key in label.lower()
+        for label in labels
+        for key in ("shift", "emoji", "next keyboard", "delete", "space")
+    )
+    assert not any("Bluetooth" in label or "Battery" in label for label in labels)
+    assert 'Click button "Software Update, General"' in labels
+    assert 'Click search field "Search"' in labels
+
+
+def test_real_iphone_alarm_row_does_not_repeat_its_switch_state():
+    labels = _ios_fixture("clock_alarm_list")
+    assert "Click 02:37, Alarm" in labels
+    assert 'Click switch "02:37, Alarm" (on)' in labels
+
+
+def test_nav_bar_buttons_stay_when_a_row_scrolls_under_the_bar():
+    def scroll_row_under_bar(data):
+        cell = next(
+            n
+            for n in _walk(data["a11y_tree"])
+            if n.get("className") == "XCUIElementTypeCell"
+            and "02:37" in (n.get("contentDescription") or "")
+        )
+        shift = cell["boundsInScreen"]["top"] - 50
+        for node in _walk(cell):
+            node["boundsInScreen"]["top"] -= shift
+            node["boundsInScreen"]["bottom"] -= shift
+
+    labels = _ios_fixture("clock_alarm_list", scroll_row_under_bar)
+    assert 'Click button "Edit" (top of screen)' in labels
+    assert 'Click button "Add" (top of screen)' in labels
+
+
+def test_keyboard_accessory_bar_stays_offered():
+    def add_composer(data):
+        keyboard_window = next(
+            n
+            for n in _walk(data["a11y_tree"])
+            if n.get("className") == "XCUIElementTypeWindow"
+            and any(c.get("className") == "XCUIElementTypeKeyboard" for c in _walk(n))
+        )
+
+        def node(cls, text, left, right, **extra):
+            return {
+                "className": f"XCUIElementType{cls}",
+                "text": text,
+                "resourceId": "",
+                "contentDescription": "",
+                "children": [],
+                "isEnabled": True,
+                "isClickable": True,
+                "isVisibleToUser": True,
+                "boundsInScreen": {
+                    "left": left,
+                    "top": 590,
+                    "right": right,
+                    "bottom": 630,
+                },
+                **extra,
+            }
+
+        keyboard_window["children"].insert(
+            0,
+            {
+                **node("Other", "", 0, 440, isClickable=False),
+                "children": [
+                    node("Button", "", 8, 48, contentDescription="Add attachment"),
+                    node(
+                        "TextView",
+                        "",
+                        56,
+                        380,
+                        contentDescription="Message",
+                        isClickable=False,
+                    ),
+                    node("Button", "", 388, 432, contentDescription="Send"),
+                ],
+            },
+        )
+
+    labels = _ios_fixture("settings_search_keyboard", add_composer)
+    assert 'Click button "Add attachment"' in labels
+    assert 'Click text field "Message"' in labels
+    assert 'Click button "Send"' in labels
+
+
+def test_half_height_sheet_leaves_the_page_above_it():
+    def node(cls, top, bottom, children=(), **extra):
+        return {
+            "className": f"XCUIElementType{cls}",
+            "text": "",
+            "resourceId": "",
+            "contentDescription": "",
+            "isEnabled": True,
+            "isClickable": False,
+            "isVisibleToUser": True,
+            "children": list(children),
+            "boundsInScreen": {"left": 0, "top": top, "right": 440, "bottom": bottom},
+            **extra,
+        }
+
+    page = node(
+        "Other",
+        0,
+        956,
+        [
+            node("Button", 220, 270, contentDescription="Directions", isClickable=True),
+            node("Button", 700, 750, contentDescription="Hidden row", isClickable=True),
+        ],
+    )
+    sheet = node(
+        "Other",
+        0,
+        956,
+        [
+            node(
+                "Other",
+                520,
+                956,
+                [
+                    node(
+                        "NavigationBar",
+                        530,
+                        580,
+                        [
+                            node(
+                                "Button",
+                                535,
+                                575,
+                                contentDescription="Close",
+                                isClickable=True,
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+    window = node("Window", 0, 956, [page, sheet])
+    labels = _labels(_tree(node("Application", 0, 956, [window])))
+    assert 'Click button "Directions"' in labels
+    assert 'Click button "Hidden row"' not in labels
+    assert 'Click button "Close"' in labels
+
+
+def test_legacy_ios_placeholder_is_not_reported_as_contents():
+    from mobilerun.tools.ui.ios_provider import _parse_a11y_tree
+
+    elements = _parse_a11y_tree(
+        "Application, 0x1, {{0.0, 0.0}, {402.0, 874.0}}, label: 'Form'\n"
+        "  StaticText, 0x2, {{16.0, 300.0}, {60.0, 34.0}}, label: 'Email'\n"
+        "  TextField, 0x3, {{90.0, 300.0}, {290.0, 34.0}}, "
+        "placeholderValue: 'name@example.com', value: name@example.com\n"
+        "  StaticText, 0x4, {{16.0, 400.0}, {60.0, 34.0}}, label: 'Name'\n"
+        "  TextField, 0x5, {{90.0, 400.0}, {290.0, 34.0}}, "
+        "placeholderValue: 'Your name', value: Bob\n"
+    )
+    fields = [e for e in elements if e["type"] == "TextField"]
+    assert _labels(fields) == [
+        'Click text field "name@example.com"',
+        'Click text field "Your name" (contains "Bob")',
+    ]
+    labels = _labels(elements)
+    assert 'Click text field "Email"' in labels
+    assert 'Click text field "Name" (contains "Bob")' in labels
+
+
+def test_full_screen_modal_hides_the_page_under_it():
+    def make_full_screen(data):
+        for node in _walk(data["a11y_tree"]):
+            box = node.get("boundsInScreen") or {}
+            if (
+                box.get("left"),
+                box.get("top"),
+                box.get("right"),
+                box.get("bottom"),
+            ) == (0, 62, 440, 956):
+                box["top"] = 0
+
+    labels = _ios_fixture("clock_add_alarm_sheet", make_full_screen)
+    assert not any("Timers" in label or "World Clock" in label for label in labels)
+    assert 'Click button "Cancel"' in labels
+
+
+def test_keyboard_hides_the_page_rows_behind_its_keys():
+    def drop_suggestions(data):
+        for node in _walk(data["a11y_tree"]):
+            node["children"] = [
+                child
+                for child in node.get("children") or []
+                if not (
+                    child.get("className") == "XCUIElementTypeCollectionView"
+                    and not child.get("resourceId")
+                )
+            ]
+
+    labels = _ios_fixture("settings_search_keyboard", drop_suggestions)
+    assert not any(
+        name in label
+        for label in labels
+        for name in ("Action Button", "Appearance", "Display & Brightness")
+    )
+    assert 'Click search field "Search"' in labels
+
+
+def test_action_sheet_hides_the_tab_bar_under_it():
+    def add_action_sheet(data):
+        window = next(
+            n
+            for n in _walk(data["a11y_tree"])
+            if n.get("className") == "XCUIElementTypeWindow"
+        )
+
+        def button(label, top, bottom):
+            return {
+                "className": "XCUIElementTypeButton",
+                "text": label,
+                "resourceId": "",
+                "contentDescription": label,
+                "children": [],
+                "isEnabled": True,
+                "isClickable": True,
+                "isVisibleToUser": True,
+                "boundsInScreen": {
+                    "left": 8,
+                    "top": top,
+                    "right": 432,
+                    "bottom": bottom,
+                },
+            }
+
+        window["children"].append(
+            {
+                "className": "XCUIElementTypeSheet",
+                "text": "",
+                "resourceId": "",
+                "contentDescription": "",
+                "isEnabled": True,
+                "isClickable": False,
+                "isVisibleToUser": True,
+                "boundsInScreen": {"left": 8, "top": 700, "right": 432, "bottom": 936},
+                "children": [
+                    button("Delete Alarm", 740, 800),
+                    button("Cancel", 872, 936),
+                ],
+            }
+        )
+
+    labels = _ios_fixture("clock_alarm_list", add_action_sheet)
+    assert not any(
+        tab in label
+        for label in labels
+        for tab in ("World Clock", "Stopwatch", "Timers")
+    )
+    assert 'Click button "Cancel" (bottom of screen)' in labels
+    assert 'Click button "Edit" (top of screen)' in labels
+
+
+def test_empty_field_takes_the_label_beside_it():
+    assert _labels(
+        _formatted(
+            {
+                **_raw("android.widget.TextView", "Name", 600, isClickable=False),
+                "boundsInScreen": {"left": 40, "top": 610, "right": 280, "bottom": 690},
+            },
+            {
+                **_raw("android.widget.EditText", "", 600, isEditable=True),
+                "boundsInScreen": {
+                    "left": 300,
+                    "top": 600,
+                    "right": 1000,
+                    "bottom": 700,
+                },
+            },
+        )
+    ) == ['Click text field "Name"']
+
+
+def test_legacy_ios_field_is_named_by_its_placeholder_not_its_identifier():
+    from mobilerun.tools.ui.ios_provider import _parse_a11y_tree
+
+    elements = _parse_a11y_tree(
+        "Application, 0x1, {{0.0, 0.0}, {402.0, 874.0}}, label: 'Form'\n"
+        "  TextField, 0x2, {{16.0, 300.0}, {370.0, 34.0}}, "
+        "identifier: 'email-input', placeholderValue: 'Email'\n"
+    )
+    assert _labels([e for e in elements if e["type"] == "TextField"]) == [
+        'Click text field "Email"'
+    ]
