@@ -407,8 +407,7 @@ class MobileAgent(Workflow):
         self._using_external_agent = self.config.agent.name not in _BUILTIN_AGENT_NAMES
 
         self._stream_screenshots = (
-            os.environ.get("MOBILERUN_STREAM_SCREENSHOTS")
-            or ""
+            os.environ.get("MOBILERUN_STREAM_SCREENSHOTS") or ""
         ).lower() in ("1", "true")
 
         self.timeout = timeout

@@ -1494,7 +1494,7 @@ requires-dist = [
     { name = "llama-index-workflows", specifier = ">=2.16.0,<3.0.0" },
     { name = "mcp", specifier = ">=1.28.1,<2.0.0" },
     { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
-    { name = "mobilerun-core", extras = ["local"], specifier = ">=1.11.0" },
+    { name = "mobilerun-core", extras = ["local"], specifier = ">=1.12.0" },
     { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
     { name = "mobilerun-sdk", specifier = ">=6.1.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
@@ -1527,14 +1527,14 @@ dev = [
 
 [[package]]
 name = "mobilerun-core"
-version = "1.11.0"
+version = "1.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mobilerun-sdk" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/44/b8/e19c3cffcffe27448358f54201f9993a976dfb5f44fb4ab6e6c0ff6c1713/mobilerun_core-1.11.0.tar.gz", hash = "sha256:58f7bf489b30010f863ea018d3d9ceaf11ed1f3892318a517bc237c4765975d8", size = 116310, upload-time = "2026-11-10T00:33:42.125Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/f4/356f9ad9af849c1152fe466967cffd8f5973ffef62aa40f7e607d4646603/mobilerun_core-1.12.0.tar.gz", hash = "sha256:cca13d678ffb715dfcbd76d1166bdd5f44799bcb6920eb7129531e43dd5a13d3", size = 123751, upload-time = "2026-11-12T19:05:12.957Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/54/6364415dd45443a303cd0d11ceba59e2f9299b8db86dd6382e48c91bf1d0/mobilerun_core-1.11.0-py3-none-any.whl", hash = "sha256:875513f2ad9e5608a0b64f6e9ccb85d60d208f1f87a6d7cc8ae358242ad32598", size = 61017, upload-time = "2026-11-10T00:33:40.851Z" },
+    { url = "https://files.pythonhosted.org/packages/29/76/593c82c4c0dfdf22e75dfc1b8d248c591033aeba7ba28c744cc2349917ac/mobilerun_core-1.12.0-py3-none-any.whl", hash = "sha256:2f754c26712ee5fc42e30c1ab08154134b497d19579a2bba3c63dda081305190", size = 63833, upload-time = "2026-11-12T19:05:11.268Z" },
 ]
 
 [package.optional-dependencies]

@@ -11,10 +11,10 @@ from typing import NamedTuple
 
 import click
 
-from mobilerun.cli import options
 from mobilerun.cli.device_commands import device_cli
 from mobilerun.cli.options import emit, examples, verbose_option
 from mobilerun.cli.qr import print_qr
+from mobilerun.cli.selection import local_adb_errors
 
 
 class MdnsService(NamedTuple):
@@ -61,19 +61,29 @@ def _run_adb(
 ) -> subprocess.CompletedProcess[str]:
     """Keep adb execution in one replaceable boundary; never log its input."""
     return subprocess.run(
-        ["adb", *args], input=input, capture_output=True, text=True,
-        timeout=timeout, check=False,
+        ["adb", *args],
+        input=input,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
     )
 
 
-def _adb_failure(result: subprocess.CompletedProcess[str], fallback: str) -> click.ClickException:
-    return click.ClickException(result.stderr.strip() or result.stdout.strip() or fallback)
+def _adb_failure(
+    result: subprocess.CompletedProcess[str], fallback: str
+) -> click.ClickException:
+    return click.ClickException(
+        result.stderr.strip() or result.stdout.strip() or fallback
+    )
 
 
 def adb_connect_succeeded(output: str) -> bool:
     """Recognize adb's connect replies consistently for both commands."""
-    return any(line.lower().startswith(("connected to ", "already connected to "))
-               for line in output.splitlines())
+    return any(
+        line.lower().startswith(("connected to ", "already connected to "))
+        for line in output.splitlines()
+    )
 
 
 def _adb(*args: str, deadline: float, input: str | None = None):
@@ -83,7 +93,9 @@ def _adb(*args: str, deadline: float, input: str | None = None):
     try:
         result = _run_adb(*args, input=input, timeout=min(10, remaining))
     except subprocess.TimeoutExpired:
-        raise click.ClickException("Timed out waiting for adb wireless debugging.") from None
+        raise click.ClickException(
+            "Timed out waiting for adb wireless debugging."
+        ) from None
     # adb diagnostics must not echo the pairing password, even on failure.
     if input:
         secret = input.rstrip("\r\n")
@@ -105,14 +117,23 @@ def _wait_for_service(service_type: str, deadline: float, *, name: str) -> MdnsS
 
 
 def _guid_transport(devices: dict[str, str], guid: str) -> str | None:
-    return next((serial for serial, state in devices.items()
-                 if serial.startswith(guid) and state == "device"), None)
+    return next(
+        (
+            serial
+            for serial, state in devices.items()
+            if serial.startswith(guid) and state == "device"
+        ),
+        None,
+    )
 
 
 def _connect_addresses(guid: str, deadline: float) -> list[str]:
     result = _adb("mdns", "services", deadline=deadline)
-    return [service.address for service in parse_mdns_services(result.stdout)
-            if service.name == guid and service.service_type == "_adb-tls-connect._tcp"]
+    return [
+        service.address
+        for service in parse_mdns_services(result.stdout)
+        if service.name == guid and service.service_type == "_adb-tls-connect._tcp"
+    ]
 
 
 def _wait_for_transport(guid: str, deadline: float) -> str:
@@ -130,15 +151,26 @@ def _wait_for_transport(guid: str, deadline: float) -> str:
                 for address in dict.fromkeys([*addresses, fallback]):
                     if address and address in devices:
                         _adb("disconnect", address, deadline=deadline)
-                        click.echo(f"Disconnected duplicate transport {address}; keeping {serial}.",
-                                   err=True)
+                        click.echo(
+                            f"Disconnected duplicate transport {address}; keeping {serial}.",
+                            err=True,
+                        )
                 return serial
-        elif (fallback and devices.get(fallback) == "device"
-              and not any(serial.startswith(guid) for serial in devices)):
+        elif (
+            fallback
+            and devices.get(fallback) == "device"
+            and not any(serial.startswith(guid) for serial in devices)
+        ):
             return fallback
         elif fallback is None and time.monotonic() >= fallback_at:
-            address = next((address for address in _connect_addresses(guid, deadline)
-                            if not address.startswith("[")), None)
+            address = next(
+                (
+                    address
+                    for address in _connect_addresses(guid, deadline)
+                    if not address.startswith("[")
+                ),
+                None,
+            )
             if address:
                 # The transport may have appeared during mDNS discovery.
                 devices = parse_adb_devices(_adb("devices", deadline=deadline).stdout)
@@ -152,41 +184,45 @@ def _wait_for_transport(guid: str, deadline: float) -> str:
 
 @device_cli.command(
     epilog=examples(
-        'mobilerun device pair',
-        'mobilerun device pair --timeout 180',
+        "mobilerun device pair",
+        "mobilerun device pair --timeout 180",
     ),
 )
 @verbose_option
 @click.option(
-    "--timeout", type=click.IntRange(min=1), default=120, show_default=True,
+    "--timeout",
+    type=click.IntRange(min=1),
+    default=120,
+    show_default=True,
     help="Maximum time in seconds to pair and connect.",
 )
 def pair(timeout: int, verbose: bool | None):
     """Pair a local Android device by scanning a wireless debugging QR code."""
     if not sys.stderr.isatty():
         raise click.UsageError("This command needs a terminal.")
-    options.require_adb()
     deadline = time.monotonic() + timeout
-    check = _adb("mdns", "check", deadline=deadline)
+    with local_adb_errors():
+        check = _adb("mdns", "check", deadline=deadline)
     if "mdns daemon version" not in check.stdout.lower():
-        raise click.ClickException("adb mDNS is unavailable; enable adb mDNS discovery.")
+        raise click.ClickException(
+            "adb mDNS is unavailable; enable adb mDNS discovery."
+        )
 
     name = "mobilerun-" + "".join(
         secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6)
     )
-    password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
+    password = "".join(
+        secrets.choice(string.ascii_letters + string.digits) for _ in range(10)
+    )
     click.echo(
-        'On the device, open Developer options → Wireless debugging → '
+        "On the device, open Developer options → Wireless debugging → "
         '"Pair device with QR code"; keep both devices on the same Wi-Fi and scan below.',
         err=True,
     )
     if not print_qr(f"WIFI:T:ADB;S:{name};P:{password};;"):
         raise click.ClickException("Could not display the pairing QR code.")
-    pairing = _wait_for_service(
-        "_adb-tls-pairing._tcp", deadline, name=name
-    )
-    result = _adb("pair", pairing.address, input=password + "\n",
-                  deadline=deadline)
+    pairing = _wait_for_service("_adb-tls-pairing._tcp", deadline, name=name)
+    result = _adb("pair", pairing.address, input=password + "\n", deadline=deadline)
     if "successfully paired to" not in result.stdout.lower():
         raise _adb_failure(result, "adb pairing failed.")
     identity = re.search(r"\[guid=([^\]\s]+)\]", result.stdout)

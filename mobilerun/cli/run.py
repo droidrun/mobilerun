@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import click
 from async_adbutils import adb
@@ -29,6 +30,11 @@ from mobilerun.cli.selection import _native_driver, select_device
 from mobilerun.log_handlers import CLILogHandler, configure_logging
 
 console = Console(stderr=True)
+
+
+if TYPE_CHECKING:
+    from mobilerun import ResultEvent
+    from mobilerun.config_manager import MobileConfig
 
 
 def _force_screenshot_only_vision(config: MobileConfig) -> None:
@@ -89,7 +95,9 @@ async def _run_task(
     if config.logging.rich_text:
         cloud_text = Text()
         cloud_text.append("✨ Try Mobilerun Cloud: ", style="bold cyan")
-        cloud_text.append("https://cloud.mobilerun.ai/sign-in", style="bold blue underline")
+        cloud_text.append(
+            "https://cloud.mobilerun.ai/sign-in", style="bold blue underline"
+        )
         cloud_panel = Panel(
             cloud_text,
             border_style="cyan",
@@ -152,7 +160,9 @@ async def _run_task(
         if device_id is not None:
             config.device.device_id = device_id
 
-        if (config.device.control_backend or "").strip().lower() == VISUAL_REMOTE_CONNECTION:
+        if (
+            config.device.control_backend or ""
+        ).strip().lower() == VISUAL_REMOTE_CONNECTION:
             _force_screenshot_only_vision(config)
             logger.debug("Control backend visual-remote forces screenshot-only vision")
 
@@ -182,7 +192,9 @@ async def _run_task(
             if selection.backend == "cloud":
                 is_cloud = True
                 if tcp:
-                    raise click.UsageError("--tcp is only supported for local Android devices")
+                    raise click.UsageError(
+                        "--tcp is only supported for local Android devices"
+                    )
                 injected_driver = await _native_driver(selection, config, api_url)
                 # CloudDriver supplies Android-shaped trees for every platform.
                 config.device.platform = "android"
@@ -195,7 +207,9 @@ async def _run_task(
         # STEP 2: Initialize MobileAgent with config
         # ================================================================
 
-        mode = "planning with reasoning" if config.agent.reasoning else "direct execution"
+        mode = (
+            "planning with reasoning" if config.agent.reasoning else "direct execution"
+        )
         logger.info(f"🤖 Agent mode: {mode}")
         logger.info(
             f"👁️  Vision settings: Manager={config.agent.manager.vision}, "
@@ -250,7 +264,9 @@ async def _run_task(
 
     finally:
         if not is_cloud:
-            await _cleanup_android_keyboard(config, getattr(droid_agent, "android_serial", None))
+            await _cleanup_android_keyboard(
+                config, getattr(droid_agent, "android_serial", None)
+            )
 
 
 async def run_command(*args, **kwargs) -> bool:
@@ -262,7 +278,9 @@ async def run_command(*args, **kwargs) -> bool:
         return False
 
 
-async def _cleanup_android_keyboard(config: MobileConfig, serial: str | None = None) -> None:
+async def _cleanup_android_keyboard(
+    config: MobileConfig, serial: str | None = None
+) -> None:
     from mobilerun_core_local.driver.visual_remote import VISUAL_REMOTE_CONNECTION
 
     from mobilerun.agent.utils.android_device import is_portal_http_url
@@ -305,7 +323,8 @@ class AgentOption(click.Option):
         if value is not None and not self.installed_type().choices:
             raise click.BadParameter(
                 "No external agents are installed; install one before using --agent.",
-                ctx=ctx, param=self,
+                ctx=ctx,
+                param=self,
             )
         return super().type_cast_value(ctx, value)
 
@@ -330,15 +349,27 @@ class AgentOption(click.Option):
 @max_steps_option
 @click.option("-T", "--temperature", type=float, help="LLM sampling temperature.")
 @click.option("-a", "--agent", cls=AgentOption, help="External agent.")
-@click.option("-r", "--reasoning/--no-reasoning", default=None, help="Enable agent reasoning.")
-@click.option("--vision/--no-vision", default=None, help="Enable vision for all agents.")
-@click.option("--vision-only", is_flag=True, default=None, help="Use screenshots without the UI tree.")
+@click.option(
+    "-r", "--reasoning/--no-reasoning", default=None, help="Enable agent reasoning."
+)
+@click.option(
+    "--vision/--no-vision", default=None, help="Enable vision for all agents."
+)
+@click.option(
+    "--vision-only",
+    is_flag=True,
+    default=None,
+    help="Use screenshots without the UI tree.",
+)
 @click.option("--stream/--no-stream", default=None, help="Stream agent responses.")
 @click.option("--tracing/--no-tracing", default=None, help="Enable tracing.")
-@click.option("--backend", type=click.Choice(["visual-remote"]), help="Device control backend.")
+@click.option(
+    "--backend", type=click.Choice(["visual-remote"]), help="Device control backend."
+)
 @click.option("--backend-device", help="Device id for a visual remote backend.")
 @click.option(
-    "--save-trajectory", type=click.Choice(["none", "step", "action"]),
+    "--save-trajectory",
+    type=click.Choice(["none", "step", "action"]),
     help="Choose which trajectory data to save.",
 )
 @coro
@@ -398,34 +429,3 @@ async def run(
         emit({"success": success, "reason": reason, "steps": steps}, json_output=True)
     if not success:
         raise click.ClickException(reason or "Task failed")
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'VISUAL_REMOTE_CONNECTION': ('mobilerun_core_local.driver.visual_remote', 'VISUAL_REMOTE_CONNECTION'),
-    'MobileAgent': ('mobilerun', 'MobileAgent'),
-    'ResultEvent': ('mobilerun', 'ResultEvent'),
-    'is_portal_http_url': ('mobilerun.agent.utils.android_device', 'is_portal_http_url'),
-    'load_llm': ('mobilerun.agent.utils.llm_picker', 'load_llm'),
-    'EventHandler': ('mobilerun.cli.event_handler', 'EventHandler'),
-    'ConfigLoader': ('mobilerun.config_manager', 'ConfigLoader'),
-    'MobileConfig': ('mobilerun.config_manager', 'MobileConfig'),
-    'print_telemetry_message': ('mobilerun.telemetry', 'print_telemetry_message'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun_core_local.driver.visual_remote import (
-        VISUAL_REMOTE_CONNECTION as VISUAL_REMOTE_CONNECTION,
-    )
-
-    from mobilerun import MobileAgent as MobileAgent
-    from mobilerun import ResultEvent as ResultEvent
-    from mobilerun.agent.utils.android_device import is_portal_http_url as is_portal_http_url
-    from mobilerun.agent.utils.llm_picker import load_llm as load_llm
-    from mobilerun.cli.event_handler import EventHandler as EventHandler
-    from mobilerun.config_manager import ConfigLoader as ConfigLoader
-    from mobilerun.config_manager import MobileConfig as MobileConfig
-    from mobilerun.telemetry import print_telemetry_message as print_telemetry_message

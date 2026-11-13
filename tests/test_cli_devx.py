@@ -10,11 +10,13 @@ from unittest.mock import AsyncMock, Mock
 
 import click
 import httpx
+import mobilerun_core
 import pytest
 from click.shell_completion import BashComplete, get_completion_class
 from click.testing import CliRunner
 from mobilerun_sdk import APIConnectionError, APIStatusError
 
+import mobilerun.cli.configure_wizard
 from mobilerun.cli import (
     auth,
     device_commands,
@@ -43,17 +45,25 @@ def commands(command=cli, path=()):
 
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("mobilerun.cli.options.require_adb", lambda: "/fake/adb")
-    monkeypatch.setattr(ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml")
+    monkeypatch.setattr(
+        ConfigLoader, "get_user_config_path", lambda: tmp_path / "config.yaml"
+    )
     monkeypatch.setenv("MOBILERUN_TELEMETRY_ENABLED", "false")
-    for name in ("MOBILERUN_CONFIG", "MOBILERUN_TARGET", "MOBILERUN_DEVICE", "MOBILERUN_DEBUG"):
+    for name in (
+        "MOBILERUN_CONFIG",
+        "MOBILERUN_TARGET",
+        "MOBILERUN_DEVICE",
+        "MOBILERUN_DEBUG",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
 def allow_input(monkeypatch):
     def patch(tty=True):
-        monkeypatch.setattr(configure, "input_allowed", lambda disabled: tty and not disabled)
+        monkeypatch.setattr(
+            configure, "input_allowed", lambda disabled: tty and not disabled
+        )
 
     patch()
     return patch
@@ -63,13 +73,18 @@ def allow_input(monkeypatch):
 def secret_command(request, monkeypatch, tmp_path):
     callback = Mock()
     if request.param == "configure":
-        monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", callback)
+        monkeypatch.setattr(
+            "mobilerun.cli.configure_wizard.run_configure_wizard", callback
+        )
         args = ["configure", "-p", "openai", "-m", "MODEL", "-k"]
 
         def value():
             return callback.call_args.kwargs["api_key"]
+
     else:
-        monkeypatch.setattr("mobilerun.cli.oauth_actions.save_anthropic_setup_token", callback)
+        monkeypatch.setattr(
+            "mobilerun.cli.oauth_actions.save_anthropic_setup_token", callback
+        )
         args = [
             "auth",
             "login",
@@ -120,10 +135,14 @@ def test_help_options_and_summaries_are_complete(path, command):
                 assert param.show_default is not False, (path, param.name)
         names = [param.name for param in params]
         shared_first = [
-            name for name in ("device", "target", "platform", "config_path") if name in names
+            name
+            for name in ("device", "target", "platform", "config_path")
+            if name in names
         ]
         shared_last = [
-            name for name in ("api_url", "json_output", "verbose", "help") if name in names
+            name
+            for name in ("api_url", "json_output", "verbose", "help")
+            if name in names
         ]
         assert names[: len(shared_first)] == shared_first
         assert names[-len(shared_last) :] == shared_last
@@ -133,11 +152,22 @@ def test_help_options_and_summaries_are_complete(path, command):
 
 def test_root_command_order_and_agent_discovery(monkeypatch):
     monkeypatch.setattr(
-        run_module, "list_agents", Mock(side_effect=AssertionError("root must not scan"))
+        run_module,
+        "list_agents",
+        Mock(side_effect=AssertionError("root must not scan")),
     )
     result = CliRunner().invoke(cli, ["--help"])
     assert result.exit_code == 0, result.output
-    names = ["run", "device", "configure", "auth", "doctor", "env", "macro", "completion"]
+    names = [
+        "run",
+        "device",
+        "configure",
+        "auth",
+        "doctor",
+        "env",
+        "macro",
+        "completion",
+    ]
     assert [result.stdout.index(f"  {name} ") for name in names] == sorted(
         result.stdout.index(f"  {name} ") for name in names
     )
@@ -152,7 +182,10 @@ def test_agent_option_rejected_without_installed_agents(monkeypatch):
     monkeypatch.setattr(run_module, "list_agents", lambda: [])
     result = CliRunner().invoke(cli, ["run", "TASK", "-a", "missing"])
     assert result.exit_code == 2
-    assert "No external agents are installed; install one before using --agent." in result.stderr
+    assert (
+        "No external agents are installed; install one before using --agent."
+        in result.stderr
+    )
 
 
 def test_installed_agent_is_listed_and_accepted(monkeypatch):
@@ -225,7 +258,11 @@ def test_doctor_preserves_checks_once(monkeypatch, failed, json_output):
     async def check(*args, **kwargs):
         assert kwargs["render_results"] is False
         console.print("Please enable accessibility manually")
-        return [CheckResult("Device", Status.FAIL if failed else Status.PASS, "observed", "detail")]
+        return [
+            CheckResult(
+                "Device", Status.FAIL if failed else Status.PASS, "observed", "detail"
+            )
+        ]
 
     monkeypatch.setattr("mobilerun.cli.doctor.run_doctor", check)
     result = CliRunner().invoke(cli, ["doctor", *(["-j"] if json_output else [])])
@@ -257,7 +294,9 @@ def test_doctor_preserves_checks_once(monkeypatch, failed, json_output):
 )
 def test_local_error_next_step(monkeypatch, message, hint):
 
-    monkeypatch.setattr(device_lifecycle, "probe_device", Mock(side_effect=RuntimeError(message)))
+    monkeypatch.setattr(
+        device_lifecycle, "probe_device", Mock(side_effect=RuntimeError(message))
+    )
     result = CliRunner().invoke(cli, ["device", "ping", "-d", "missing"])
     assert result.exit_code == 1
     assert hint in result.stderr
@@ -275,7 +314,8 @@ def test_rows_only_include_terminal_header(tty):
     output = Output()
     with click.Context(cli, obj={"stdout": output}):
         emit_rows(
-            ("NAME", "DETAIL"), [("first", "line\nbreak\tcolumn\x1b\u2028\u200b"), ("last", None)]
+            ("NAME", "DETAIL"),
+            [("first", "line\nbreak\tcolumn\x1b\u2028\u200b"), ("last", None)],
         )
     expected = "first\tline break column   \nlast\t\n"
     assert output.getvalue() == ("NAME\tDETAIL\n" if tty else "") + expected
@@ -317,14 +357,21 @@ def test_rows_only_include_terminal_header(tty):
     ]
 )
 def all_devices_case(request, monkeypatch):
-    local_failure, cloud_failure, code, ids, errors, warnings, close_counts = request.param
+    local_failure, cloud_failure, code, ids, errors, warnings, close_counts = (
+        request.param
+    )
     clients, devices, calls = [], [], []
 
     def factory(url, *, cloud):
         scope = "cloud" if cloud else "local"
         failure = cloud_failure if cloud else local_failure
         device = SimpleNamespace(
-            device_id=scope, _conn=object(), capabilities={"backend": scope}, close=Mock()
+            device_id=scope,
+            name=None,
+            state=None,
+            device_type=None,
+            capabilities={"backend": scope},
+            close=Mock(),
         )
         devices.append(device)
 
@@ -377,7 +424,9 @@ def empty_local_without_cloud_key(monkeypatch):
     monkeypatch.setattr(device_lifecycle, "core_client", factory)
 
 
-def test_all_devices_text_with_no_key_and_empty_local_is_success(empty_local_without_cloud_key):
+def test_all_devices_text_with_no_key_and_empty_local_is_success(
+    empty_local_without_cloud_key,
+):
     result = CliRunner().invoke(cli, ["device", "list", "--all"])
     assert result.exit_code == 0, result.output
     assert result.stderr.count("Warning: cloud:") == 1
@@ -388,7 +437,9 @@ def test_all_devices_text_with_no_key_and_empty_local_is_success(empty_local_wit
     )
 
 
-def test_all_devices_json_with_no_key_and_empty_local_is_success(empty_local_without_cloud_key):
+def test_all_devices_json_with_no_key_and_empty_local_is_success(
+    empty_local_without_cloud_key,
+):
     result = CliRunner().invoke(cli, ["device", "list", "--all", "-j"])
     assert result.exit_code == 0, result.output
     assert result.stderr.count("Warning: cloud:") == 1
@@ -399,14 +450,18 @@ def test_all_devices_json_with_no_key_and_empty_local_is_success(empty_local_wit
 
 def test_connection_hint_preserves_port_and_hides_url_secrets():
 
-    request = httpx.Request("GET", "http://user:password@[::1]:9123/v1/devices?token=hidden")
+    request = httpx.Request(
+        "GET", "http://user:password@[::1]:9123/v1/devices?token=hidden"
+    )
     text, _, _ = convert_api_error(APIConnectionError(request=request))
     assert "http://[::1]:9123" in text
     assert "--api-url" in text and "MOBILERUN_API_BASE_URL" in text
     assert all(word not in text for word in ("password", "hidden", "user:"))
 
 
-@pytest.mark.parametrize("app_field", ["package_name", "app_id", "bundle_id", "package"])
+@pytest.mark.parametrize(
+    "app_field", ["package_name", "app_id", "bundle_id", "package"]
+)
 def test_apps_are_tsv(monkeypatch, app_field):
 
     @contextmanager
@@ -447,7 +502,9 @@ def test_macro_list_is_tsv(tmp_path):
     assert result.stdout == "sample\tExample macro\t3\n"
 
 
-def test_env_text_uses_empty_values_lowercase_booleans_and_one_secret_status(monkeypatch):
+def test_env_text_uses_empty_values_lowercase_booleans_and_one_secret_status(
+    monkeypatch,
+):
 
     monkeypatch.setattr(deviceauth, "load_credentials", lambda: None)
     monkeypatch.setattr(env_keys, "resolve_env_key", lambda *args: None)
@@ -490,11 +547,15 @@ def test_configure_without_input_fails_before_loading_or_writing(
     allow_input(tty)
     monkeypatch.setattr(env_keys, "resolve_env_key", lambda *args: "")
     monkeypatch.setattr(
-        ConfigLoader, "load", Mock(side_effect=AssertionError("must not load or create config"))
+        ConfigLoader,
+        "load",
+        Mock(side_effect=AssertionError("must not load or create config")),
     )
     wizard = Mock(side_effect=AssertionError("must not prompt"))
     monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", wizard)
-    result = CliRunner().invoke(cli, ["configure", *flags, *(["--no-input"] if no_input else [])])
+    result = CliRunner().invoke(
+        cli, ["configure", *flags, *(["--no-input"] if no_input else [])]
+    )
     assert result.exit_code == 2, result.output
     assert missing in result.stderr
     wizard.assert_not_called()
@@ -524,7 +585,9 @@ def test_empty_secret_stdin_is_usage_error(secret_command, stdin):
 
 @pytest.mark.parametrize("from_stdin", [False, True])
 @pytest.mark.parametrize("verbose", [False, True])
-def test_secrets_are_redacted_from_errors_and_verbose_logs(secret_command, from_stdin, verbose):
+def test_secrets_are_redacted_from_errors_and_verbose_logs(
+    secret_command, from_stdin, verbose
+):
     args, callback, _ = secret_command
     secret = "dummy-error-marker"
 
@@ -535,7 +598,12 @@ def test_secrets_are_redacted_from_errors_and_verbose_logs(secret_command, from_
     callback.side_effect = fail
     result = CliRunner().invoke(
         cli,
-        [*args, "-" if from_stdin else secret, "--no-input", *(["-v"] if verbose else [])],
+        [
+            *args,
+            "-" if from_stdin else secret,
+            "--no-input",
+            *(["-v"] if verbose else []),
+        ],
         input=secret + "\n" if from_stdin else None,
     )
     assert result.exit_code == 1, result.output
@@ -554,9 +622,14 @@ def test_secrets_are_redacted_from_errors_and_verbose_logs(secret_command, from_
         ("gemini", 2, 0, ("terminal", "--no-input")),
     ],
 )
-def test_login_only_blocks_flows_that_need_terminal_input(monkeypatch, service, code, calls, hints):
+def test_login_only_blocks_flows_that_need_terminal_input(
+    monkeypatch, service, code, calls, hints
+):
 
-    monkeypatch.setattr("mobilerun.cli.oauth_actions.login_requires_input", lambda name: name in {"anthropic", "gemini"})
+    monkeypatch.setattr(
+        "mobilerun.cli.oauth_actions.login_requires_input",
+        lambda name: name in {"anthropic", "gemini"},
+    )
     callbacks = []
     for name in (
         "_login_mobilerun",
@@ -578,7 +651,9 @@ def test_login_only_blocks_flows_that_need_terminal_input(monkeypatch, service, 
 @pytest.mark.parametrize("service", ["anthropic", "gemini"])
 def test_provider_callback_login_without_manual_prompt_is_allowed(monkeypatch, service):
 
-    monkeypatch.setattr("mobilerun.cli.oauth_actions.login_requires_input", lambda _: False)
+    monkeypatch.setattr(
+        "mobilerun.cli.oauth_actions.login_requires_input", lambda _: False
+    )
     callback = Mock()
     monkeypatch.setattr(auth, f"_run_{service}_oauth_login", callback)
     result = CliRunner().invoke(cli, ["auth", "login", service, "--no-input"])
@@ -587,12 +662,19 @@ def test_provider_callback_login_without_manual_prompt_is_allowed(monkeypatch, s
 
 
 @pytest.mark.parametrize("failure,code", [(EOFError, 1), (KeyboardInterrupt, 130)])
-def test_prompt_eof_and_interrupt_have_distinct_exit_codes(monkeypatch, allow_input, failure, code):
-    monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", Mock(side_effect=failure))
+def test_prompt_eof_and_interrupt_have_distinct_exit_codes(
+    monkeypatch, allow_input, failure, code
+):
+    monkeypatch.setattr(
+        "mobilerun.cli.configure_wizard.run_configure_wizard", Mock(side_effect=failure)
+    )
     result = CliRunner().invoke(cli, ["configure"])
     assert result.exit_code == code, result.output
     if code == 1:
-        assert result.stderr == "Error: Input closed; run the command again in a terminal.\n"
+        assert (
+            result.stderr
+            == "Error: Input closed; run the command again in a terminal.\n"
+        )
 
 
 def test_click_prompt_interrupt_exits_130(monkeypatch, allow_input):
@@ -612,14 +694,18 @@ def test_no_input_configure_resolves_provider_environment_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-environment-marker")
     wizard = Mock()
     monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", wizard)
-    result = CliRunner().invoke(cli, ["configure", "-p", "openai", "-m", "MODEL", "--no-input"])
+    result = CliRunner().invoke(
+        cli, ["configure", "-p", "openai", "-m", "MODEL", "--no-input"]
+    )
     assert result.exit_code == 0, result.output
     assert "dummy-environment-marker" not in result.output
     assert wizard.call_args.kwargs["api_key"] is None
 
 
 def test_no_input_configure_never_starts_missing_oauth_login(monkeypatch):
-    monkeypatch.setattr("mobilerun.cli.configure_wizard._oauth_credentials_present", lambda *args: False)
+    monkeypatch.setattr(
+        "mobilerun.cli.configure_wizard._oauth_credentials_present", lambda *args: False
+    )
     wizard = Mock()
     monkeypatch.setattr("mobilerun.cli.configure_wizard.run_configure_wizard", wizard)
     result = CliRunner().invoke(
@@ -632,11 +718,15 @@ def test_no_input_configure_never_starts_missing_oauth_login(monkeypatch):
 
 def test_click_prompt_eof_is_one_failure_sentence(monkeypatch, allow_input):
     monkeypatch.setattr(
-        configure, "run_configure_wizard", lambda *args, **kwargs: click.prompt("Value")
+        mobilerun.cli.configure_wizard,
+        "run_configure_wizard",
+        lambda *args, **kwargs: click.prompt("Value"),
     )
     result = CliRunner().invoke(cli, ["configure"], input="")
     assert result.exit_code == 1, result.output
-    assert result.stderr.count("Input closed; run the command again in a terminal.") == 1
+    assert (
+        result.stderr.count("Input closed; run the command again in a terminal.") == 1
+    )
     assert "Aborted!" not in result.output
 
 
@@ -668,7 +758,9 @@ def test_completion_is_click_source_without_installing(shell, tmp_path, monkeypa
     monkeypatch.setenv("MOBILERUN_CONFIG", str(tmp_path / "missing.yaml"))
     result = CliRunner().invoke(cli, ["completion", shell])
     assert result.exit_code == 0, result.output
-    expected = get_completion_class(shell)(cli, {}, "mobilerun", "_MOBILERUN_COMPLETE").source()
+    expected = get_completion_class(shell)(
+        cli, {}, "mobilerun", "_MOBILERUN_COMPLETE"
+    ).source()
     assert result.stdout == expected + "\n"
     assert "_MOBILERUN_COMPLETE" in result.stdout
     assert result.stderr == ""
@@ -745,7 +837,9 @@ def test_terminal_secret_input_is_hidden(monkeypatch, secret_command):
     stream.isatty.return_value = True
     original_stream = click.get_text_stream
     monkeypatch.setattr(
-        click, "get_text_stream", lambda name: stream if name == "stdin" else original_stream(name)
+        click,
+        "get_text_stream",
+        lambda name: stream if name == "stdin" else original_stream(name),
     )
     original_prompt = click.prompt
 
@@ -778,7 +872,9 @@ def test_cloud_empty_list_has_cloud_hint(monkeypatch):
 
 def test_cloud_missing_device_has_cloud_listing_hint(monkeypatch):
     monkeypatch.setattr(
-        device_lifecycle, "probe_device", Mock(side_effect=RuntimeError("device not found"))
+        device_lifecycle,
+        "probe_device",
+        Mock(side_effect=RuntimeError("device not found")),
     )
     result = CliRunner().invoke(cli, ["device", "ping", "-t", "cloud", "-d", "missing"])
     assert result.exit_code == 1
@@ -790,7 +886,9 @@ def test_all_devices_api_error_is_short_and_redacted(monkeypatch):
     request = httpx.Request("GET", "http://127.0.0.1:9/v1/devices")
     response = httpx.Response(404, request=request)
     error = APIStatusError(
-        "missing", response=response, body={"detail": "device\n dummy-api-marker not found"}
+        "missing",
+        response=response,
+        body={"detail": "device\n dummy-api-marker not found"},
     )
     monkeypatch.setattr(device_lifecycle, "_list_target", Mock(side_effect=[[], error]))
     result = CliRunner().invoke(cli, ["device", "list", "--all", "-j"])
@@ -817,7 +915,9 @@ def test_env_json_booleans_match_text(monkeypatch):
 @pytest.mark.parametrize("secret", ["", " "])
 def test_terminal_empty_secret_is_usage_error(monkeypatch, secret_command, secret):
     args, callback, _ = secret_command
-    monkeypatch.setattr(click, "get_text_stream", lambda name: SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(
+        click, "get_text_stream", lambda name: SimpleNamespace(isatty=lambda: True)
+    )
     original_prompt = click.prompt
 
     def prompt(*args, **kwargs):
@@ -851,11 +951,15 @@ def test_doctor_runner_suppresses_results_and_keeps_instructions(monkeypatch, fl
         ),
     )
     monkeypatch.setattr(
-        module, "check_adb", AsyncMock(return_value=CheckResult("ADB", Status.PASS, "ready"))
+        module,
+        "check_adb",
+        AsyncMock(return_value=CheckResult("ADB", Status.PASS, "ready")),
     )
     monkeypatch.setattr(selection, "select_device", AsyncMock(return_value=object()))
     monkeypatch.setattr(
-        device_commands, "probe_device", lambda *a, **kw: console.print("Please enable manually")
+        device_commands,
+        "probe_device",
+        lambda *a, **kw: console.print("Please enable manually"),
     )
     result = CliRunner().invoke(cli, ["doctor", *flags])
     assert result.exit_code == 0, result.output
@@ -869,7 +973,10 @@ def test_doctor_runner_suppresses_results_and_keeps_instructions(monkeypatch, fl
     [
         (["login"], "No such command 'login'. Did you mean 'mobilerun auth login'?"),
         (["logout"], "No such command 'logout'. Did you mean 'mobilerun auth logout'?"),
-        (["connect", "X"], "No such command 'connect'. Did you mean 'mobilerun device connect'?"),
+        (
+            ["connect", "X"],
+            "No such command 'connect'. Did you mean 'mobilerun device connect'?",
+        ),
         (
             ["disconnect", "X"],
             "No such command 'disconnect'. Did you mean 'mobilerun device disconnect'?",
@@ -877,14 +984,29 @@ def test_doctor_runner_suppresses_results_and_keeps_instructions(monkeypatch, fl
         (["setup"], "No such command 'setup'. Did you mean 'mobilerun device setup'?"),
         (["ping"], "No such command 'ping'. Did you mean 'mobilerun device ping'?"),
         (["pair"], "No such command 'pair'. Did you mean 'mobilerun device pair'?"),
-        (["devices"], "No such command 'devices'. Did you mean 'mobilerun device list'?"),
+        (
+            ["devices"],
+            "No such command 'devices'. Did you mean 'mobilerun device list'?",
+        ),
         (["whoami"], "No such command 'whoami'. Did you mean 'mobilerun auth status'?"),
         (["lst"], "No such command 'lst'. Did you mean 'mobilerun device list'?"),
         (["devcie"], "No such command 'devcie'. Did you mean 'mobilerun device'?"),
-        (["device", "status"], "No such command 'status'. Did you mean 'mobilerun auth status'?"),
-        (["auth", "lst"], "No such command 'lst'. Did you mean 'mobilerun device list'?"),
-        (["login", "-h"], "No such command 'login'. Did you mean 'mobilerun auth login'?"),
-        (["login", "auth"], "No such command 'login'. Did you mean 'mobilerun auth login'?"),
+        (
+            ["device", "status"],
+            "No such command 'status'. Did you mean 'mobilerun auth status'?",
+        ),
+        (
+            ["auth", "lst"],
+            "No such command 'lst'. Did you mean 'mobilerun device list'?",
+        ),
+        (
+            ["login", "-h"],
+            "No such command 'login'. Did you mean 'mobilerun auth login'?",
+        ),
+        (
+            ["login", "auth"],
+            "No such command 'login'. Did you mean 'mobilerun auth login'?",
+        ),
         (
             ["list"],
             "No such command 'list'. Did you mean 'mobilerun device list', 'mobilerun macro list'?",
@@ -937,6 +1059,11 @@ def test_completion_never_suggests_command_corrections(words, cword):
     assert "to sign in" not in result.stdout
 
 
+@pytest.fixture(params=["MOBILERUN_API_KEY", "MOBILERUN_CLOUD_API_KEY"])
+def cloud_env_var(request):
+    return request.param
+
+
 @pytest.fixture(
     params=[
         (
@@ -976,11 +1103,15 @@ def test_completion_never_suggests_command_corrections(words, cword):
         ),
     ]
 )
-def cloud_credential_case(request, monkeypatch):
-    env, saved, key, source, has_login, label, env_source, overrides, hint = request.param
+def cloud_credential_case(request, monkeypatch, cloud_env_var):
+    env, saved, key, source, has_login, label, env_source, overrides, hint = (
+        request.param
+    )
+    hint = hint.replace("MOBILERUN_CLOUD_API_KEY", cloud_env_var)
+    monkeypatch.delenv("MOBILERUN_API_KEY", raising=False)
     monkeypatch.delenv("MOBILERUN_CLOUD_API_KEY", raising=False)
     if env is not None:
-        monkeypatch.setenv("MOBILERUN_CLOUD_API_KEY", env)
+        monkeypatch.setenv(cloud_env_var, env)
     credentials = {"access_token": saved} if saved else None
     monkeypatch.setattr(deviceauth, "load_credentials", lambda: credentials)
     return SimpleNamespace(
@@ -1012,7 +1143,7 @@ def rejected_cloud_command(monkeypatch, cloud_credential_case):
         listing = Mock(side_effect=error)
         client = SimpleNamespace(list_devices=listing, close=Mock())
         factory = Mock(return_value=client)
-        monkeypatch.setattr(selection.mobilerun_core, "Mobilerun", factory)
+        monkeypatch.setattr(mobilerun_core, "Mobilerun", factory)
         result = CliRunner().invoke(cli, ["device", "list", "-t", "cloud", *flags])
         assert result.exit_code == 1, result.output
         factory.assert_called_once_with(
@@ -1032,11 +1163,14 @@ def test_cloud_rejection_text_names_used_credential(
     cloud_credential_case, rejected_cloud_command, status
 ):
     result = rejected_cloud_command(status, [])
-    assert result.stdout == ""
-    assert (
-        result.stderr
-        == f"Error: Rejected [redacted] (HTTP {status})\n{cloud_credential_case.hint}\n"
+    hint = (
+        f"The {cloud_credential_case.label} is valid but not allowed to do this; "
+        "check its scopes or the device owner."
+        if status == 403
+        else cloud_credential_case.hint
     )
+    assert result.stdout == ""
+    assert result.stderr == f"Error: Rejected [redacted] (HTTP {status})\n{hint}\n"
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -1044,16 +1178,19 @@ def test_cloud_rejection_json_names_used_credential(
     cloud_credential_case, rejected_cloud_command, status
 ):
     result = rejected_cloud_command(status, ["-j"])
+    hint = (
+        f"The {cloud_credential_case.label} is valid but not allowed to do this; "
+        "check its scopes or the device owner."
+        if status == 403
+        else cloud_credential_case.hint
+    )
     assert json.loads(result.stdout) == {
         "error": "Rejected [redacted]",
         "status": status,
         "code": None,
         "credential": cloud_credential_case.source,
     }
-    assert (
-        result.stderr
-        == f"Error: Rejected [redacted] (HTTP {status})\n{cloud_credential_case.hint}\n"
-    )
+    assert result.stderr == f"Error: Rejected [redacted] (HTTP {status})\n{hint}\n"
 
 
 @pytest.mark.parametrize(
@@ -1099,12 +1236,18 @@ def test_cloud_credential_resolver_preserves_precedence(cloud_credential_case):
 def cloud_status(monkeypatch, tmp_path, cloud_credential_case):
     monkeypatch.setattr(deviceauth, "credential_path", lambda: tmp_path / "cloud.json")
     monkeypatch.setattr(
-        deviceauth, "fetch_session", Mock(return_value={"user": {"email": "user@example.test"}})
+        deviceauth,
+        "fetch_session",
+        Mock(return_value={"user": {"email": "user@example.test"}}),
     )
-    monkeypatch.setattr("mobilerun.cli.configure_wizard._oauth_credentials_present", lambda *a: False)
+    monkeypatch.setattr(
+        "mobilerun.cli.configure_wizard._oauth_credentials_present", lambda *a: False
+    )
 
 
-def test_cloud_status_json_names_active_credential(cloud_status, cloud_credential_case, tmp_path):
+def test_cloud_status_json_names_active_credential(
+    cloud_status, cloud_credential_case, tmp_path
+):
     result = CliRunner().invoke(cli, ["auth", "status", "-j"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)[0] == {
@@ -1112,7 +1255,7 @@ def test_cloud_status_json_names_active_credential(cloud_status, cloud_credentia
         "signed_in": cloud_credential_case.has_login,
         "credential_path": str(tmp_path / "cloud.json"),
         "email": "user@example.test" if cloud_credential_case.has_login else None,
-        "cloud_credential": cloud_credential_case.label,
+        "cloud_credential": cloud_credential_case.source,
         "env_overrides_login": cloud_credential_case.overrides,
     }
     assert "planted-env-key" not in result.output
@@ -1133,12 +1276,14 @@ def test_env_json_uses_cloud_credential_source(cloud_credential_case):
     result = CliRunner().invoke(cli, ["env", "-j"])
     assert result.exit_code == 0, result.output
     row = next(
-        row for row in json.loads(result.stdout) if row["variable"] == "MOBILERUN_CLOUD_API_KEY"
+        row
+        for row in json.loads(result.stdout)
+        if row["variable"] == "MOBILERUN_API_KEY"
     )
     assert row == {
-        "variable": "MOBILERUN_CLOUD_API_KEY",
+        "variable": "MOBILERUN_API_KEY",
         "value": "set",
-        "source": cloud_credential_case.env_source,
+        "source": cloud_credential_case.source,
     }
     assert "planted-env-key" not in result.output
     assert "planted-saved-token" not in result.output
@@ -1147,6 +1292,31 @@ def test_env_json_uses_cloud_credential_source(cloud_credential_case):
 def test_env_text_uses_cloud_credential_source(cloud_credential_case):
     result = CliRunner().invoke(cli, ["env"])
     assert result.exit_code == 0, result.output
-    assert f"MOBILERUN_CLOUD_API_KEY=set  ({cloud_credential_case.env_source})\n" in result.stdout
+    assert f"MOBILERUN_API_KEY=set  ({cloud_credential_case.label})\n" in result.stdout
     assert "planted-env-key" not in result.output
     assert "planted-saved-token" not in result.output
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_api_error_without_credential_suggests_login(monkeypatch, status):
+    monkeypatch.setattr(
+        selection,
+        "resolve_cloud_credential",
+        lambda: selection.CloudCredential(None, None, False),
+    )
+    request = httpx.Request("GET", "https://example.test/v1/devices")
+    error = APIStatusError(
+        "rejected", response=httpx.Response(status, request=request), body={}
+    )
+    text, document, _ = convert_api_error(error)
+    assert document["credential"] is None
+    assert text.endswith("Run `mobilerun auth login` or set MOBILERUN_API_KEY.")
+    assert "saved sign-in" not in text
+
+
+@pytest.mark.parametrize("path", [path for path, _ in commands()])
+def test_every_command_examples_and_verbose(path):
+    result = CliRunner().invoke(cli, [*path, "--help"])
+    assert result.exit_code == 0
+    assert "Examples:" in result.stdout
+    assert "--verbose" in result.stdout

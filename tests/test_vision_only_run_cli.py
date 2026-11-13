@@ -21,7 +21,8 @@ class RunCliVisionOnlyTest(unittest.TestCase):
                     "run",
                     "Check Wi-Fi",
                     "--vision-only",
-                    "--platform", "ios",
+                    "--platform",
+                    "ios",
                     "--backend",
                     "visual-remote",
                     "--device",
@@ -102,11 +103,13 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         with (
             patch(
-                "mobilerun.cli.run.ConfigLoader.load",
+                "mobilerun.config_manager.ConfigLoader.load",
                 return_value=MobileConfig(),
             ),
             patch("mobilerun.MobileAgent", FakeAgent),
-            patch("mobilerun_core_local.driver.ios.discover_ios_device", AsyncMock()) as discover,
+            patch(
+                "mobilerun_core_local.driver.ios.discover_ios_device", AsyncMock()
+            ) as discover,
         ):
             success = asyncio.run(
                 run_command(
@@ -155,7 +158,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
 
         with (
             patch(
-                "mobilerun.cli.run.ConfigLoader.load",
+                "mobilerun.config_manager.ConfigLoader.load",
                 return_value=MobileConfig(),
             ),
             patch("mobilerun.MobileAgent", FakeAgent),
@@ -210,7 +213,7 @@ class RunCliVisionOnlyTest(unittest.TestCase):
         )
 
         with (
-            patch("mobilerun.cli.run.ConfigLoader.load", return_value=config),
+            patch("mobilerun.config_manager.ConfigLoader.load", return_value=config),
             patch("mobilerun.MobileAgent", FakeAgent),
             patch("mobilerun.cli.run.adb.device", AsyncMock()) as adb_device,
         ):

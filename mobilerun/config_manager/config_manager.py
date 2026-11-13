@@ -5,7 +5,10 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Literal, Optional
 
 import yaml
-from mobilerun_core.mobilerun import ANDROID_PORTAL_TOKEN_ENV_VAR, IOS_PORTAL_TOKEN_ENV_VAR
+from mobilerun_core.mobilerun import (
+    ANDROID_PORTAL_TOKEN_ENV_VAR,
+    IOS_PORTAL_TOKEN_ENV_VAR,
+)
 
 from mobilerun.agent.providers.minimax import warn_if_legacy_minimax_endpoint
 from mobilerun.agent.providers.registry import (
@@ -195,7 +198,11 @@ class DeviceConfig:
         name = PORTAL_TOKEN_ENV_VARS.get((requested or "").lower())
         if name is None:
             return None
-        configured = self.auth_token if requested.lower() == (self.platform or "").lower() else None
+        configured = (
+            self.auth_token
+            if requested.lower() == (self.platform or "").lower()
+            else None
+        )
         return os.environ.get(name) or configured
 
 

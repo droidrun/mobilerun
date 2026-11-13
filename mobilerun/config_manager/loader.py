@@ -91,7 +91,9 @@ class ConfigLoader:
         """Save config to user config path."""
         config_dict = config.to_dict()
         config_dict["_version"] = CURRENT_VERSION
-        return cls._save_dict(config_dict, Path(path) if path is not None else cls.get_user_config_path())
+        return cls._save_dict(
+            config_dict, Path(path) if path is not None else cls.get_user_config_path()
+        )
 
     @classmethod
     def _save_dict(cls, config_dict: Dict[str, Any], path: Path) -> Path:

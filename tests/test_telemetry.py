@@ -354,7 +354,7 @@ def test_cli_run_forwards_loaded_telemetry_config(monkeypatch) -> None:
     async def skip_keyboard_cleanup(config, serial=None) -> None:
         return None
 
-    monkeypatch.setattr(cli_main.ConfigLoader, "load", lambda _: config)
+    monkeypatch.setattr("mobilerun.config_manager.ConfigLoader.load", lambda _: config)
     monkeypatch.setattr(cli_main, "_setup_cli_logging", lambda _: None)
     monkeypatch.setattr("mobilerun.telemetry.print_telemetry_message", capture_config)
     monkeypatch.setattr(cli_main, "_cleanup_android_keyboard", skip_keyboard_cleanup)

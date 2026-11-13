@@ -80,7 +80,8 @@ def test_configure_xai_command_forwards_device_code_options(
     result = CliRunner().invoke(
         cli_main.cli,
         [
-            "auth", "login",
+            "auth",
+            "login",
             "xai",
             "--credential-path",
             str(credential_path),
@@ -120,7 +121,8 @@ def test_configure_anthropic_forwards_timeout_and_browser_preference(
     result = CliRunner().invoke(
         cli_main.cli,
         [
-            "auth", "login",
+            "auth",
+            "login",
             "anthropic",
             "--credential-path",
             str(credential_path),

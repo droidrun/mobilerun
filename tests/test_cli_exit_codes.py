@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import device_lifecycle, main, selection
+import mobilerun.config_manager
+from mobilerun.cli import device_lifecycle, main
 from mobilerun.config_manager import MobileConfig
 
 run_module = importlib.import_module("mobilerun.cli.run")
@@ -12,8 +13,9 @@ run_module = importlib.import_module("mobilerun.cli.run")
 
 @pytest.fixture(autouse=True)
 def config(monkeypatch):
-    monkeypatch.setattr("mobilerun.cli.options.require_adb", lambda: "/fake/adb")
-    monkeypatch.setattr(selection.ConfigLoader, "load", lambda _: MobileConfig())
+    monkeypatch.setattr(
+        mobilerun.config_manager.ConfigLoader, "load", lambda _: MobileConfig()
+    )
 
 
 def test_connect_fresh_success(monkeypatch):
@@ -29,7 +31,9 @@ def test_connect_fresh_success(monkeypatch):
 
 def test_connect_already_connected(monkeypatch):
     monkeypatch.setattr(
-        device_lifecycle.adb, "connect", AsyncMock(return_value="already connected to device")
+        device_lifecycle.adb,
+        "connect",
+        AsyncMock(return_value="already connected to device"),
     )
 
     result = CliRunner().invoke(main.cli, ["device", "connect", "device"])
@@ -51,7 +55,9 @@ def test_connect_failure_string(monkeypatch):
 
 def test_connect_exception(monkeypatch):
     monkeypatch.setattr(
-        device_lifecycle.adb, "connect", AsyncMock(side_effect=RuntimeError("connection broke"))
+        device_lifecycle.adb,
+        "connect",
+        AsyncMock(side_effect=RuntimeError("connection broke")),
     )
 
     result = CliRunner().invoke(main.cli, ["device", "connect", "device"])
@@ -72,7 +78,9 @@ def test_disconnect_exception(monkeypatch):
 
 
 def test_disconnect_not_connected_is_success(monkeypatch):
-    monkeypatch.setattr(device_lifecycle.adb, "disconnect", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        device_lifecycle.adb, "disconnect", AsyncMock(return_value=False)
+    )
 
     result = CliRunner().invoke(main.cli, ["device", "disconnect", "device"])
 
@@ -81,15 +89,25 @@ def test_disconnect_not_connected_is_success(monkeypatch):
 
 
 def test_ping_unknown_device(monkeypatch):
-    monkeypatch.setattr(device_lifecycle, "probe_device", lambda *_: (_ for _ in ()).throw(RuntimeError("unknown device")))
+    monkeypatch.setattr(
+        device_lifecycle,
+        "probe_device",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("unknown device")),
+    )
     result = CliRunner().invoke(main.cli, ["device", "ping", "-d", "no-such-device"])
     assert result.exit_code == 1
     assert "Error: unknown device" in result.output
 
 
 def test_ping_driver_error(monkeypatch):
-    monkeypatch.setattr(device_lifecycle, "probe_device", lambda *_: (_ for _ in ()).throw(RuntimeError("portal broke")))
-    result = CliRunner().invoke(main.cli, ["device", "ping", "-d", "device", "--verbose"])
+    monkeypatch.setattr(
+        device_lifecycle,
+        "probe_device",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("portal broke")),
+    )
+    result = CliRunner().invoke(
+        main.cli, ["device", "ping", "-d", "device", "--verbose"]
+    )
     assert result.exit_code == 1
     assert "Error: portal broke" in result.output
     assert "Traceback" in result.stderr
@@ -97,6 +115,9 @@ def test_ping_driver_error(monkeypatch):
 
 def test_device_list_core_error_is_failure(monkeypatch):
     class FakeCore:
+        def close(self):
+            pass
+
         def list_devices(self, **kwargs):
             raise RuntimeError("adb broke")
 

@@ -1,6 +1,7 @@
 """Mobilerun Agent Module.
 
-This module provides a ReAct agent for automating Android devices using reasoning and acting."""
+This module provides a ReAct agent for automating Android devices using reasoning and acting.
+"""
 
 from importlib import import_module
 from typing import TYPE_CHECKING
@@ -10,15 +11,15 @@ if TYPE_CHECKING:
     from mobilerun.agent.droid.state import MobileAgentState
 
 _EXPORTS = {
-    'MobileAgent': ('mobilerun.agent.droid.droid_agent', 'MobileAgent'),
-    'MobileAgentState': ('mobilerun.agent.droid.state', 'MobileAgentState'),
+    "MobileAgent": ("mobilerun.agent.droid.droid_agent", "MobileAgent"),
+    "MobileAgentState": ("mobilerun.agent.droid.state", "MobileAgentState"),
 }
 
 __all__ = ["MobileAgent", "MobileAgentState", "DroidAgent", "DroidAgentState"]
 
 
 def __getattr__(name):
-    aliases = {'DroidAgent': 'MobileAgent', 'DroidAgentState': 'MobileAgentState'}
+    aliases = {"DroidAgent": "MobileAgent", "DroidAgentState": "MobileAgentState"}
     if name in aliases:
         import warnings
 

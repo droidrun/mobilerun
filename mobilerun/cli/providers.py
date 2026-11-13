@@ -18,7 +18,11 @@ class Provider:
     def runtime(self):
         from mobilerun.agent.providers.registry import resolve_provider_variant
 
-        return resolve_provider_variant(self.family, self.auth_mode).id if self.family else self.run_only
+        return (
+            resolve_provider_variant(self.family, self.auth_mode).id
+            if self.family
+            else self.run_only
+        )
 
 
 PROVIDERS = {
@@ -36,15 +40,22 @@ PROVIDERS = {
     "openrouter": Provider(None, "api_key", "api_base", "OpenRouter"),
     "deepseek": Provider(None, "api_key", "base_url", "DeepSeek"),
 }
+
+
 def _provider_option(names):
     return click.option(
-        "-p", "--provider", type=click.Choice(names, case_sensitive=False), metavar="PROVIDER",
+        "-p",
+        "--provider",
+        type=click.Choice(names, case_sensitive=False),
+        metavar="PROVIDER",
         help="LLM provider: " + ", ".join(names) + ".",
     )
 
 
 provider_option = _provider_option(list(PROVIDERS))
-configure_provider_option = _provider_option([name for name, spec in PROVIDERS.items() if spec.family])
+configure_provider_option = _provider_option(
+    [name for name, spec in PROVIDERS.items() if spec.family]
+)
 
 
 def llm_url_kwargs(runtime, url):
@@ -58,18 +69,8 @@ def llm_url_kwargs(runtime, url):
         raise click.UsageError(f"-u/--llm-url is not supported for provider {runtime}")
     if runtime == "XAI":
         raise click.UsageError("-u/--llm-url is not supported for provider XAI")
-    return {spec.url_keyword: {"base_url": url} if spec.url_keyword == "http_options" else url}
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'resolve_provider_variant': ('mobilerun.agent.providers.registry', 'resolve_provider_variant'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.agent.providers.registry import (
-        resolve_provider_variant as resolve_provider_variant,
-    )
+    return {
+        spec.url_keyword: (
+            {"base_url": url} if spec.url_keyword == "http_options" else url
+        )
+    }

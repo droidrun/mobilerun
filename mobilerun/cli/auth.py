@@ -24,7 +24,7 @@ from mobilerun.cli.options import (
     verbose_option,
 )
 from mobilerun.cli.qr import print_qr
-from mobilerun.cli.selection import resolve_cloud_credential
+from mobilerun.cli.selection import CLOUD_CREDENTIAL_LABELS, resolve_cloud_credential
 from mobilerun.config_manager.auth_profile_store import AuthProfileStore
 from mobilerun.config_manager.credential_paths import (
     ANTHROPIC_OAUTH_CREDENTIAL_PATH,
@@ -48,7 +48,9 @@ def _validate_oauth_timeout(
 
 def _print_oauth_login_success(provider_label: str, credential_path: str) -> None:
     console.print(f"[green]{provider_label} login succeeded.[/]")
-    console.print(f"[blue]Credentials saved to:[/] {Path(credential_path).expanduser()}")
+    console.print(
+        f"[blue]Credentials saved to:[/] {Path(credential_path).expanduser()}"
+    )
 
 
 def _run_openai_oauth_login(credential_path: str, model: str | None, **kwargs) -> None:
@@ -77,7 +79,9 @@ def _run_anthropic_oauth_login(credential_path: str, **kwargs) -> None:
     _print_oauth_login_success("Anthropic", credential_path)
 
 
-def _run_grok_oauth_login(credential_path: str, model: str | None = None, **kwargs) -> None:
+def _run_grok_oauth_login(
+    credential_path: str, model: str | None = None, **kwargs
+) -> None:
     from mobilerun.cli.oauth_actions import run_grok_oauth_login
 
     run_grok_oauth_login(
@@ -91,23 +95,25 @@ def _run_grok_oauth_login(credential_path: str, model: str | None = None, **kwar
 DEFAULT_DEVICE_CLIENT_ID = "mobilerun-cli"
 
 
-def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool, browser: bool = False):
+def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool, browser: bool):
     """Authenticate via OAuth 2.0 device authorization and save the session token."""
     import webbrowser
 
     try:
         code = deviceauth.request_code(auth_url, client_id)
     except Exception as e:
-        raise click.ClickException(f"request device code: {e}\nCheck --auth-url or MOBILERUN_AUTH_URL: {auth_url}") from e
+        raise click.ClickException(
+            f"request device code: {e}\nCheck --auth-url or MOBILERUN_AUTH_URL: {auth_url}"
+        ) from e
 
     link = code.verification_uri_complete
     terminal = sys.stderr.isatty()
+    styled = terminal and "NO_COLOR" not in os.environ
     if link:
         if terminal and not no_qr:
-            print_qr(link, color="NO_COLOR" not in os.environ)
-        hyperlink = terminal and "NO_COLOR" not in os.environ
-        display = f"\033]8;;{link}\033\\{link}\033]8;;\033\\" if hyperlink else link
-        click.echo(display, err=True, color=hyperlink)
+            print_qr(link)
+        display = f"\033]8;;{link}\033\\{link}\033]8;;\033\\" if styled else link
+        click.echo(display, err=True, color=styled)
     click.echo(f"Visit: {code.verification_uri}", err=True)
     click.echo(f"Code:  {code.user_code}", err=True)
     if browser and link:
@@ -115,7 +121,8 @@ def _login_mobilerun(auth_url: str | None, client_id: str, no_qr: bool, browser:
             webbrowser.open(link)
         except Exception:
             pass
-    console.print(f"[dim]Waiting for authorization (expires in {code.expires_in}s)...[/]")
+    waiting = f"Waiting for authorization (expires in {code.expires_in}s)..."
+    console.print(f"[dim]{waiting}[/]" if styled else waiting)
 
     try:
         token = deviceauth.poll_token(auth_url, client_id, code)
@@ -173,11 +180,14 @@ LOGIN_OPTIONS = {
 }
 
 service_argument = click.argument(
-    "service", type=click.Choice(["mobilerun", *SERVICES]), default="mobilerun", metavar="[SERVICE]"
+    "service",
+    type=click.Choice(["mobilerun", *SERVICES]),
+    default="mobilerun",
+    metavar="[SERVICE]",
 )
 
 
-@click.group(cls=Group)
+@click.group(cls=Group, epilog=examples("mobilerun auth status"))
 @verbose_option
 def auth_cli(verbose):
     """Sign in, sign out, and inspect saved credentials."""
@@ -185,19 +195,22 @@ def auth_cli(verbose):
 
 @auth_cli.command(
     epilog=examples(
-        'mobilerun auth login',
-        'mobilerun auth login --browser',
-        'mobilerun auth login openai --no-browser',
+        "mobilerun auth login",
+        "mobilerun auth login --browser",
+        "mobilerun auth login openai --no-browser",
     ),
 )
 @service_argument
 @verbose_option
 @auth_url_option
 @click.option("-m", "--model", help="LLM model (openai, gemini, xai).")
-@click.option("--client-id", default=None, help="Mobilerun device authorization client id.")
 @click.option(
-    "--credential-path", type=click.Path(dir_okay=False),
-    help="Provider credential file (openai, anthropic, gemini, xai)."
+    "--client-id", default=None, help="Mobilerun device authorization client id."
+)
+@click.option(
+    "--credential-path",
+    type=click.Path(dir_okay=False),
+    help="Provider credential file (openai, anthropic, gemini, xai).",
 )
 @click.option(
     "--timeout",
@@ -207,24 +220,35 @@ def auth_cli(verbose):
     help="Provider login timeout in seconds (openai, anthropic, gemini, xai).",
 )
 @click.option(
-    "--no-browser", is_flag=True,
+    "--no-browser",
+    is_flag=True,
     help="Do not open a provider login browser (openai, anthropic, gemini, xai); "
-         "unnecessary for mobilerun, which does not open one by default.",
+    "unnecessary for mobilerun, which does not open one by default.",
 )
-@click.option("--browser", is_flag=True, help="Open the Mobilerun sign-in link in the browser.")
-@click.option("--no-qr", is_flag=True, help="Do not display the Mobilerun sign-in QR code.")
-@click.option("--callback-host", help="OAuth callback host (openai, anthropic, gemini).")
 @click.option(
-    "--callback-port", type=click.IntRange(0, 65535),
+    "--browser", is_flag=True, help="Open the Mobilerun sign-in link in the browser."
+)
+@click.option(
+    "--no-qr", is_flag=True, help="Do not display the Mobilerun sign-in QR code."
+)
+@click.option(
+    "--callback-host", help="OAuth callback host (openai, anthropic, gemini)."
+)
+@click.option(
+    "--callback-port",
+    type=click.IntRange(0, 65535),
     help="OAuth callback port (openai, anthropic, gemini).",
 )
-@click.option("--callback-path", help="OAuth callback path (openai, anthropic, gemini).")
+@click.option(
+    "--callback-path", help="OAuth callback path (openai, anthropic, gemini)."
+)
 @click.option("--device-code", is_flag=True, help="Use xAI device-code login.")
 @no_input_option
 @click.option(
-    "--token", callback=read_secret,
+    "--token",
+    callback=read_secret,
     help="Anthropic setup-token; prefer '-' for stdin, "
-         "because flag values end up in shell history.",
+    "because flag values end up in shell history.",
 )
 @click.pass_context
 def login(
@@ -247,14 +271,19 @@ def login(
     no_input,
 ):
     """Log in to a service; SERVICE defaults to mobilerun."""
-    from mobilerun.cli.oauth_actions import login_requires_input, save_anthropic_setup_token
+    from mobilerun.cli.oauth_actions import (
+        login_requires_input,
+        save_anthropic_setup_token,
+    )
 
     for name in set().union(*LOGIN_OPTIONS.values()):
         if (
             ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
             and name not in LOGIN_OPTIONS[service]
         ):
-            raise click.UsageError(f"--{name.replace('_', '-')} is not supported for {service}")
+            raise click.UsageError(
+                f"--{name.replace('_', '-')} is not supported for {service}"
+            )
     if not input_allowed(no_input) and login_requires_input(service):
         if service == "anthropic" and not token:
             raise click.UsageError(
@@ -269,10 +298,12 @@ def login(
         _login_mobilerun(
             auth_url, client_id or DEFAULT_DEVICE_CLIENT_ID, no_qr, browser
         )
-        if resolve_cloud_credential().source == "env":
+        credential = resolve_cloud_credential()
+        if credential.source == "env":
             click.echo(
-                "Warning: MOBILERUN_CLOUD_API_KEY is set and takes precedence over this sign-in; "
-                "unset it to use the sign-in.", err=True,
+                f"Warning: {credential.env_var} is set and takes precedence over this sign-in; "
+                "unset it to use the sign-in.",
+                err=True,
             )
         return
     kwargs = {
@@ -305,12 +336,15 @@ def login(
         }[service](**kwargs)
 
 
-@auth_cli.command()
+@auth_cli.command(epilog=examples("mobilerun auth logout"))
 @service_argument
 @verbose_option
 def logout(service, verbose):
     """Remove SERVICE's stored credential, preserving other services."""
-    from mobilerun.cli.configure_wizard import _OAUTH_CREDENTIAL_SLOTS, _oauth_credentials_present
+    from mobilerun.cli.configure_wizard import (
+        _OAUTH_CREDENTIAL_SLOTS,
+        _oauth_credentials_present,
+    )
 
     if service == "mobilerun":
         removed = deviceauth.clear_credentials()
@@ -321,12 +355,18 @@ def logout(service, verbose):
             AuthProfileStore(path).update_profile(
                 lambda profile: profile.pop(_OAUTH_CREDENTIAL_SLOTS[variant], None)
             )
-    console.print(f"Logged out of {service}." if removed else f"Not logged in to {service}.")
-    if service == "mobilerun" and resolve_cloud_credential().source == "env":
-        console.print("MOBILERUN_CLOUD_API_KEY stays active; unset it to stop using the env key.")
+    console.print(
+        f"Logged out of {service}." if removed else f"Not logged in to {service}."
+    )
+    if service == "mobilerun":
+        credential = resolve_cloud_credential()
+        if credential.source == "env":
+            console.print(
+                f"{credential.env_var} stays active; unset it to stop using the env key."
+            )
 
 
-@auth_cli.command()
+@auth_cli.command(epilog=examples("mobilerun auth status -j"))
 @verbose_option
 @json_option
 def status(verbose, json_output):
@@ -336,15 +376,15 @@ def status(verbose, json_output):
     credentials = deviceauth.load_credentials() or {}
     token = credentials.get("access_token")
     credential = resolve_cloud_credential()
-    cloud_label = {"env": "env key", "login": "saved sign-in", None: "not set"}[credential.source]
     rows = [
         {
             "service": "mobilerun",
             "signed_in": bool(token),
             "credential_path": str(deviceauth.credential_path()),
             "email": None,
-            "cloud_credential": cloud_label,
-            "env_overrides_login": credential.source == "env" and credential.saved_sign_in,
+            "cloud_credential": credential.source,
+            "env_overrides_login": credential.source == "env"
+            and credential.saved_sign_in,
         }
     ]
     failed = False
@@ -374,47 +414,16 @@ def status(verbose, json_output):
     if json_output:
         emit(rows, json_output=True)
     else:
+        cloud_note = (
+            "; cloud commands have no credential; run `mobilerun auth login` "
+            "or set MOBILERUN_API_KEY"
+            if credential.source is None
+            else f"; cloud commands use {CLOUD_CREDENTIAL_LABELS[credential.source]}"
+        )
+        if credential.source == "env" and credential.saved_sign_in:
+            cloud_note += " (overrides saved sign-in)"
         for row in rows:
             label = "signed in" if row["signed_in"] else "not signed in"
             email = f" ({row['email']})" if row.get("email") else ""
-            cloud = ""
-            if row["service"] == "mobilerun":
-                cloud = (
-                    "; cloud commands have no credential; run `mobilerun auth login` "
-                    "or set MOBILERUN_CLOUD_API_KEY"
-                    if row["cloud_credential"] == "not set"
-                    else f"; cloud commands use {row['cloud_credential']}"
-                )
-                if row["env_overrides_login"]:
-                    cloud += " (overrides saved sign-in)"
+            cloud = cloud_note if row["service"] == "mobilerun" else ""
             emit(f"{row['service']}: {label}{email}  {row['credential_path']}{cloud}")
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    '_OAUTH_CREDENTIAL_SLOTS': ('mobilerun.cli.configure_wizard', '_OAUTH_CREDENTIAL_SLOTS'),
-    '_oauth_credentials_present': ('mobilerun.cli.configure_wizard', '_oauth_credentials_present'),
-    'login_requires_input': ('mobilerun.cli.oauth_actions', 'login_requires_input'),
-    'run_anthropic_setup_token_oauth': ('mobilerun.cli.oauth_actions', 'run_anthropic_setup_token_oauth'),
-    'run_gemini_oauth_login': ('mobilerun.cli.oauth_actions', 'run_gemini_oauth_login'),
-    'run_grok_oauth_login': ('mobilerun.cli.oauth_actions', 'run_grok_oauth_login'),
-    'run_openai_oauth_login': ('mobilerun.cli.oauth_actions', 'run_openai_oauth_login'),
-    'save_anthropic_setup_token': ('mobilerun.cli.oauth_actions', 'save_anthropic_setup_token'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.cli.configure_wizard import _OAUTH_CREDENTIAL_SLOTS as _OAUTH_CREDENTIAL_SLOTS
-    from mobilerun.cli.configure_wizard import (
-        _oauth_credentials_present as _oauth_credentials_present,
-    )
-    from mobilerun.cli.oauth_actions import login_requires_input as login_requires_input
-    from mobilerun.cli.oauth_actions import (
-        run_anthropic_setup_token_oauth as run_anthropic_setup_token_oauth,
-    )
-    from mobilerun.cli.oauth_actions import run_gemini_oauth_login as run_gemini_oauth_login
-    from mobilerun.cli.oauth_actions import run_grok_oauth_login as run_grok_oauth_login
-    from mobilerun.cli.oauth_actions import run_openai_oauth_login as run_openai_oauth_login
-    from mobilerun.cli.oauth_actions import save_anthropic_setup_token as save_anthropic_setup_token

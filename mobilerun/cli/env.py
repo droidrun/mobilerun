@@ -13,14 +13,19 @@ from mobilerun.cli.options import (
     Command,
     config_option,
     emit,
+    examples,
     json_option,
     verbose_option,
 )
-from mobilerun.cli.selection import resolve_cloud_credential
+from mobilerun.cli.selection import CLOUD_CREDENTIAL_LABELS, resolve_cloud_credential
 from mobilerun.config_manager.env_keys import API_KEY_ENV_VARS, load_env_key_sources
 
 TRUTHY = {"1", "true", "yes", "on"}
-BOOLEAN_VARIABLES = {"MOBILERUN_DEBUG", "MOBILERUN_STREAM_SCREENSHOTS", "MOBILERUN_OAUTH_MANUAL"}
+BOOLEAN_VARIABLES = {
+    "MOBILERUN_DEBUG",
+    "MOBILERUN_STREAM_SCREENSHOTS",
+    "MOBILERUN_OAUTH_MANUAL",
+}
 
 
 def resolved_environment(config_path=None):
@@ -34,18 +39,27 @@ def resolved_environment(config_path=None):
     config_source = "config" if exists else "default"
     ctx = click.get_current_context(silent=True)
     path_source = (
-        "flag" if config_path and (ctx is None or ctx.get_parameter_source("config_path")
-                                   == click.core.ParameterSource.COMMANDLINE)
+        "flag"
+        if config_path
+        and (
+            ctx is None
+            or ctx.get_parameter_source("config_path")
+            == click.core.ParameterSource.COMMANDLINE
+        )
         else "env" if os.environ.get("MOBILERUN_CONFIG") else "default"
     )
     cloud_credential = resolve_cloud_credential()
     credentials = deviceauth.load_credentials() or {}
     values = {
         "MOBILERUN_TARGET": ("local", "default", False),
-        "MOBILERUN_DEVICE": (config.device.serial, config_source if config.device.serial else "not set", False),
-        "MOBILERUN_CLOUD_API_KEY": (
+        "MOBILERUN_DEVICE": (
+            config.device.serial,
+            config_source if config.device.serial else "not set",
+            False,
+        ),
+        "MOBILERUN_API_KEY": (
             cloud_credential.value,
-            {"env": "env", "login": "credential file", None: "not set"}[cloud_credential.source],
+            cloud_credential.source,
             True,
         ),
         "MOBILERUN_API_BASE_URL": (DEFAULT_API_URL, "default", False),
@@ -66,28 +80,41 @@ def resolved_environment(config_path=None):
     }
     for platform, name in PORTAL_TOKEN_ENV_VARS.items():
         value = config.device.resolve_auth_token(platform)
-        source = "env" if os.environ.get(name) else config_source if value else "not set"
+        source = (
+            "env" if os.environ.get(name) else config_source if value else "not set"
+        )
         values[name] = (value, source, True)
     sources = load_env_key_sources()
     for slot, name in API_KEY_ENV_VARS.items():
         source = sources[slot]
-        values[name] = (source.saved, "credential file" if source.saved else "default", True)
+        values[name] = (
+            source.saved,
+            "credential file" if source.saved else "default",
+            True,
+        )
     for name in ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
         values[name] = (None, "default", True)
+    not_from_env = {"MOBILERUN_API_KEY"}
+    if path_source == "flag":
+        not_from_env.add("MOBILERUN_CONFIG")
+    for name in values.keys() - not_from_env:
+        if os.environ.get(name):
+            values[name] = (os.environ[name], "env", values[name][2])
+    if ctx and any(
+        parent.get_parameter_source("verbose") == click.core.ParameterSource.COMMANDLINE
+        for parent in (ctx, ctx.find_root())
+    ):
+        values["MOBILERUN_DEBUG"] = (ctx.params.get("verbose"), "flag", False)
+    values["MOBILERUN_TELEMETRY_ENABLED"] = (
+        is_telemetry_enabled(config_enabled=config.telemetry.enabled),
+        values["MOBILERUN_TELEMETRY_ENABLED"][1],
+        False,
+    )
     rows = []
     for name, (value, source, secret) in values.items():
-        if (name != "MOBILERUN_CLOUD_API_KEY" and os.environ.get(name)
-                and not (name == "MOBILERUN_CONFIG" and path_source == "flag")):
-            value, source = os.environ[name], "env"
-        if (name == "MOBILERUN_DEBUG" and ctx and
-                any(parent.get_parameter_source("verbose") == click.core.ParameterSource.COMMANDLINE
-                    for parent in (ctx, ctx.find_root()))):
-            value, source = ctx.params.get("verbose"), "flag"
-        if name == "MOBILERUN_TELEMETRY_ENABLED":
-            value = is_telemetry_enabled(config_enabled=config.telemetry.enabled)
         if name in BOOLEAN_VARIABLES and isinstance(value, str):
             value = value.lower() in TRUTHY
-        if secret and not value:
+        if secret and not value and source is not None:
             source = "not set"
         if secret:
             value = "set" if value else "not set"
@@ -95,7 +122,7 @@ def resolved_environment(config_path=None):
     return rows
 
 
-@click.command(cls=Command)
+@click.command(cls=Command, epilog=examples("mobilerun env -j"))
 @config_option
 @verbose_option
 @json_option
@@ -111,26 +138,11 @@ def env(config_path, verbose, json_output):
                 value = str(value).lower()
             elif value is None:
                 value = ""
-            show_source = not (value == "not set" and row["source"] == "not set")
-            source = f"  ({row['source']})" if show_source else ""
+            label = (
+                CLOUD_CREDENTIAL_LABELS[row["source"]]
+                if row["variable"] == "MOBILERUN_API_KEY"
+                else row["source"]
+            )
+            show_source = not (value == "not set" and label == "not set")
+            source = f"  ({label})" if show_source else ""
             emit(f"{row['variable']}={value}{source}")
-
-
-from mobilerun.cli.options import _lazy_imports  # noqa: E402
-
-__getattr__ = _lazy_imports(globals(), {
-    'ConfigLoader': ('mobilerun.config_manager', 'ConfigLoader'),
-    'MobileConfig': ('mobilerun.config_manager', 'MobileConfig'),
-    'PORTAL_TOKEN_ENV_VARS': ('mobilerun.config_manager.config_manager', 'PORTAL_TOKEN_ENV_VARS'),
-    'is_telemetry_enabled': ('mobilerun.telemetry.tracker', 'is_telemetry_enabled'),
-})
-
-from typing import TYPE_CHECKING  # noqa: E402
-
-if TYPE_CHECKING:
-    from mobilerun.config_manager import ConfigLoader as ConfigLoader
-    from mobilerun.config_manager import MobileConfig as MobileConfig
-    from mobilerun.config_manager.config_manager import (
-        PORTAL_TOKEN_ENV_VARS as PORTAL_TOKEN_ENV_VARS,
-    )
-    from mobilerun.telemetry.tracker import is_telemetry_enabled as is_telemetry_enabled

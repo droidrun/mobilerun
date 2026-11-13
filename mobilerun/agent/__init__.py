@@ -5,7 +5,7 @@ if TYPE_CHECKING:
     from mobilerun.agent.droid.events import ResultEvent
 
 _EXPORTS = {
-    'ResultEvent': ('mobilerun.agent.droid.events', 'ResultEvent'),
+    "ResultEvent": ("mobilerun.agent.droid.events", "ResultEvent"),
 }
 
 __all__ = ["ResultEvent"]
@@ -17,6 +17,8 @@ def __getattr__(name):
         value = getattr(import_module(module), attribute)
         globals()[name] = value
         return value
+    if name in {"droid", "utils"}:
+        return import_module(f"{__name__}.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

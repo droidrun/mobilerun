@@ -37,7 +37,8 @@ def _interpreter(python_path):
 
 
 @click.group(cls=Group, epilog=examples("mobilerun script init script.py"))
-def script_cli():
+@verbose_option
+def script_cli(verbose):
     """Write and test sandbox scripts locally."""
 
 
