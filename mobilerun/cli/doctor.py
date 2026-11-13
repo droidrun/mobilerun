@@ -720,7 +720,9 @@ async def run_doctor(
         # Auto-fix: run setup
         from mobilerun.cli.main import _setup_portal
 
-        await _setup_portal(path=None, device=device.serial, debug=debug)
+        await _setup_portal(
+            path=None, device=device.serial, debug=debug, suggest_doctor=False
+        )
         # Re-check
         r_portal, is_installed = await check_portal_installed(device, debug)
         if not is_installed:
@@ -737,7 +739,13 @@ async def run_doctor(
         console.print("  [blue]→ Updating portal...[/]")
         from mobilerun.cli.main import _setup_portal
 
-        await _setup_portal(path=None, device=device.serial, debug=debug, in_place=True)
+        await _setup_portal(
+            path=None,
+            device=device.serial,
+            debug=debug,
+            in_place=True,
+            suggest_doctor=False,
+        )
         # Wait for portal service to initialize after install
         console.print("  [dim]  waiting for portal to start...[/]")
         await asyncio.sleep(3)

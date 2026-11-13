@@ -20,3 +20,16 @@ def portal_version_kwargs(
     if in_place and "uninstall" in params:
         kwargs["uninstall"] = False
     return kwargs
+
+
+async def adb_install_verifier_enabled(device: Any) -> bool:
+    """Whether the device verifies apps installed over adb ("Verify apps over USB").
+
+    When on, Google Play Protect can block the Portal install until the user
+    taps "Install anyway" on the device. Unknown or unreadable counts as off.
+    """
+    try:
+        value = await device.shell("settings get global verifier_verify_adb_installs")
+    except Exception:
+        return False
+    return str(value).strip() == "1"

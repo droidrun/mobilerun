@@ -51,7 +51,10 @@ from mobilerun.agent.utils.oauth.openai_oauth_llm import (
     DEFAULT_OPENAI_OAUTH_CALLBACK_PORT,
     DEFAULT_OPENAI_OAUTH_CREDENTIAL_PATH,
 )
-from mobilerun.agent.utils.portal_setup import portal_version_kwargs
+from mobilerun.agent.utils.portal_setup import (
+    adb_install_verifier_enabled,
+    portal_version_kwargs,
+)
 from mobilerun.cli.configure_wizard import (
     ConfigureWizardCallbacks,
     run_configure_wizard,
@@ -879,6 +882,17 @@ async def _wait_for_portal_service(
     return False
 
 
+PLAY_PROTECT_NOTICE = (
+    "[yellow]Watch your device:[/] Google Play Protect may ask you to confirm "
+    "the Portal install. Tap [bold]Install anyway[/] to continue."
+)
+PLAY_PROTECT_HINT = (
+    "[yellow]Google Play Protect may have blocked the install.[/] Try again and "
+    "tap [bold]Install anyway[/] on the device, or turn off "
+    "[bold]Verify apps over USB[/] in Developer options."
+)
+
+
 async def _setup_portal(
     path: str | None,
     device: str | None,
@@ -886,6 +900,7 @@ async def _setup_portal(
     latest: bool = False,
     specific_version: str | None = None,
     in_place: bool = False,
+    suggest_doctor: bool = True,
 ):
     """Internal async function to install and enable the Mobilerun Portal on a device."""
     try:
@@ -903,6 +918,10 @@ async def _setup_portal(
                 f"[bold red]Error:[/] Could not get device object for {device}"
             )
             return
+
+        verifier_on = await adb_install_verifier_enabled(device_obj)
+        if verifier_on:
+            console.print(PLAY_PROTECT_NOTICE)
 
         # CLI-specific options: path, specific_version, latest
         if path:
@@ -928,9 +947,12 @@ async def _setup_portal(
                     "\n[bold green]Setup complete![/] The Mobilerun Portal is now installed and ready to use."
                 )
             else:
-                console.print(
-                    "[bold red]Setup failed.[/] Run 'mobilerun doctor' for diagnostics."
-                )
+                message = "[bold red]Setup failed.[/]"
+                if suggest_doctor:
+                    message += " Run 'mobilerun doctor' for diagnostics."
+                console.print(message)
+                if verifier_on:
+                    console.print(PLAY_PROTECT_HINT)
             return
 
         # Install from explicit path/version/latest
@@ -950,6 +972,8 @@ async def _setup_portal(
                 )
             except Exception as e:
                 console.print(f"[bold red]Installation failed:[/] {e}")
+                if verifier_on:
+                    console.print(PLAY_PROTECT_HINT)
                 return
 
             console.print("[bold green]Installation successful![/]")
