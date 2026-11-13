@@ -532,6 +532,10 @@ async def swipe(
 
 async def open_app(text: str, *, ctx: "ActionContext") -> ActionResult:
     """Open an app by its name."""
+    # A decision model picks from the offered apps, so its choice is already an id.
+    offered = getattr(ctx, "action_candidate_apps", None) or ()
+    if text.strip() in {app.identifier for app in offered}:
+        return await open_bundle_id(app_id=text, ctx=ctx)
     if ctx.app_opener_llm is None:
         return ActionResult(
             success=False,

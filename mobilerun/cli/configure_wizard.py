@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,7 +32,16 @@ from mobilerun.cli.configure_prompts import (
     text_prompt,
 )
 from mobilerun.config_manager import ConfigLoader
-from mobilerun.config_manager.env_keys import load_env_key_sources, resolve_env_key
+from mobilerun.config_manager.config_manager import (
+    DecisionProfile,
+    DelegationConfig,
+    LLMProfile,
+)
+from mobilerun.config_manager.env_keys import (
+    load_env_key_sources,
+    resolve_env_key,
+    save_env_keys,
+)
 
 _BACK = "__back__"
 _CUSTOM_MINIMAX_BASE_URL = "__custom_minimax_base_url__"
@@ -42,7 +52,10 @@ _ALL_CONFIG_ROLES = (
     "fast_agent",
     "app_opener",
     "structured_output",
+    "delegate",
 )
+_DECISION_ROLES = ("fast_agent", "executor")
+_AGENT_ROLES = tuple(role for role in _ALL_CONFIG_ROLES if role != "delegate")
 
 
 @dataclass
@@ -307,6 +320,7 @@ def _apply_model_selection(
     selected_api_key_source: str | None,
     selected_base_url: str | None,
     credential_path: str | None,
+    roles: tuple[str, ...] | None = None,
 ) -> None:
     selection = SetupSelection(
         family_id=family_id,
@@ -318,7 +332,18 @@ def _apply_model_selection(
         base_url=selected_base_url,
         credential_path=credential_path,
     )
-    apply_selection_to_roles(config, selection, _ALL_CONFIG_ROLES)
+    if roles is None:
+        roles = _roles_following_the_llm(config)
+    apply_selection_to_roles(config, selection, roles)
+
+
+def _roles_following_the_llm(config) -> tuple[str, ...]:
+    """All roles, minus a delegate set to a different LLM than the agent."""
+    delegate = config.llm_profiles.get("delegate")
+    main = config.llm_profiles.get("fast_agent")
+    if delegate is not None and main is not None and delegate != main:
+        return tuple(role for role in _ALL_CONFIG_ROLES if role != "delegate")
+    return _ALL_CONFIG_ROLES
 
 
 def _prepare_variant_auth(
@@ -475,9 +500,12 @@ def _configure_advanced_settings(
                 if role in config.llm_profiles:
                     _set_profile_max_tokens(config.llm_profiles[role], value)
         elif selected == "context_window":
-            current_value = config.llm_profiles[_ALL_CONFIG_ROLES[0]].kwargs.get(
-                "context_window", 32768
-            )
+            ollama = [
+                profile
+                for profile in config.llm_profiles.values()
+                if profile.provider == "Ollama"
+            ]
+            current_value = ollama[0].kwargs.get("context_window", 32768)
             try:
                 current_default = int(current_value)
             except (TypeError, ValueError):
@@ -485,11 +513,208 @@ def _configure_advanced_settings(
             value = _prompt_int(
                 console, "Context window (-1 = model max)", default=current_default
             )
-            for role in _ALL_CONFIG_ROLES:
-                if role in config.llm_profiles:
-                    _set_profile_context_window(config.llm_profiles[role], value)
+            for profile in ollama:
+                _set_profile_context_window(profile, value)
 
         default_selection = selected
+
+
+def _decision_mode(config) -> str:
+    if not any(role in config.decision_profiles for role in _DECISION_ROLES):
+        return "off"
+    return "delegate" if config.agent.delegation is not None else "alone"
+
+
+def _llm_delegate_name(config, role: str) -> str | None:
+    """Name of the separate LLM profile the current delegation hands steps to."""
+    delegation = config.agent.delegation
+    if delegation is None:
+        return None
+    target = delegation.delegate
+    if (
+        target in config.llm_profiles
+        and target not in config.decision_profiles
+        and target != (delegation.primary or role)
+    ):
+        return target
+    return None
+
+
+def _free_delegate_name(config) -> str:
+    """A profile name for the delegate LLM that no decision profile shadows."""
+    name, n = "delegate", 1
+    while name in config.decision_profiles:
+        n += 1
+        name = f"delegate_{n}"
+    return name
+
+
+def ensure_llm_delegation(config, role: str, profile: Any = None) -> None:
+    """Make the decision model hand typing and unsure steps to an LLM.
+
+    *profile* replaces the delegate LLM; without it, a delegation that already
+    names a separate LLM profile is kept, and a new one copies the action LLM.
+    Profiles that agent roles also use are never overwritten.
+    """
+    delegation = config.agent.delegation
+    target = _llm_delegate_name(config, role)
+    if target is not None:
+        if profile is None:
+            return
+        if target not in _AGENT_ROLES:
+            config.llm_profiles[target] = profile
+            return
+    name = _free_delegate_name(config)
+    if profile is not None:
+        config.llm_profiles[name] = profile
+    elif name not in config.llm_profiles:
+        source = role if role in config.llm_profiles else "fast_agent"
+        if source not in config.llm_profiles:
+            source = next(iter(config.llm_profiles), None)
+        if source is None:
+            raise ValueError(
+                "Delegation needs an LLM profile to hand steps to, and the "
+                "config has none."
+            )
+        config.llm_profiles[name] = deepcopy(config.llm_profiles[source])
+    if delegation is None:
+        config.agent.delegation = DelegationConfig(delegate=name)
+        return
+    # Keep the primary and threshold; a decision delegate's description no
+    # longer fits an LLM.
+    config.agent.delegation = replace(
+        delegation,
+        delegate=name,
+        description=(
+            None
+            if delegation.delegate in config.decision_profiles
+            else delegation.description
+        ),
+    )
+
+
+def _prompt_typesafe_key_source() -> str:
+    """Pick, or paste and save, the TypeSafe key; returns api_key_source."""
+    sources = load_env_key_sources()["typesafe"]
+    choices: list[SelectChoice] = []
+    if sources.shell:
+        choices.append(SelectChoice(value="env", label="Use env key"))
+    if sources.saved:
+        choices.append(SelectChoice(value="file", label="Use saved key"))
+    choices.append(SelectChoice(value="paste", label="Paste new key"))
+    source = _select_with_back("TypeSafe API key", choices, default=choices[0].value)
+    if source != "paste":
+        return source
+    key = text_prompt("API key", secret=True).strip()
+    if not key:
+        return _BACK
+    save_env_keys({"typesafe": key})
+    return "file"
+
+
+def _profile_label(profile: Any) -> str:
+    return f"{profile.provider} · {profile.model}"
+
+
+def _prompt_delegate_llm(
+    config, role: str, choose_llm: Callable[[], Any] | None
+) -> Any:
+    """Pick the LLM for delegated steps; None keeps the current one."""
+    main = config.llm_profiles.get(role) or config.llm_profiles.get("fast_agent")
+    current = config.llm_profiles.get(_llm_delegate_name(config, role) or "delegate")
+    choices: list[SelectChoice] = []
+    if current is not None and (main is None or current != main):
+        choices.append(
+            SelectChoice(value="keep", label=f"Keep {_profile_label(current)}")
+        )
+    if main is not None:
+        choices.append(
+            SelectChoice(
+                value="main", label=f"Same as the agent ({_profile_label(main)})"
+            )
+        )
+    if choose_llm is not None:
+        choices.append(SelectChoice(value="other", label="Another provider / model"))
+    if not choices:
+        return None
+    answer = _select_with_back(
+        "LLM for delegated steps", choices, default=choices[0].value
+    )
+    if answer == "keep":
+        # A delegate shared with an agent role is copied, since that role may
+        # become Jev.
+        name = _llm_delegate_name(config, role)
+        return deepcopy(current) if name is None or name in _AGENT_ROLES else None
+    if answer == "main":
+        return deepcopy(main)
+    if answer == "other":
+        return choose_llm() or _BACK
+    return _BACK
+
+
+def _configure_decision_model(
+    console: Console, config, choose_llm: Callable[[], Any] | None = None
+) -> None:
+    """Let TypeSafe's Jev pick actions, handing steps to an LLM by default.
+
+    *choose_llm* runs the provider / model flow and returns the chosen
+    profile, or None when the user backs out.
+    """
+    current = _decision_mode(config)
+    mode = _select_with_back(
+        "Decision model",
+        [
+            SelectChoice(
+                value="delegate",
+                label="TypeSafe Jev picks actions; an LLM types and takes unsure steps",
+            ),
+            SelectChoice(
+                value="alone", label="TypeSafe Jev picks actions (cannot type)"
+            ),
+            SelectChoice(value="off", label="Off: the LLM picks every action"),
+        ],
+        default="delegate" if current == "off" else current,
+    )
+    if mode == _BACK:
+        return
+    if mode == "off":
+        for role in _DECISION_ROLES:
+            config.decision_profiles.pop(role, None)
+        if current != "off":
+            config.agent.delegation = None
+        console.print("Decision model: off")
+        return
+    source = _prompt_typesafe_key_source()
+    if source == _BACK:
+        return
+    role = "executor" if config.agent.reasoning else "fast_agent"
+    delegate = None
+    if mode == "delegate":
+        delegate = _prompt_delegate_llm(config, role, choose_llm)
+        if delegate is _BACK:
+            return
+    for decision_role in _DECISION_ROLES:
+        existing = config.decision_profiles.get(decision_role)
+        config.decision_profiles[decision_role] = (
+            replace(existing, api_key_source=source)
+            if existing is not None
+            else DecisionProfile(api_key_source=source)
+        )
+    if mode == "alone":
+        config.agent.delegation = None
+        console.print("Decision model: TypeSafe Jev")
+        return
+    try:
+        ensure_llm_delegation(config, role, delegate)
+    except ValueError as error:
+        config.agent.delegation = None
+        console.print(f"[yellow]{error} Jev will run alone.[/]")
+        return
+    target = _llm_delegate_name(config, role) or "delegate"
+    console.print(
+        "Decision model: TypeSafe Jev, handing steps to "
+        f"{_profile_label(config.llm_profiles[target])}"
+    )
 
 
 def _configure_provider_model(
@@ -505,6 +730,7 @@ def _configure_provider_model(
     model_is_fixed: bool,
     api_key: str | None,
     base_url: str | None,
+    roles: tuple[str, ...] | None = None,
 ) -> bool:
     """Run the provider → auth → model → credentials flow.
 
@@ -671,6 +897,7 @@ def _configure_provider_model(
             selected_api_key_source=state.selected_api_key_source,
             selected_base_url=state.selected_base_url,
             credential_path=credential_path,
+            roles=roles,
         )
         return True
 
@@ -748,6 +975,7 @@ def run_configure_wizard(
             "Configure",
             [
                 SelectChoice(value="provider_model", label="Provider / Model"),
+                SelectChoice(value="decision", label="Decision model"),
                 SelectChoice(value="advanced", label="Advanced settings"),
                 SelectChoice(value="finish", label="Finish"),
             ],
@@ -780,6 +1008,32 @@ def run_configure_wizard(
             )
             if completed:
                 provider_configured = True
+
+        elif action == "decision":
+
+            def choose_delegate_llm():
+                # Run the provider flow on a copy so backing out changes nothing.
+                scratch = deepcopy(config)
+                scratch.llm_profiles["delegate"] = LLMProfile()
+                if not _configure_provider_model(
+                    console,
+                    scratch,
+                    callbacks,
+                    ConfigureWizardState(),
+                    families,
+                    family_labels,
+                    provider_is_fixed=False,
+                    auth_mode_is_fixed=False,
+                    model_is_fixed=False,
+                    api_key=None,
+                    base_url=None,
+                    roles=("delegate",),
+                ):
+                    return None
+                config.agent.streaming = scratch.agent.streaming
+                return scratch.llm_profiles["delegate"]
+
+            _configure_decision_model(console, config, choose_delegate_llm)
 
         elif action == "advanced":
             state.used_advanced_settings = True
