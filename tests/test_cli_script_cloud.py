@@ -532,3 +532,75 @@ def test_push_poll_uses_remaining_budget(sdk, file, clock):
     result = invoke("push", file, "-j")
     assert result.exit_code == 0, result.output
     assert sdk.scripts.retrieve.call_count == 2
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_pull_failed_write_is_atomic(sdk, monkeypatch, tmp_path, force):
+    output = tmp_path / "out.py"
+    if force:
+        output.write_bytes(b"original")
+    make_temporary = script.tempfile.NamedTemporaryFile
+
+    def temporary_file(**kwargs):
+        stream = make_temporary(**kwargs)
+        write = stream.write
+
+        def fail(data):
+            write(data[:3])
+            raise OSError("disk write failed")
+
+        stream.write = fail
+        return stream
+
+    monkeypatch.setattr(script.tempfile, "NamedTemporaryFile", temporary_file)
+    result = invoke("pull", ID2, "-o", output, *(["--force"] if force else []), "-j")
+    assert result.exit_code == 1, result.output
+    assert "disk write failed" in json.loads(result.stdout)["error"]
+    if force:
+        assert output.read_bytes() == b"original"
+    else:
+        assert not output.exists()
+    assert not list(tmp_path.glob(".mobilerun-pull-*"))
+
+
+def test_pull_force_replaces_symlink(sdk, tmp_path):
+    target = tmp_path / "target.py"
+    target.write_bytes(b"keep target")
+    output = tmp_path / "out.py"
+    output.symlink_to(target)
+    result = invoke("pull", ID2, "-o", output, "--force", "-j")
+    assert result.exit_code == 0, result.output
+    assert not output.is_symlink()
+    assert output.read_bytes() == SOURCE.encode()
+    assert target.read_bytes() == b"keep target"
+    assert not list(tmp_path.glob(".mobilerun-pull-*"))
+
+
+def test_pull_destination_race_preserves_existing_file(sdk, monkeypatch, tmp_path):
+    output = tmp_path / "out.py"
+    link = script.os.link
+
+    def destination_appears(source, destination):
+        output.write_bytes(b"raced")
+        link(source, destination)
+
+    monkeypatch.setattr(script.os, "link", destination_appears)
+    result = invoke("pull", ID2, "-o", output, "-j")
+    assert result.exit_code == 1, result.output
+    assert "--force" in json.loads(result.stdout)["error"]
+    assert output.read_bytes() == b"raced"
+    assert not list(tmp_path.glob(".mobilerun-pull-*"))
+
+
+@pytest.mark.parametrize("operation", ["fsync", "replace"])
+def test_pull_publish_failure_keeps_original(sdk, monkeypatch, tmp_path, operation):
+    output = tmp_path / "out.py"
+    output.write_bytes(b"original")
+    monkeypatch.setattr(
+        script.os, operation, Mock(side_effect=OSError("publish failed"))
+    )
+    result = invoke("pull", ID2, "-o", output, "--force", "-j")
+    assert result.exit_code == 1, result.output
+    assert "publish failed" in json.loads(result.stdout)["error"]
+    assert output.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".mobilerun-pull-*"))

@@ -424,18 +424,29 @@ def pull_script(name_or_id, version, output, force, api_url, json_output, verbos
         raise click.ClickException(
             "Script source SHA-256 does not match the API; no file written."
         )
+    temporary = None
     try:
-        # Exclusive create also protects against a file appearing during the API call.
-        with path.open("wb" if force else "xb") as stream:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=".mobilerun-pull-", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
             stream.write(data)
-        if hashlib.sha256(path.read_bytes()).hexdigest() != source.sha256:
-            raise click.ClickException(f"Written file SHA-256 mismatch: {path}")
+            stream.flush()
+            os.fsync(stream.fileno())
+        if force:
+            os.replace(temporary, path)
+        else:
+            # Linking publishes the complete file only if the destination is free.
+            os.link(temporary, path)
     except FileExistsError:
         raise click.ClickException(
             f"{path} already exists; use --force to overwrite it."
         ) from None
     except OSError as exc:
         raise click.ClickException(f"Cannot write {path}: {exc}") from None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     document = {
         "id": item.id,
         "name": item.name,
