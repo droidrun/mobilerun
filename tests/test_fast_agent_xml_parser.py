@@ -779,6 +779,64 @@ Tool calls follow."""
         self.assertIn("User email is a@example.com", result)
         self.assertIn("Verification code is 123456", result)
 
+    def test_coerces_json_schema_integer_array_and_object_types(self):
+        text = """<function_calls>
+<invoke name="mcp_tool">
+<parameter name="count">5</parameter>
+<parameter name="ids">[1, 2, 3]</parameter>
+<parameter name="opts">{"a": 1}</parameter>
+</invoke>
+</function_calls>"""
+
+        _, calls = parse_tool_calls(
+            text, {"count": "integer", "ids": "array", "opts": "object"}
+        )
+
+        self.assertIsNone(calls[0].error)
+        self.assertEqual(
+            calls[0].parameters, {"count": 5, "ids": [1, 2, 3], "opts": {"a": 1}}
+        )
+        self.assertIs(type(calls[0].parameters["count"]), int)
+
+    def test_integer_type_rejects_non_integers_and_accepts_whole_floats(self):
+        for value, expected in [("1e3", 1000), ("5.0", 5), ("-3", -3)]:
+            with self.subTest(value=value):
+                _, calls = parse_tool_calls(
+                    f'<function_calls><invoke name="t"><parameter name="n">{value}'
+                    "</parameter></invoke></function_calls>",
+                    {"n": "integer"},
+                )
+                self.assertEqual(calls[0].parameters["n"], expected)
+        for value in ["2.5", "nan", "inf", "1e999", "abc", ""]:
+            with self.subTest(value=value):
+                _, calls = parse_tool_calls(
+                    f'<function_calls><invoke name="t"><parameter name="n">{value}'
+                    "</parameter></invoke></function_calls>",
+                    {"n": "integer"},
+                )
+                self.assertIn("expected integer", calls[0].error)
+
+    def test_object_type_requires_a_json_object(self):
+        for value in ["[1]", "5", "null", "not json"]:
+            with self.subTest(value=value):
+                _, calls = parse_tool_calls(
+                    f'<function_calls><invoke name="t"><parameter name="o">{value}'
+                    "</parameter></invoke></function_calls>",
+                    {"o": "object"},
+                )
+                self.assertIn("expected object", calls[0].error)
+
+    def test_deeply_nested_json_is_a_parameter_error_not_a_crash(self):
+        for kind in ("list", "array", "object"):
+            with self.subTest(kind=kind):
+                _, calls = parse_tool_calls(
+                    '<function_calls><invoke name="t"><parameter name="p">'
+                    + "[" * 100000
+                    + "</parameter></invoke></function_calls>",
+                    {"p": kind},
+                )
+                self.assertIn("expected", calls[0].error)
+
 
 if __name__ == "__main__":
     unittest.main()

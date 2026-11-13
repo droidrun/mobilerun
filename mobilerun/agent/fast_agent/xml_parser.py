@@ -394,6 +394,21 @@ def _coerce_param(
     if expected == "boolean":
         return value.strip().lower() == "true"
 
+    if expected == "integer":
+        value = value.strip()
+        try:
+            return int(value)
+        except ValueError:
+            try:
+                as_float = float(value)
+            except ValueError:
+                as_float = None
+            if as_float is not None and as_float.is_integer():
+                return int(as_float)
+            raise ValueError(
+                f"parameter '{name}' expected integer, got '{value}'"
+            ) from None
+
     if expected == "number":
         value = value.strip()
         try:
@@ -406,16 +421,28 @@ def _coerce_param(
                     f"parameter '{name}' expected number, got '{value}'"
                 ) from None
 
-    if expected == "list":
+    if expected in ("list", "array"):
         value = value.strip()
         try:
             parsed = json.loads(value)
             if isinstance(parsed, list):
                 return parsed
             return [parsed]  # Single element — wrap in list
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError, RecursionError):
             raise ValueError(
                 f"parameter '{name}' expected list, got '{value}'"
             ) from None
+
+    if expected == "object":
+        value = value.strip()
+        try:
+            parsed = json.loads(value)
+        except (ValueError, RecursionError):
+            parsed = None
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"parameter '{name}' expected object, got '{value}'"
+            ) from None
+        return parsed
 
     return value
