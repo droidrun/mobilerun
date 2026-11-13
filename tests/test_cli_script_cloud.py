@@ -685,3 +685,56 @@ def test_uuid_retrieve_forbidden_does_not_fall_back(sdk):
     assert result.exit_code == 1, result.output
     assert json.loads(result.stdout)["status"] == 403
     sdk.scripts.list.assert_not_called()
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("completed", [0, 1])
+@pytest.mark.parametrize("kind", ["status", "connection", "other"])
+def test_delete_partial_failure_reports_completed(sdk, json_output, completed, kind):
+    request = httpx.Request("DELETE", "https://example.test/v1/sandbox/scripts/" + ID1)
+    if kind == "status":
+        error = APIStatusError(
+            "delete failed",
+            response=httpx.Response(409, request=request),
+            body={
+                "code": "script_busy",
+                "message": "delete failed",
+                "details": ["in use"],
+            },
+        )
+    elif kind == "connection":
+        error = APIConnectionError(request=request)
+    else:
+        error = RuntimeError("delete failed")
+    sdk.scripts.list.return_value = page(
+        record(), record(id=ID1, version=1), record(id="third", version=3)
+    )
+    sdk.scripts.delete.side_effect = [None] * completed + [error, None, None]
+    result = invoke(
+        "delete", "hello.py", "--all", "--yes", *(["-j"] if json_output else [])
+    )
+    assert result.exit_code == 1, result.output
+    assert sdk.scripts.delete.call_count == completed + 1
+    sdk.scripts.delete.assert_has_calls([call("third"), call(ID2)][: completed + 1])
+    if json_output:
+        document = json.loads(result.stdout)
+        assert document["deleted"] == (
+            [{"id": "third", "name": "hello.py", "version": 3}] if completed else []
+        )
+        if kind == "status":
+            assert document["error"] == {
+                "error": "delete failed",
+                "status": 409,
+                "code": "script_busy",
+                "details": ["in use"],
+            }
+        elif kind == "connection":
+            assert document["error"]["error"] == "Could not connect to the API"
+        else:
+            assert document["error"] == {"error": "delete failed"}
+    else:
+        assert result.stdout == ("hello.py\t3\tthird\n" if completed else "")
+    assert (
+        "Could not connect" if kind == "connection" else "delete failed"
+    ) in result.stderr
+    sdk.client.close.assert_called_once()

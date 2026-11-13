@@ -17,12 +17,14 @@ import click
 from mobilerun.cli.options import (
     Group,
     api_url_option,
+    convert_api_error,
     emit,
     emit_rows,
     examples,
     input_allowed,
     json_option,
     no_input_option,
+    redact_secrets,
     verbose_option,
 )
 
@@ -463,6 +465,22 @@ def pull_script(name_or_id, version, output, force, api_url, json_output, verbos
     emit(document if json_output else str(path), json_output=json_output)
 
 
+def _emit_deleted(items, json_output, error=None):
+    documents = [
+        {"id": item.id, "name": item.name, "version": item.version} for item in items
+    ]
+    if json_output:
+        document = {"deleted": documents}
+        if error is not None:
+            document["error"] = error
+        emit(document, json_output=True)
+    else:
+        emit_rows(
+            ("NAME", "VERSION", "ID"),
+            ((item.name, item.version, item.id) for item in items),
+        )
+
+
 @script_cli.command(
     "delete",
     epilog=examples(
@@ -509,15 +527,22 @@ def delete_script(
             f"Delete {len(items)} version(s) of {name_or_id}?", err=True
         ):
             raise click.ClickException("Deletion cancelled.")
+        deleted = []
         for item in items:
-            client.scripts.delete(item.id)
-    documents = [
-        {"id": item.id, "name": item.name, "version": item.version} for item in items
-    ]
-    if json_output:
-        emit({"deleted": documents}, json_output=True)
-    else:
-        emit_rows(
-            ("NAME", "VERSION", "ID"),
-            ((item.name, item.version, item.id) for item in items),
-        )
+            try:
+                client.scripts.delete(item.id)
+            except Exception as exc:
+                converted = convert_api_error(exc)
+                if converted:
+                    text, document, diagnostic = converted
+                    if verbose:
+                        click.echo(diagnostic, err=True)
+                else:
+                    text = redact_secrets(
+                        str(exc) or type(exc).__name__, click.get_current_context()
+                    )
+                    document = {"error": text}
+                _emit_deleted(deleted, json_output, error=document)
+                raise click.ClickException(text) from None
+            deleted.append(item)
+    _emit_deleted(deleted, json_output)
