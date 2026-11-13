@@ -25,7 +25,7 @@ dependencies = [
     "llama-index-llms-ollama>=0.7.2",
     "llama-index-llms-openrouter>=0.4.2",
     "mobilerun-sdk>=3.2.0",
-    "mobilerun-core-local[cloud]>=0.6.3",
+    "mobilerun-core-local[cloud]>=0.7.2",
     # Security floors also protect installations from the published wheel.
     "aiohttp>=3.14.4",
     "anyio>=4.14.2",

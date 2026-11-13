@@ -331,6 +331,8 @@ async def _show_dry_run(
         elif action_type == "wait":
             duration = action.get("duration", 1.0)
             details = f"{duration}s"
+        elif action_type == "open_deep_link":
+            details = action.get("deep_link", "")
 
         description = action.get("description", "")
         table.add_row(

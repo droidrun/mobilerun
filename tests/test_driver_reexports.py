@@ -12,9 +12,9 @@ import unittest
 import mobilerun_core_local.driver.android
 import mobilerun_core_local.driver.base
 import mobilerun_core_local.driver.cloud
+import mobilerun_core_local.driver.humanize
 import mobilerun_core_local.driver.ios
 import mobilerun_core_local.driver.recording
-import mobilerun_core_local.driver.stealth
 import mobilerun_core_local.driver.visual_remote
 
 import mobilerun.tools
@@ -66,7 +66,7 @@ class DriverCompatIdentityTest(unittest.TestCase):
     def test_stealth_driver_is_core_local_implementation(self):
         self.assertIs(
             StealthDriver,
-            mobilerun_core_local.driver.stealth.StealthDriver,
+            mobilerun_core_local.driver.humanize.HumanizeDriver,
         )
 
     def test_visual_remote_driver_is_core_local_implementation(self):

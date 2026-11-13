@@ -8,10 +8,12 @@ from mobilerun.agent.utils.actions import (
     click_area,
     click_at,
     complete,
+    list_deep_links,
     long_press,
     long_press_at,
     open_app,
     open_bundle_id,
+    open_deep_link,
     swipe,
     system_button,
     type_secret,
@@ -327,6 +329,46 @@ async def build_tool_registry(
     )
 
     standard_tool_names = set(registry.tools.keys())
+
+    # -- Deep links (not in standard_tool_names: the Manager learns them from
+    # <custom_actions>) ------------------------------------------------------
+
+    registry.register(
+        "list_deep_links",
+        fn=list_deep_links,
+        params={"package": {"type": "string", "required": False, "default": ""}},
+        description=(
+            "List the deep-link URL patterns an installed app declares, so you can "
+            "jump straight to a screen with open_deep_link instead of navigating "
+            "the UI. package defaults to the app in the foreground. "
+            'Usage: {"action": "list_deep_links", "package": "com.example.app"}'
+        ),
+        deps={"get_deep_links"},
+    )
+    if platform.lower() == "ios":
+        open_deep_link_description = (
+            "Open a deep link or URL (https://... or an app scheme). Set package "
+            "to an app's bundle identifier to open it in that app. "
+            'Usage: {"action": "open_deep_link", "deep_link": "maps://?q=Paris", '
+            '"package": "com.apple.Maps"}'
+        )
+    else:
+        open_deep_link_description = (
+            "Open a deep link or URL (https://..., geo:..., or an app scheme). "
+            "Set package to open it in that app. "
+            'Usage: {"action": "open_deep_link", "deep_link": "geo:0,0?q=Paris", '
+            '"package": "com.google.android.apps.maps"}'
+        )
+    registry.register(
+        "open_deep_link",
+        fn=open_deep_link,
+        params={
+            "deep_link": {"type": "string", "required": True},
+            "package": {"type": "string", "required": False, "default": ""},
+        },
+        description=open_deep_link_description,
+        deps={"open_deep_link"},
+    )
 
     # -- Credential tools (conditional) --------------------------------------
 
