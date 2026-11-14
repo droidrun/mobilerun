@@ -6,6 +6,7 @@ import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
+import mobilerun.cli.auth as cli_auth
 import mobilerun.cli.configure_wizard as configure_wizard
 import mobilerun.cli.main as cli_main
 from mobilerun.agent.providers.registry import resolve_provider_variant
@@ -69,16 +70,18 @@ def test_configure_xai_command_forwards_device_code_options(
 ) -> None:
     calls: list[dict] = []
     monkeypatch.setattr(
-        cli_main,
+        cli_auth,
         "_run_grok_oauth_login",
         lambda **kwargs: calls.append(kwargs),
     )
     credential_path = tmp_path / "auth-profiles.json"
+    monkeypatch.setattr(cli_auth, "input_allowed", lambda _: True)
 
     result = CliRunner().invoke(
         cli_main.cli,
         [
-            "configure",
+            "auth",
+            "login",
             "xai",
             "--credential-path",
             str(credential_path),
@@ -108,16 +111,18 @@ def test_configure_anthropic_forwards_timeout_and_browser_preference(
 ) -> None:
     calls: list[dict] = []
     monkeypatch.setattr(
-        cli_main,
+        cli_auth,
         "_run_anthropic_oauth_login",
         lambda **kwargs: calls.append(kwargs),
     )
     credential_path = tmp_path / "auth-profiles.json"
+    monkeypatch.setattr(cli_auth, "input_allowed", lambda _: True)
 
     result = CliRunner().invoke(
         cli_main.cli,
         [
-            "configure",
+            "auth",
+            "login",
             "anthropic",
             "--credential-path",
             str(credential_path),
@@ -140,7 +145,7 @@ def test_configure_anthropic_forwards_timeout_and_browser_preference(
 def test_configure_oauth_timeout_must_be_positive_and_finite() -> None:
     result = CliRunner().invoke(
         cli_main.cli,
-        ["configure", "xai", "--timeout", "nan"],
+        ["auth", "login", "xai", "--timeout", "nan"],
     )
 
     assert result.exit_code == 2
@@ -208,11 +213,11 @@ def test_configure_help_advertises_only_xai_provider_and_login_command() -> None
 
     run_help = runner.invoke(cli_main.cli, ["run", "--help"])
     configure_help = runner.invoke(cli_main.cli, ["configure", "--help"])
-    xai_help = runner.invoke(cli_main.cli, ["configure", "xai", "--help"])
+    xai_help = runner.invoke(cli_main.cli, ["auth", "login", "xai", "--help"])
     removed_grok_command = runner.invoke(cli_main.cli, ["configure", "grok"])
 
     assert run_help.exit_code == 0
-    assert "XAI" in run_help.output
+    assert "xai" in run_help.output
     assert "xai_oauth" not in run_help.output
     assert "grok_oauth" not in run_help.output
     assert configure_help.exit_code == 0
@@ -241,7 +246,7 @@ def test_exact_xai_configure_forms_keep_provider_and_auth_fixed(
     monkeypatch.setattr(
         configure_wizard.ConfigLoader,
         "save",
-        lambda saved: saved_configs.append(saved),
+        lambda saved, path=None: saved_configs.append(saved),
     )
 
     def choose_model(  # type: ignore[no-untyped-def]
@@ -274,11 +279,15 @@ def test_exact_xai_configure_forms_keep_provider_and_auth_fixed(
         ),
     )
     monkeypatch.setattr(
-        cli_main,
+        cli_auth,
         "_run_grok_oauth_login",
         lambda **kwargs: login_calls.append(kwargs),
     )
 
+    import importlib
+
+    configure = importlib.import_module("mobilerun.cli.configure")
+    monkeypatch.setattr(configure, "input_allowed", lambda _: True)
     result = CliRunner().invoke(
         cli_main.cli,
         ["configure", "--provider", "XAI", "--auth-mode", auth_mode],
@@ -306,7 +315,7 @@ def test_provider_only_flag_does_not_auto_enter_model_flow(monkeypatch) -> None:
     monkeypatch.setattr(
         configure_wizard.ConfigLoader,
         "save",
-        lambda saved: saved_configs.append(saved),
+        lambda saved, path=None: saved_configs.append(saved),
     )
     monkeypatch.setattr(
         configure_wizard,
@@ -352,7 +361,7 @@ def test_fixed_provider_and_auth_model_back_returns_to_top_level_once(
     monkeypatch.setattr(
         configure_wizard.ConfigLoader,
         "save",
-        lambda saved: saved_configs.append(saved),
+        lambda saved, path=None: saved_configs.append(saved),
     )
 
     def choose_model(  # type: ignore[no-untyped-def]

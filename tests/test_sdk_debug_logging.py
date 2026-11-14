@@ -170,7 +170,7 @@ def test_setup_command_updates_in_place_only_when_asked(
 ):
     import asyncio
 
-    from mobilerun.cli import main
+    import mobilerun.cli.setup as main
 
     calls = []
 

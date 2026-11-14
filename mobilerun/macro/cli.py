@@ -2,23 +2,35 @@
 Command-line interface for Mobilerun macro replay.
 """
 
-import asyncio
+from __future__ import annotations
+
 import logging
 from typing import Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
 
-from mobilerun.agent.utils.android_device import (
-    AndroidDeviceSelectionError,
-    resolve_android_serial,
+from mobilerun.cli.options import (
+    Group,
+    config_option,
+    coro,
+    device_options,
+    emit,
+    emit_rows,
+    examples,
+    json_option,
+    max_steps_option,
+    model_option,
+    tcp_option,
+    verbose_option,
 )
-from mobilerun.agent.utils.trajectory import Trajectory
+from mobilerun.cli.providers import PROVIDERS, provider_option
+from mobilerun.cli.selection import (
+    _native_driver,
+    select_device,
+    teardown_native_driver,
+)
 from mobilerun.config_manager.path_resolver import PathResolver
-from mobilerun.macro.replay import MacroPlayer
-
-console = Console()
 
 
 def configure_logging(debug: bool = False):
@@ -43,27 +55,35 @@ def configure_logging(debug: bool = False):
     return logger
 
 
-@click.group()
-def macro_cli():
+@click.group(cls=Group, epilog=examples("mobilerun macro list ./macros"))
+@verbose_option
+def macro_cli(verbose):
     """Replay recorded automation sequences."""
     pass
 
 
-@macro_cli.command()
+@macro_cli.command(
+    epilog=examples(
+        "mobilerun macro replay MACRO.json -n",
+        "mobilerun macro replay TRAJECTORY -d DEVICE",
+    ),
+)
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--device", "-d", help="Device serial number", default=None)
+@device_options
+@tcp_option
 @click.option(
-    "--delay", "-t", help="Delay between actions (seconds)", default=1.0, type=float
+    "--delay", help="Delay between actions in seconds.", default=1.0, type=float
 )
 @click.option(
-    "--start-from", "-s", help="Start from step number (1-based)", default=1, type=int
+    "--start-from", help="Start from step number (1-based).", default=1, type=int
 )
+@max_steps_option
 @click.option(
-    "--max-steps", "-m", help="Maximum steps to execute", default=None, type=int
-)
-@click.option("--debug", is_flag=True, help="Enable debug logging", default=False)
-@click.option(
-    "--dry-run", is_flag=True, help="Show actions without executing", default=False
+    "-n",
+    "--dry-run",
+    is_flag=True,
+    help="Show actions without executing.",
+    default=False,
 )
 @click.option(
     "--on-mismatch",
@@ -86,20 +106,16 @@ def macro_cli():
     type=float,
     help="Minimum normalized state similarity required before replaying an action.",
 )
-@click.option(
-    "--config", "config_path", default=None, help="Config file for agent handoff."
-)
-@click.option(
-    "--provider", default=None, help="LLM provider override for agent handoff."
-)
-@click.option("--model", default=None, help="LLM model override for agent handoff.")
-def replay(
+@provider_option
+@model_option
+@coro
+async def replay(
     path: str,
     device: Optional[str],
     delay: float,
     start_from: int,
     max_steps: Optional[int],
-    debug: bool,
+    verbose: bool,
     dry_run: bool,
     on_mismatch: str,
     state_timeout: float,
@@ -107,76 +123,31 @@ def replay(
     config_path: Optional[str],
     provider: Optional[str],
     model: Optional[str],
+    target,
+    platform,
+    api_url,
+    tcp,
 ):
     """Replay a macro from a file or trajectory folder."""
-    logger = configure_logging(debug)
+    logger = configure_logging(bool(verbose))
+    if provider:
+        provider = PROVIDERS[provider].runtime
 
     logger.info("🎬 Mobilerun Macro Replay")
 
     # Convert start_from from 1-based to 0-based
     start_from_zero = max(0, start_from - 1)
 
-    async def get_device():
-        if device is None:
-            logger.info("🔍 Finding connected device...")
-            try:
-                dev = await resolve_android_serial()
-            except Exception as e:
-                # Dry runs never touch a device, so any discovery failure is fine.
-                if dry_run:
-                    logger.warning(f"⚠️  {e}")
-                    return None
-                if isinstance(e, AndroidDeviceSelectionError):
-                    raise click.ClickException(str(e)) from None
-                raise
-            logger.info(f"📱 Using device: {dev}")
-            return dev
-        else:
-            logger.info(f"📱 Using device: {device}")
-            return device
-
-    asyncio.run(
-        _replay_with_device(
-            path,
-            device,
-            delay,
-            start_from_zero,
-            max_steps,
-            dry_run,
-            logger,
-            get_device,
-            on_mismatch,
-            state_timeout,
-            state_threshold,
-            config_path,
-            provider,
-            model,
-        )
+    selection = (
+        None
+        if dry_run
+        else await select_device(device, config_path, tcp, platform, target)
     )
-
-
-async def _replay_with_device(
-    path: str,
-    device: str,
-    delay: float,
-    start_from: int,
-    max_steps: Optional[int],
-    dry_run: bool,
-    logger: logging.Logger,
-    get_device,
-    on_mismatch: str,
-    state_timeout: float,
-    state_threshold: float,
-    config_path: Optional[str],
-    provider: Optional[str],
-    model: Optional[str],
-):
-    device = await get_device()
     await _replay_async(
         path,
-        device,
+        selection.device if selection else device,
         delay,
-        start_from,
+        start_from_zero,
         max_steps,
         dry_run,
         logger,
@@ -186,6 +157,8 @@ async def _replay_with_device(
         config_path,
         provider,
         model,
+        selection=selection,
+        api_url=api_url,
     )
 
 
@@ -203,94 +176,94 @@ async def _replay_async(
     config_path: Optional[str],
     provider: Optional[str],
     model: Optional[str],
+    selection=None,
+    api_url=None,
 ):
     """Async function to handle macro replay."""
-    try:
-        # Resolve path (checks working dir, then package dir)
-        resolved_path = PathResolver.resolve(path, must_exist=True)
+    # Resolve path (checks working dir, then package dir)
+    from mobilerun.macro.replay import MacroPlayer
 
-        if resolved_path.is_file():
-            logger.info(f"📄 Loading macro from file: {resolved_path}")
-            player = MacroPlayer(
-                device_serial=device,
-                delay_between_actions=delay,
-                on_mismatch=on_mismatch,
-                state_timeout=state_timeout,
-                state_threshold=state_threshold,
-                config_path=config_path,
-                provider=provider,
-                model=model,
-            )
-            macro_data = player.load_macro_from_file(str(resolved_path))
-        elif resolved_path.is_dir():
-            logger.info(f"📁 Loading macro from folder: {resolved_path}")
-            player = MacroPlayer(
-                device_serial=device,
-                delay_between_actions=delay,
-                on_mismatch=on_mismatch,
-                state_timeout=state_timeout,
-                state_threshold=state_threshold,
-                config_path=config_path,
-                provider=provider,
-                model=model,
-            )
-            macro_data = player.load_macro_from_folder(str(resolved_path))
-        else:
-            logger.error(f"❌ Invalid path: {resolved_path}")
-            return
+    resolved_path = PathResolver.resolve(path, must_exist=True)
 
-        if not macro_data:
-            logger.error("❌ Failed to load macro data")
-            return
-
-        # Show macro information
-        description = macro_data.get("description", "No description")
-        total_actions = macro_data.get("total_actions", 0)
-        version = macro_data.get(
-            "macro_schema_version", macro_data.get("version", "unknown")
+    if resolved_path.is_file():
+        logger.info(f"📄 Loading macro from file: {resolved_path}")
+        player = MacroPlayer(
+            device_serial=device,
+            delay_between_actions=delay,
+            on_mismatch=on_mismatch,
+            state_timeout=state_timeout,
+            state_threshold=state_threshold,
+            config_path=config_path,
+            provider=provider,
+            model=model,
         )
+        macro_data = player.load_macro_from_file(str(resolved_path))
+    elif resolved_path.is_dir():
+        logger.info(f"📁 Loading macro from folder: {resolved_path}")
+        player = MacroPlayer(
+            device_serial=device,
+            delay_between_actions=delay,
+            on_mismatch=on_mismatch,
+            state_timeout=state_timeout,
+            state_threshold=state_threshold,
+            config_path=config_path,
+            provider=provider,
+            model=model,
+        )
+        macro_data = player.load_macro_from_folder(str(resolved_path))
+    else:
+        raise click.ClickException(f"Invalid path: {resolved_path}")
 
-        logger.info("📋 Macro Information:")
-        logger.info(f"   Description: {description}")
-        logger.info(f"   Version: {version}")
-        logger.info(f"   Total actions: {total_actions}")
-        logger.info(f"   Device: {device or 'not selected'}")
-        logger.info(f"   Delay between actions: {delay}s")
-        logger.info(f"   State threshold: {state_threshold}")
-        logger.info(f"   State timeout: {state_timeout}s")
-        logger.info(f"   On mismatch: {on_mismatch}")
+    if not macro_data:
+        raise click.ClickException("Failed to load macro data")
 
-        if start_from > 0:
-            logger.info(f"   Starting from step: {start_from + 1}")
-        if max_steps:
-            logger.info(f"   Maximum steps: {max_steps}")
+    # Show macro information
+    description = macro_data.get("description", "No description")
+    total_actions = macro_data.get("total_actions", 0)
+    version = macro_data.get(
+        "macro_schema_version", macro_data.get("version", "unknown")
+    )
 
-        if dry_run:
-            logger.info("🔍 DRY RUN MODE - Actions will be shown but not executed")
-            await _show_dry_run(macro_data, start_from, max_steps, logger)
-        else:
-            logger.info("▶️  Starting macro replay...")
+    logger.info("📋 Macro Information:")
+    logger.info(f"   Description: {description}")
+    logger.info(f"   Version: {version}")
+    logger.info(f"   Total actions: {total_actions}")
+    logger.info(f"   Device: {device or 'not selected'}")
+    logger.info(f"   Delay between actions: {delay}s")
+    logger.info(f"   State threshold: {state_threshold}")
+    logger.info(f"   State timeout: {state_timeout}s")
+    logger.info(f"   On mismatch: {on_mismatch}")
+
+    if start_from > 0:
+        logger.info(f"   Starting from step: {start_from + 1}")
+    if max_steps:
+        logger.info(f"   Maximum steps: {max_steps}")
+
+    if dry_run:
+        logger.info("🔍 DRY RUN MODE - Actions will be shown but not executed")
+        await _show_dry_run(macro_data, start_from, max_steps, logger)
+    else:
+        logger.info("▶️  Starting macro replay...")
+        player.driver = await _native_driver(selection, selection.config, api_url)
+        try:
             success = await player.replay_macro(
                 macro_data, start_from_step=start_from, max_steps=max_steps
             )
+        finally:
+            await teardown_native_driver(player.driver)
 
-            if success:
-                logger.info("🎉 Macro replay completed successfully!")
-            else:
-                logger.error("💥 Macro replay completed with errors")
-
-    except Exception as e:
-        logger.error(f"💥 Error: {e}")
-        if logger.isEnabledFor(logging.DEBUG):
-            import traceback
-
-            logger.debug(traceback.format_exc())
+        if success:
+            logger.info("🎉 Macro replay completed successfully!")
+        else:
+            raise click.ClickException("Macro replay failed")
 
 
 async def _show_dry_run(
     macro_data: dict, start_from: int, max_steps: Optional[int], logger: logging.Logger
 ):
     """Show what actions would be executed in dry run mode."""
+    from rich.table import Table
+
     actions = macro_data.get("actions", [])
 
     # Apply filters
@@ -341,15 +314,21 @@ async def _show_dry_run(
         )
 
     # Still use console for table display as it's structured data
-    console.print(table)
+    emit(console_render(table))
 
 
-@macro_cli.command()
+@macro_cli.command(epilog=examples("mobilerun macro list ./macros"))
 @click.argument("directory", type=click.Path(exists=True), default="trajectories")
-@click.option("--debug", is_flag=True, help="Enable debug logging", default=False)
-def list(directory: str, debug: bool):
+@config_option
+@verbose_option
+@json_option
+def list(directory: str, config_path: Optional[str], verbose: bool, json_output: bool):
     """List available trajectory folders in a directory."""
-    logger = configure_logging(debug)
+    from mobilerun.agent.utils.trajectory import Trajectory
+    from mobilerun.config_manager import ConfigLoader
+
+    ConfigLoader.load(config_path)
+    logger = configure_logging(bool(verbose))
 
     # Resolve directory (checks working dir, then package dir)
     resolved_dir = PathResolver.resolve(directory, must_exist=True)
@@ -371,26 +350,22 @@ def list(directory: str, debug: bool):
                         logger.debug(f"Error loading macro from {item.name}: {e}")
                         folders.append((item.name, "Error loading", 0))
 
+        if json_output:
+            emit(
+                [
+                    {"folder": folder, "description": description, "actions": actions}
+                    for folder, description, actions in sorted(folders)
+                ],
+                json_output=True,
+            )
+            return
         if not folders:
             logger.info("📭 No trajectory folders found")
             return
 
         logger.info(f"🎯 Found {len(folders)} trajectory(s):")
 
-        table = Table(title=f"Available Trajectories in {directory}")
-        table.add_column("Folder", style="cyan")
-        table.add_column("Description", style="white")
-        table.add_column("Actions", style="green")
-
-        for folder, description, actions in sorted(folders):
-            table.add_row(
-                folder,
-                description[:80] + "..." if len(description) > 80 else description,
-                str(actions),
-            )
-
-        # Still use console for table display as it's structured data
-        console.print(table)
+        emit_rows(("FOLDER", "DESCRIPTION", "ACTIONS"), sorted(folders))
         logger.info(
             f"💡 Use 'mobilerun macro replay {resolved_dir}/<folder>' to replay a trajectory"
         )
@@ -401,6 +376,15 @@ def list(directory: str, debug: bool):
             import traceback
 
             logger.debug(traceback.format_exc())
+        raise click.ClickException(str(e)) from e
+
+
+def console_render(table):
+    from io import StringIO
+
+    stream = StringIO()
+    Console(file=stream, color_system=None).print(table)
+    return stream.getvalue().rstrip()
 
 
 if __name__ == "__main__":

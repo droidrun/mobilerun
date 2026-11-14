@@ -3,11 +3,11 @@
 import asyncio
 import json
 import re
-import shutil
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+import click
 import httpx
 import requests
 from async_adbutils import AdbDevice, adb
@@ -26,7 +26,7 @@ from rich.console import Console
 
 from mobilerun import __version__
 
-console = Console()
+console = Console(stderr=True)
 
 PORTAL_REMOTE_PORT = 8080
 
@@ -131,45 +131,29 @@ async def check_sdk_version(debug: bool) -> CheckResult:
         return CheckResult("SDK Version", Status.PASS, f"{current} (up to date)")
 
 
-async def check_config(debug: bool) -> tuple[CheckResult, Any]:
+async def check_config(
+    debug: bool, config_path: str | None = None
+) -> tuple[CheckResult, Any]:
     """Check config file exists and loads."""
     from mobilerun.config_manager import ConfigLoader
     from mobilerun.config_manager.loader import OutdatedConfigError
 
-    config_path = ConfigLoader.get_user_config_path()
-
-    if not config_path.exists():
-        # Will be created on first load
-        try:
-            config = ConfigLoader.load()
-            return (
-                CheckResult(
-                    "Config",
-                    Status.PASS,
-                    f"{config_path} (created)",
-                ),
-                config,
-            )
-        except Exception as e:
-            return (
-                CheckResult(
-                    "Config",
-                    Status.FAIL,
-                    "failed to create default config",
-                    detail=str(e),
-                ),
-                None,
-            )
-
     try:
-        config = ConfigLoader.load()
-        return CheckResult("Config", Status.PASS, str(config_path)), config
+        path = ConfigLoader.resolve_path(config_path)
+        existed = path.exists()
+        config = ConfigLoader.load(config_path)
+        return (
+            CheckResult(
+                "Config", Status.PASS, str(path) + ("" if existed else " (created)")
+            ),
+            config,
+        )
     except OutdatedConfigError:
         return (
             CheckResult(
                 "Config",
                 Status.FAIL,
-                f"{config_path} (outdated, missing _version)",
+                f"{config_path or ConfigLoader.get_user_config_path()} (outdated, missing _version)",
                 detail="See: mobilerun config_example.yaml",
             ),
             None,
@@ -188,30 +172,22 @@ async def check_config(debug: bool) -> tuple[CheckResult, Any]:
 
 async def check_adb(debug: bool) -> CheckResult:
     """Check ADB is available and list devices."""
-    adb_path = shutil.which("adb")
-    if not adb_path:
-        return CheckResult(
-            "ADB",
-            Status.FAIL,
-            "adb not found in PATH",
-            detail="Install Android SDK Platform Tools",
-        )
+    from mobilerun.cli.selection import local_adb_errors
 
     try:
-        devices = await adb.list()
+        with local_adb_errors():
+            devices = await adb.list()
         count = len(devices)
         return CheckResult(
             "ADB",
             Status.PASS,
             f"found, {count} device(s)",
-            detail=adb_path,
         )
     except Exception as e:
         return CheckResult(
             "ADB",
             Status.FAIL,
-            f"adb found but server error: {e}",
-            detail=adb_path,
+            e.message if isinstance(e, click.ClickException) else str(e),
         )
 
 
@@ -382,7 +358,7 @@ async def check_portal_version(
                     "Portal Version",
                     Status.WARN,
                     msg,
-                    detail="pip install --upgrade mobilerun, then mobilerun setup",
+                    detail="pip install --upgrade mobilerun, then mobilerun device setup",
                 ),
                 installed,
                 expected,
@@ -674,68 +650,116 @@ async def fix_enable_accessibility(device: AdbDevice, debug: bool) -> bool:
 async def run_doctor(
     device_serial: str | None = None,
     debug: bool = False,
-) -> None:
+    config_path: str | None = None,
+    *,
+    target="local",
+    platform=None,
+    api_url=None,
+    render_results=True,
+) -> list[CheckResult]:
     """Run all doctor checks and auto-fix where possible."""
     debug = debug or False
 
-    console.print("\n[bold]Mobilerun Doctor[/]\n")
+    if render_results:
+        console.print("\n[bold]Mobilerun Doctor[/]\n")
+
+    def report(result, debug):
+        if render_results:
+            _print_result(result, debug)
+
+    def summary(results):
+        if render_results:
+            _print_summary(results)
 
     results: list[CheckResult] = []
 
     # 1. SDK Version
     r = await check_sdk_version(debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
 
     # 2. Config
-    r_config, config = await check_config(debug)
-    _print_result(r_config, debug)
+    r_config, config = await check_config(debug, config_path)
+    report(r_config, debug)
     results.append(r_config)
 
     # Load serial from config if not provided
     if device_serial is None and config:
         device_serial = getattr(getattr(config, "device", None), "serial", None)
 
+    from mobilerun_core.detect import is_uuid
+
+    from mobilerun.agent.utils.android_device import is_portal_http_url
+    from mobilerun.cli.device_commands import probe_device
+    from mobilerun.cli.options import DEFAULT_API_URL
+    from mobilerun.cli.selection import select_device
+
+    selected_platform = platform or (config.device.platform if config else "android")
+    non_adb = (
+        (target == "cloud" and not device_serial)
+        or selected_platform == "ios"
+        or is_portal_http_url(device_serial)
+        or bool(device_serial and is_uuid(device_serial))
+    )
+
     # 3. ADB
     r = await check_adb(debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
-    if r.status == Status.FAIL:
-        _print_summary(results)
-        return
+    if r_config.status == Status.FAIL or (r.status == Status.FAIL and not non_adb):
+        summary(results)
+        return results
+
+    if non_adb:
+        try:
+            selection = await select_device(
+                device_serial,
+                config_path,
+                platform=selected_platform,
+                target=target,
+                config=config,
+            )
+            probe_device({"api_url": api_url or DEFAULT_API_URL}, selection=selection)
+            result = CheckResult("Device", Status.PASS, "UI tree is reachable")
+        except Exception as exc:
+            result = CheckResult("Device", Status.FAIL, str(exc))
+        results.append(result)
+        report(result, debug)
+        summary(results)
+        return results
 
     # 5. Device
     r_device, device = await check_device(device_serial, debug)
-    _print_result(r_device, debug)
+    report(r_device, debug)
     results.append(r_device)
     if device is None:
         console.print("\n  [dim]Skipping device-dependent checks (no device)[/]")
-        _print_summary(results)
-        return
+        summary(results)
+        return results
 
     # 6. Portal Installed
     r_portal, is_installed = await check_portal_installed(device, debug)
-    _print_result(r_portal, debug)
+    report(r_portal, debug)
     if not is_installed:
         # Auto-fix: run setup
-        from mobilerun.cli.main import _setup_portal
+        from mobilerun.cli.setup import _setup_portal
 
         await _setup_portal(path=None, device=device.serial, debug=debug)
         # Re-check
         r_portal, is_installed = await check_portal_installed(device, debug)
         if not is_installed:
             results.append(r_portal)
-            _print_summary(results)
-            return
+            summary(results)
+            return results
     results.append(r_portal)
 
     # 7. Portal Version
     r_version, installed_ver, _, _ = await check_portal_version(device, debug)
-    _print_result(r_version, debug)
+    report(r_version, debug)
     if r_version.status == Status.WARN and installed_ver:
         # Auto-fix: run setup to install compatible version
         console.print("  [blue]→ Updating portal...[/]")
-        from mobilerun.cli.main import _setup_portal
+        from mobilerun.cli.setup import _setup_portal
 
         await _setup_portal(path=None, device=device.serial, debug=debug, in_place=True)
         # Wait for portal service to initialize after install
@@ -754,55 +778,56 @@ async def run_doctor(
     # 8. Accessibility
     r_a11y, a11y_enabled = await check_accessibility(device, debug)
     if not a11y_enabled:
-        _print_result(r_a11y, debug)
+        report(r_a11y, debug)
         # Auto-fix: enable accessibility
         success = await fix_enable_accessibility(device, debug)
         if success:
             r_a11y = CheckResult("Accessibility", Status.PASS, "enabled (auto-fixed)")
-            _print_result(r_a11y, debug)
+            report(r_a11y, debug)
     else:
-        _print_result(r_a11y, debug)
+        report(r_a11y, debug)
     results.append(r_a11y)
 
     # 9. Content Provider — connectivity, state, screenshot
     r = await check_content_provider(device, debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
 
     r_cp_state, cp_portal = await check_portal_state(device, False, debug)
     r_cp_state.name = "State (content)"
-    _print_result(r_cp_state, debug)
+    report(r_cp_state, debug)
     results.append(r_cp_state)
 
     if cp_portal and r_cp_state.status == Status.PASS:
         r = await check_screenshot(cp_portal, debug)
         r.name = "Screenshot (content)"
-        _print_result(r, debug)
+        report(r, debug)
         results.append(r)
 
     # 10. TCP — connectivity, state, screenshot
     r = await check_tcp(device, debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
 
     if r.status == Status.PASS:
         r_tcp_state, tcp_portal = await check_portal_state(device, True, debug)
         r_tcp_state.name = "State (tcp)"
-        _print_result(r_tcp_state, debug)
+        report(r_tcp_state, debug)
         results.append(r_tcp_state)
 
         if tcp_portal and r_tcp_state.status == Status.PASS:
             r = await check_screenshot(tcp_portal, debug)
             r.name = "Screenshot (tcp)"
-            _print_result(r, debug)
+            report(r, debug)
             results.append(r)
 
     # 12. Keyboard
     r = await check_keyboard(device, debug)
-    _print_result(r, debug)
+    report(r, debug)
     results.append(r)
 
-    _print_summary(results)
+    summary(results)
+    return results
 
 
 def _print_summary(results: list[CheckResult]) -> None:

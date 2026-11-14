@@ -22,7 +22,7 @@ def create_android_portal_http_driver(
     if not token:
         raise ValueError(
             "Android Portal HTTP needs the Portal auth token. Copy it from the "
-            "Portal app and set MOBILERUN_DEVICE_TOKEN or device.auth_token."
+            "Portal app and set MOBILERUN_ANDROID_PORTAL_TOKEN or device.auth_token."
         )
     return AndroidPortalHttpDriver(url, token)
 

@@ -54,13 +54,13 @@ def is_telemetry_enabled(*, config_enabled: bool = True) -> bool:
     Check whether both configuration and environment policy enable telemetry.
 
     Returns:
-        True when ``config_enabled`` is true and the primary or legacy telemetry
+        True when ``config_enabled`` is true and the telemetry
         environment variable is true/1/yes/y (case-insensitive). Environment
-        policy defaults to enabled when neither variable is set.
+        policy defaults to enabled when the variable is unset.
     """
     telemetry_enabled = os.environ.get("MOBILERUN_TELEMETRY_ENABLED")
     if telemetry_enabled is None:
-        telemetry_enabled = os.environ.get("DROIDRUN_TELEMETRY_ENABLED") or "true"
+        telemetry_enabled = "true"
     enabled = config_enabled and telemetry_enabled.lower() in ["true", "1", "yes", "y"]
     logger.debug(f"Telemetry enabled: {enabled}")
     return enabled

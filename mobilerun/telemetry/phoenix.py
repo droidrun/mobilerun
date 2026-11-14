@@ -51,12 +51,12 @@ def arize_phoenix_callback_handler(**kwargs: Any) -> BaseCallbackHandler:
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
     endpoint = (
-        kwargs.get("endpoint", os.getenv("phoenix_url", "http://0.0.0.0:6006"))
+        kwargs.get("endpoint", os.getenv("PHOENIX_URL", "http://0.0.0.0:6006"))
         + "/v1/traces"
     )
 
     resource_attributes = {}
-    phoenix_project_name = os.getenv("phoenix_project_name", "")
+    phoenix_project_name = os.getenv("PHOENIX_PROJECT_NAME", "")
     if phoenix_project_name.strip():
         resource_attributes[ResourceAttributes.PROJECT_NAME] = phoenix_project_name
     resource = Resource(attributes=resource_attributes)

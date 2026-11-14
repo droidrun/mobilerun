@@ -1,0 +1,16 @@
+"""Print Click's shell completion scripts without installing them."""
+
+import click
+from click.shell_completion import get_completion_class
+
+from mobilerun.cli.options import Command, emit, examples, verbose_option
+
+
+@click.command(cls=Command, epilog=examples("mobilerun completion bash"))
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+@verbose_option
+def completion(shell, verbose):
+    """Print the completion script for bash, zsh, or fish."""
+    root = click.get_current_context().find_root().command
+    complete = get_completion_class(shell)(root, {}, "mobilerun", "_MOBILERUN_COMPLETE")
+    emit(complete.source())

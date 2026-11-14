@@ -1,457 +1,313 @@
-"""Direct device action CLI commands.
+"""Synchronous device actions through mobilerun-core."""
 
-Provides ``mobilerun device <action>`` subcommands that bypass the LLM agent
-and talk directly to the device driver.
-"""
+from __future__ import annotations
 
 import asyncio
+import base64
 import json
-import logging
-import os
-import re
-import sys
 import tempfile
-from functools import wraps
-from typing import Optional
+from collections.abc import Mapping
+from contextlib import contextmanager
 
 import click
-from async_adbutils import adb
-from mobilerun_core_local.driver.android import AndroidDriver
-from mobilerun_core_local.driver.android.portal import ensure_portal_ready
-from mobilerun_core_local.driver.ios import (
-    IOSPortalHttpDriver,
-    create_ios_driver,
-    discover_ios_device,
-    validate_ios_portal_url,
+
+from mobilerun.cli.options import (
+    Group,
+    _ui_cell,
+    device_options,
+    emit,
+    emit_rows,
+    examples,
+    json_option,
+    verbose_option,
 )
-from rich.console import Console
-
-from mobilerun.agent.utils.android_device import (
-    AndroidDeviceSelectionError,
-    create_android_portal_http_driver,
-    is_portal_http_url,
-    resolve_android_serial,
+from mobilerun.cli.selection import (
+    core_client,
+    local_adb_errors,
+    portal_token,
+    select_device,
 )
-from mobilerun.agent.utils.portal_setup import portal_version_kwargs
-from mobilerun.config_manager import ConfigLoader
-from mobilerun.log_handlers import configure_logging
-from mobilerun.tools.filters import ConciseFilter
-from mobilerun.tools.formatters import IndexedFormatter
-from mobilerun.tools.ui.ios_provider import IOSStateProvider
-from mobilerun.tools.ui.provider import AndroidStateProvider
 
-console = Console()
-
-DEFAULT_CLOUD_BASE_URL = "https://api.mobilerun.ai/v1"
-CLOUD_API_KEY_ENV = "MOBILERUN_API_KEY"
-LEGACY_CLOUD_API_KEY_ENV = "MOBILERUN_CLOUD_API_KEY"
-
-# Cloud device ids are UUIDs (RFC 4122); ADB serials never are. Used to
-# auto-route `-d <id>` to the cloud driver when the user didn't pass `--cloud`.
-_CLOUD_DEVICE_ID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
+UI_FLAGS = (
+    "clickable",
+    "checkable",
+    "checked",
+    "editable",
+    "focused",
+    "scrollable",
+    "selected",
 )
 
 
-def _looks_like_cloud_device_id(value: Optional[str]) -> bool:
-    return bool(value and _CLOUD_DEVICE_ID_RE.match(value))
+@contextmanager
+def device_driver(params=None, *, selection=None):
+    """Resolve Click's device options once and yield the connected core Device."""
+    from mobilerun.agent.utils.android_device import is_portal_http_url
 
-
-def resolve_cloud_api_key() -> Optional[str]:
-    """Resolve the Mobilerun cloud API key for ``--cloud`` commands.
-
-    Order: the ``MOBILERUN_API_KEY`` env var, then the older
-    ``MOBILERUN_CLOUD_API_KEY`` name (still accepted), then the credential persisted
-    by ``mobilerun login`` (``<config dir>/credentials/mobilerun-cloud.json``).
-    An empty env var counts as unset.
-    """
-    env_key = os.environ.get(CLOUD_API_KEY_ENV) or os.environ.get(
-        LEGACY_CLOUD_API_KEY_ENV
-    )
-    if env_key:
-        return env_key
-    try:
-        from mobilerun.config_manager.credential_paths import OAUTH_CREDENTIAL_DIR
-
-        cred_path = OAUTH_CREDENTIAL_DIR / "mobilerun-cloud.json"
-        if cred_path.exists():
-            data = json.loads(cred_path.read_text())
-            key = data.get("api_key") or data.get("access_token")
-            if key:
-                return key
-    except Exception:
-        pass
-    return None
-
-
-def coro(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        return asyncio.run(f(*args, **kwargs))
-
-    return wrapper
-
-
-def device_options(f):
-    """Common device options for all action commands."""
-    f = click.option(
-        "--device",
-        "-d",
-        help="Device serial/IP or Portal HTTP URL (local), or cloud device UUID "
-        "(auto-detected when authenticated)",
-        default=None,
-    )(f)
-    f = click.option(
-        "--config", "-c", "config_path", help="Path to config file", default=None
-    )(f)
-    f = click.option("--tcp/--no-tcp", default=None, help="Use TCP communication")(f)
-    f = click.option("--ios", is_flag=True, default=False, help="Target iOS device")(f)
-    f = click.option(
-        "--cloud",
-        is_flag=True,
-        default=False,
-        help="Target a Mobilerun cloud device instead of a local one",
-    )(f)
-    f = click.option(
-        "--device-id",
-        "device_id",
-        default=None,
-        help="Cloud device id (-d also works; auto-detected when value is a UUID)",
-    )(f)
-    f = click.option(
-        "--base-url",
-        "base_url",
-        default=None,
-        help=f"Cloud API base URL (default {DEFAULT_CLOUD_BASE_URL})",
-    )(f)
-    return f
-
-
-async def _create_driver(
-    device: Optional[str],
-    config_path: Optional[str],
-    tcp: Optional[bool],
-    ios: bool,
-    cloud: bool = False,
-    device_id: Optional[str] = None,
-    base_url: Optional[str] = None,
-):
-    """Create and connect a device driver based on CLI options."""
-    # Auto-route to cloud when -d/--device-id is a UUID and a credential exists.
-    # Mirrors `mobilerun devices` (which includes cloud when authenticated), so
-    # users don't have to remember `--cloud` on every per-action subcommand.
-    if not cloud and not ios:
-        candidate = device_id or device
-        if _looks_like_cloud_device_id(candidate) and resolve_cloud_api_key():
-            cloud = True
-
-    if cloud:
-        if ios:
-            raise click.ClickException("--cloud and --ios are mutually exclusive.")
-        cloud_device_id = device_id or device
-        if not cloud_device_id:
-            raise click.ClickException(
-                "Cloud device id required: pass -d <id> or --device-id <id>."
+    params = params if params is not None else click.get_current_context().params
+    if selection is None:
+        selection = asyncio.run(
+            select_device(
+                device=params.get("device"),
+                config_path=params.get("config_path"),
+                platform=params.get("platform"),
+                target=params.get("target", "local"),
             )
-        api_key = resolve_cloud_api_key()
-        if not api_key:
-            raise click.ClickException(
-                f"No cloud API key found. Set {CLOUD_API_KEY_ENV} or run "
-                "`mobilerun login`."
+        )
+    token = portal_token(selection)
+    client = core_client(params["api_url"], cloud=selection.backend == "cloud")
+    with local_adb_errors(selection.backend == "local-android-adb"):
+        try:
+            connected = client.connect(
+                selection.device,
+                backend=selection.backend,
+                platform=selection.platform,
+                url=selection.device if is_portal_http_url(selection.device) else None,
+                token=token,
             )
-        from mobilerun_core_local.driver.cloud import CloudDriver
-
-        driver = CloudDriver(
-            device_id=cloud_device_id,
-            api_key=api_key,
-            base_url=base_url or DEFAULT_CLOUD_BASE_URL,
-        )
-        await driver.connect()
-        return driver, False
-
-    config = ConfigLoader.load(config_path)
-
-    if device is not None:
-        config.device.serial = device
-    if tcp is not None:
-        config.device.use_tcp = tcp
-    if ios:
-        config.device.platform = "ios"
-
-    is_ios = config.device.platform.lower() == "ios"
-
-    if is_ios:
-        if config.device.serial:
-            url = validate_ios_portal_url(config.device.serial)
-        else:
-            url = await discover_ios_device()
-        driver = await create_ios_driver(url, token=config.device.resolve_auth_token())
-        await driver.connect()
-        return driver, True
-
-    serial = config.device.serial
-    if is_portal_http_url(serial):
-        try:
-            driver = create_android_portal_http_driver(
-                serial, config.device.resolve_auth_token()
-            )
-        except ValueError as e:
-            raise click.ClickException(str(e)) from None
-        await driver.connect()
-        return driver, False
-
-    if serial is None:
-        try:
-            serial = await resolve_android_serial()
-        except AndroidDeviceSelectionError as e:
-            raise click.ClickException(str(e)) from None
-        click.echo(f"Using device: {serial}", err=True)
-
-    if config.device.auto_setup and config.device.portal_mode != "disabled":
-        device_obj = await adb.device(serial=serial)
-        await ensure_portal_ready(
-            device_obj, debug=False, **portal_version_kwargs(ensure_portal_ready)
-        )
-
-    driver = AndroidDriver(
-        serial=serial,
-        use_tcp=config.device.use_tcp,
-        portal_mode=config.device.portal_mode,
-    )
-    await driver.connect()
-    return driver, False
-
-
-def _log_progress_to_stderr() -> None:
-    """Show INFO progress (e.g. a slow UI-state fetch) on stderr.
-
-    Without this, Python's last-resort handler drops everything below
-    WARNING, so a slow device looks like a silent hang. stdout stays
-    reserved for the command's output.
-    """
-    if logging.getLogger("mobilerun").handlers:
-        return
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    configure_logging(debug=False, handler=handler)
-
-
-async def _teardown_android(driver):
-    """Disable Mobilerun keyboard after direct command execution."""
-    if isinstance(driver, AndroidDriver) and driver.device:
-        from mobilerun_core_local.driver.android.portal import (
-            PORTAL_PACKAGE_NAME,
-            portal_ime_id,
-        )
-
-        try:
-            ime = portal_ime_id(PORTAL_PACKAGE_NAME)
-            await driver.device.shell(f"ime disable {ime}")
-        except Exception:
-            pass
-
-
-# ---------------------------------------------------------------------------
-# Click group
-# ---------------------------------------------------------------------------
-
-
-@click.group()
-def device_cli():
-    """Direct device actions (screenshot, tap, swipe, etc.)."""
-    pass
-
-
-# ---------------------------------------------------------------------------
-# Commands
-# ---------------------------------------------------------------------------
-
-
-@device_cli.command()
-@device_options
-@coro
-async def screenshot(device, config_path, tcp, ios, cloud, device_id, base_url):
-    """Take a screenshot and print the saved file path to stdout."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        png_bytes = await driver.screenshot()
-        fd, path = tempfile.mkstemp(prefix="mobilerun_", suffix=".png")
-        try:
-            os.write(fd, png_bytes)
+            try:
+                yield connected
+            finally:
+                connected.close()
         finally:
-            os.close(fd)
-        click.echo(path)
-    finally:
-        await _teardown_android(driver)
+            client.close()
 
 
-@device_cli.command()
+def probe_device(params, *, selection=None):
+    with device_driver(params, selection=selection) as device:
+        device.ui()
+
+
+@click.group(
+    cls=Group,
+    epilog=examples(
+        "mobilerun device list",
+        "mobilerun device pair",
+        "mobilerun device ui -d DEVICE",
+    ),
+)
+@verbose_option
+def device_cli(verbose):
+    """Discover, pair, set up, inspect, and control devices."""
+
+
+@device_cli.command(epilog=examples("mobilerun device screenshot -d emulator-5554"))
+@json_option
 @device_options
-@coro
-async def ui(device, config_path, tcp, ios, cloud, device_id, base_url):
-    """Print the UI accessibility tree with element bounds for targeting."""
-    _log_progress_to_stderr()
-    driver, is_ios = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        if is_ios and not isinstance(driver, IOSPortalHttpDriver):
-            provider = IOSStateProvider(driver)
+def screenshot(json_output, **params):
+    """Take a screenshot and print the saved file path to stdout."""
+    with device_driver(params) as device:
+        image = device.screenshot()
+        # Core returns a file for cloud screenshots, base64 PNG for local ones.
+        if image.startswith(("/", "./")):
+            path = image
         else:
-            provider = AndroidStateProvider(
-                driver,
-                tree_filter=ConciseFilter(),
-                tree_formatter=IndexedFormatter(),
+            with tempfile.NamedTemporaryFile(
+                prefix="mobilerun_", suffix=".png", delete=False
+            ) as file:
+                file.write(base64.b64decode(image))
+                path = file.name
+        emit({"path": path} if json_output else path, json_output=json_output)
+
+
+def _field(node, *keys):
+    for key in keys:
+        value = node.get(key)
+        if value and (not isinstance(value, str) or value.strip()):
+            return value
+    return ""
+
+
+def _ltrb(bounds):
+    if not isinstance(bounds, Mapping) or not bounds:
+        return ""
+    if all(key in bounds for key in ("x", "y", "width", "height")):
+        values = (
+            bounds["x"],
+            bounds["y"],
+            bounds["x"] + bounds["width"],
+            bounds["y"] + bounds["height"],
+        )
+    else:
+        values = tuple(
+            bounds.get(key, "") for key in ("left", "top", "right", "bottom")
+        )
+    return ",".join(_ui_cell(value) for value in values)
+
+
+def ui_lines(state, all_elements=False):
+    """Render core's depth-first node list as six tab-separated columns."""
+    for index, node in enumerate(state.nodes):
+        flags = [
+            flag
+            for flag in UI_FLAGS
+            if _field(node, flag, "is" + flag.capitalize(), "is_" + flag)
+        ]
+        if node.get("disabled") or any(
+            node.get(key) is False for key in ("enabled", "isEnabled", "is_enabled")
+        ):
+            flags.append("disabled")
+        text = _field(node, "text", "contentDescription", "content_description")
+        resource = _field(node, "resourceId", "resource_id", "accessibilityIdentifier")
+        if not (all_elements or text or resource or flags):
+            continue
+        class_name = _field(node, "className", "class_name")
+        bounds = _field(
+            node, "bounds", "boundsInScreen", "bounds_in_screen", "rect", "frame"
+        )
+        yield "\t".join(
+            (
+                str(index),
+                _ui_cell(class_name.rsplit(".", 1)[-1]),
+                _ui_cell(text),
+                _ui_cell(resource),
+                _ltrb(bounds),
+                ",".join(flags),
             )
-        state = await provider.get_state()
-        click.echo(state.formatted_text)
-        if state.phone_state:
-            click.echo(f"\nPhone state: {state.phone_state}")
-    finally:
-        await _teardown_android(driver)
+        )
 
 
-@device_cli.command()
+@device_cli.command(
+    epilog=examples(
+        "mobilerun device ui -d DEVICE",
+        "mobilerun device ui -d DEVICE -j",
+    ),
+)
+@json_option
+@click.option(
+    "--all", "all_elements", is_flag=True, help="Include empty layout containers."
+)
+@device_options
+def ui(json_output, all_elements, **params):
+    """Print tab-separated UI elements, or the raw state with --json."""
+    if json_output and all_elements:
+        raise click.UsageError("--all cannot be combined with --json")
+    with device_driver(params) as device:
+        if json_output:
+            emit(json.loads(device.ui_json()), json_output=True)
+            return
+        state = device.ui()
+        if (
+            getattr(state, "dead_tree", False)
+            or getattr(state, "a11y_tree_available", True) is False
+        ):
+            raise click.ClickException("The device UI tree is unavailable.")
+        for line in ui_lines(state, all_elements):
+            emit(line)
+        phone = state.get("phone_state") or {}
+        context = state.get("device_context") or {}
+        screen = context.get("screen_bounds") or context.get("display_metrics") or {}
+        app = phone.get("currentApp") or phone.get("packageName") or "unknown"
+        width = screen.get("width", screen.get("widthPixels", "?"))
+        height = screen.get("height", screen.get("heightPixels", "?"))
+        click.echo(
+            f"App: {_ui_cell(app)}; screen: {_ui_cell(width)}x{_ui_cell(height)}",
+            err=True,
+        )
+
+
+@device_cli.command(dash_hint=True, epilog=examples("mobilerun device tap 100 200"))
 @click.argument("x", type=int)
 @click.argument("y", type=int)
 @device_options
-@coro
-async def tap(x, y, device, config_path, tcp, ios, cloud, device_id, base_url):
+def tap(x, y, **params):
     """Tap at screen coordinates."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        await driver.tap(x, y)
-        click.echo(f"Tapped ({x}, {y})")
-    finally:
-        await _teardown_android(driver)
+    with device_driver(params) as device:
+        device.tap(x, y, humanize=False)
+    click.echo(f"Tapped ({x}, {y})", err=True)
 
 
-@device_cli.command("swipe")
+@device_cli.command(
+    "swipe", dash_hint=True, epilog=examples("mobilerun device swipe 100 500 100 100")
+)
 @click.argument("x1", type=int)
 @click.argument("y1", type=int)
 @click.argument("x2", type=int)
 @click.argument("y2", type=int)
 @click.option(
-    "--duration", type=float, default=1.0, show_default=True, help="Duration in seconds"
+    "--duration",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Duration in seconds.",
 )
 @device_options
-@coro
-async def swipe_cmd(
-    x1, y1, x2, y2, duration, device, config_path, tcp, ios, cloud, device_id, base_url
-):
+def swipe_cmd(x1, y1, x2, y2, duration, **params):
     """Swipe from (x1, y1) to (x2, y2)."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        await driver.swipe(x1, y1, x2, y2, duration_ms=int(duration * 1000))
-        click.echo(f"Swiped ({x1}, {y1}) -> ({x2}, {y2})")
-    finally:
-        await _teardown_android(driver)
+    with device_driver(params) as device:
+        device.swipe(x1, y1, x2, y2, ms=int(duration * 1000), humanize=False)
+    click.echo(f"Swiped ({x1}, {y1}) -> ({x2}, {y2})", err=True)
 
 
-@device_cli.command("long-press")
+@device_cli.command(
+    "long-press", dash_hint=True, epilog=examples("mobilerun device long-press 100 200")
+)
 @click.argument("x", type=int)
 @click.argument("y", type=int)
 @device_options
-@coro
-async def long_press(x, y, device, config_path, tcp, ios, cloud, device_id, base_url):
+def long_press(x, y, **params):
     """Long press at screen coordinates."""
-    if ios:
-        raise click.ClickException("long-press is not supported on iOS")
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        await driver.swipe(x, y, x, y, 1000)
-        click.echo(f"Long pressed ({x}, {y})")
-    finally:
-        await _teardown_android(driver)
+    with device_driver(params) as device:
+        device.swipe(x, y, x, y, ms=1000, humanize=False)
+    click.echo(f"Long pressed ({x}, {y})", err=True)
 
 
-@device_cli.command("type")
+@device_cli.command(
+    "type", dash_hint=True, epilog=examples('mobilerun device type "Hello"')
+)
 @click.argument("text")
-@click.option("--clear", is_flag=True, default=False, help="Clear field before typing")
+@click.option("--clear", is_flag=True, help="Clear field before typing.")
 @device_options
-@coro
-async def type_text(
-    text, clear, device, config_path, tcp, ios, cloud, device_id, base_url
-):
-    """Type text into the currently focused field. Use 'tap' first to focus."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        success = await driver.input_text(text, clear)
-        if success:
-            click.echo(f"Typed: {text}")
-        else:
-            raise click.ClickException("Failed to type text")
-    finally:
-        await _teardown_android(driver)
+def type_text(text, clear, **params):
+    """Type text into the focused field."""
+    with device_driver(params) as device:
+        device.type(text, clear=clear, humanize=False)
+    click.echo("Text typed.", err=True)
 
 
-@device_cli.command()
+@device_cli.command(epilog=examples("mobilerun device press home"))
 @click.argument(
     "button", type=click.Choice(["back", "home", "enter"], case_sensitive=False)
 )
 @device_options
-@coro
-async def press(button, device, config_path, tcp, ios, cloud, device_id, base_url):
+def press(button, **params):
     """Press a system button."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        await driver.press_button(button)
-        click.echo(f"Pressed {button}")
-    finally:
-        await _teardown_android(driver)
+    with device_driver(params) as device:
+        device.key(button)
+    click.echo(f"Pressed {button}", err=True)
 
 
-@device_cli.command()
-@click.option("--system/--no-system", default=False, help="Include system apps")
+@device_cli.command(epilog=examples("mobilerun device apps -j"))
+@click.option("--system", is_flag=True, help="Include system apps.")
+@json_option
 @device_options
-@coro
-async def apps(system, device, config_path, tcp, ios, cloud, device_id, base_url):
+def apps(system, json_output, **params):
     """List installed apps."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        app_list = await driver.get_apps(include_system=system)
-        for app in app_list:
-            label = app.get("label") or ""
-            package = (
-                app.get("package")
-                or app.get("package_name")
-                or app.get("packageName")
-                or ""
+    with device_driver(params) as device:
+        result = device.list_apps(include_system_apps=system)
+        if json_output:
+            emit(result, json_output=True)
+        else:
+            emit_rows(
+                ("APP_ID", "LABEL", "VERSION", "VERSION_CODE", "SYSTEM"),
+                (
+                    (
+                        _field(app, "app_id", "package_name", "bundle_id", "package"),
+                        app.get("label", ""),
+                        app.get("version_name", ""),
+                        app.get("version_code", ""),
+                        str(app.get("is_system_app", False)).lower(),
+                    )
+                    for app in result
+                ),
             )
-            if label and label != package:
-                click.echo(f"{package}  ({label})")
-            else:
-                click.echo(package)
-    finally:
-        await _teardown_android(driver)
 
 
-@device_cli.command()
+@device_cli.command(epilog=examples("mobilerun device start com.android.settings"))
 @click.argument("package")
 @device_options
-@coro
-async def start(package, device, config_path, tcp, ios, cloud, device_id, base_url):
+def start(package, **params):
     """Launch an app by package name."""
-    driver, _ = await _create_driver(
-        device, config_path, tcp, ios, cloud, device_id, base_url
-    )
-    try:
-        result = await driver.start_app(package)
-        click.echo(result)
-    finally:
-        await _teardown_android(driver)
+    with device_driver(params) as device:
+        device.start_app(package)
+    click.echo(f"Started {package}", err=True)
