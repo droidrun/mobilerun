@@ -83,17 +83,26 @@ def llm_url_kwargs(runtime, url):
 
 
 def llm_retry_kwargs(runtime):
-    """Leave retries to the agent instead of nesting OpenAI SDK/adapter retries."""
-    from mobilerun.agent.utils.llm_picker import normalize_provider_name
+    """Allow one SDK retry to honour short Retry-After delays.
 
-    if normalize_provider_name(runtime) in {
-        "OpenAIResponses",
-        "OpenAILike",
-        "OpenRouter",
-        "DeepSeek",
-        "MiniMax",
-        "ZAI",
-        "openai_oauth",
-    }:
-        return {"max_retries": 0}
-    return {}
+    The agent's separate retry loop does not yet honour Retry-After.
+    """
+    from mobilerun.agent.providers.registry import list_provider_families
+    from mobilerun.agent.utils.llm_picker import (
+        SUPPORTED_PROVIDERS,
+        normalize_provider_name,
+    )
+
+    runtime = normalize_provider_name(runtime)
+    for family in list_provider_families():
+        for variant in family.variants:
+            if runtime not in {variant.id, variant.runtime_provider_name}:
+                continue
+            # These adapters have no max_retries constructor field.
+            if family.id == "ollama" or (
+                variant.auth_mode == "oauth" and family.id in {"anthropic", "gemini"}
+            ):
+                return {}
+            return {"max_retries": 1}
+    # Legacy providers outside the family registry still use standard adapters.
+    return {"max_retries": 1} if runtime in SUPPORTED_PROVIDERS else {}

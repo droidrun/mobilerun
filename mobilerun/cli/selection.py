@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -18,12 +19,13 @@ if TYPE_CHECKING:
 @contextmanager
 def local_adb_errors(enabled=True):
     """Translate local ADB startup failures after the library tries to start it."""
-    from async_adbutils import AdbError
+    from async_adbutils import AdbError, AdbTimeout
 
     try:
         yield
     except (
         AdbError,
+        asyncio.TimeoutError,
         ConnectionRefusedError,
         FileNotFoundError,
         ModuleNotFoundError,
@@ -38,7 +40,7 @@ def local_adb_errors(enabled=True):
             )
         )
         unavailable = (
-            isinstance(exc, ConnectionRefusedError)
+            isinstance(exc, (ConnectionRefusedError, asyncio.TimeoutError, AdbTimeout))
             or missing_binary
             or (
                 isinstance(exc, ModuleNotFoundError)

@@ -94,10 +94,11 @@ async def _run_task(
     from mobilerun.config_manager import ConfigLoader
 
     config = ConfigLoader.load(config_path)
+    if reasoning is not None:
+        config.agent.reasoning = reasoning
     if delegate_model and (provider or "").strip().lower() != "typesafe":
         delegation = config.agent.delegation
-        action_reasoning = config.agent.reasoning if reasoning is None else reasoning
-        role = "executor" if action_reasoning else "fast_agent"
+        role = _action_role(config)
         if (
             (delegation and delegation.primary) or role
         ) not in config.decision_profiles:
@@ -163,8 +164,6 @@ async def _run_task(
             config.agent.name = agent
         if steps is not None:
             config.agent.max_steps = steps
-        if reasoning is not None:
-            config.agent.reasoning = reasoning
         if stream is not None:
             config.agent.streaming = stream
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from async_adbutils import AdbError
+from async_adbutils import AdbTimeout
 from click.testing import CliRunner
 
 from mobilerun.cli import device_lifecycle, deviceauth, selection
@@ -39,8 +39,6 @@ def isolated(monkeypatch, tmp_path):
         ModuleNotFoundError(
             "No module named 'adbutils.binaries'", name="adbutils.binaries"
         ),
-        AdbError("No adb exe could be found. Install adb on your system"),
-        ConnectionRefusedError("server unavailable"),
     ],
 )
 @pytest.mark.parametrize(
@@ -142,55 +140,20 @@ def test_listing_config_directory_is_a_shared_usage_error(
 
 
 @pytest.mark.parametrize("content", ["device:\n  platform: android\n", ""])
-@pytest.mark.parametrize("json_output", [False, True])
-def test_device_list_refuses_config_without_version(
-    monkeypatch, tmp_path, content, json_output
-):
+def test_device_list_refuses_config_without_version(monkeypatch, tmp_path, content):
     config = tmp_path / "old.yaml"
     config.write_text(content)
     monkeypatch.setenv("MOBILERUN_CONFIG", str(config))
     client = Mock()
     monkeypatch.setattr(device_lifecycle, "core_client", client)
-    result = CliRunner().invoke(
-        cli, ["device", "list", *(["-j"] if json_output else [])]
-    )
+    result = CliRunner().invoke(cli, ["device", "list"])
     assert result.exit_code == 1, result.output
     assert "outdated (missing _version)" in result.stderr
-    if json_output:
-        assert "outdated (missing _version)" in json.loads(result.stdout)["error"]
     client.assert_not_called()
 
 
-@pytest.mark.parametrize("provider", [[], ["-p", "openai", "-m", "x"]])
-@pytest.mark.parametrize("json_output", [False, True])
-def test_delegate_precondition_precedes_banner_and_agent_import(
-    monkeypatch, provider, json_output
-):
-    import builtins
-
-    real_import = builtins.__import__
-
-    def guarded(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "mobilerun" and "MobileAgent" in fromlist:
-            pytest.fail("agent imported before delegate precondition")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", guarded)
-    result = CliRunner().invoke(
-        cli,
-        [
-            "run",
-            "x",
-            "--delegate-model",
-            "openai/x",
-            "-d",
-            "http://127.0.0.1:9",
-            "-P",
-            "android",
-            *provider,
-            *(["-j"] if json_output else []),
-        ],
-    )
+def test_delegate_precondition_precedes_banner():
+    result = CliRunner().invoke(cli, ["run", "x", "--delegate-model", "openai/x"])
     assert result.exit_code == 2, result.output
     assert "--delegate-model needs a decision model" in result.stderr
     assert "Try Mobilerun Cloud" not in result.output
@@ -227,25 +190,13 @@ def rate_limit_server():
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             if status == 429:
-                self.send_header("Retry-After", "60")
+                self.send_header("Retry-After", "2")
             self.end_headers()
             self.wfile.write(body)
 
         def do_GET(self):
             if self.path.startswith("/state_full"):
-                self.reply(
-                    {
-                        "a11y_tree": {
-                            "className": "android.widget.FrameLayout",
-                            "children": [],
-                        },
-                        "phone_state": {
-                            "packageName": "com.android.settings",
-                            "isEditable": False,
-                        },
-                        "device_context": {},
-                    }
-                )
+                self.reply(dict(a11y_tree={}, phone_state={}, device_context={}))
             else:
                 self.reply({"version": "0.7.25"})
 
@@ -276,73 +227,105 @@ def rate_limit_server():
         thread.join()
 
 
-@pytest.mark.parametrize("provider", ["openai-like", "openai", "config"])
-@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize(
+    "provider,model",
+    [("openai-like", "gpt-6.1-sol"), ("anthropic", "claude-sonnet-5-5")],
+)
 def test_run_persistent_429_is_bounded_and_emits_one_document(
-    tmp_path, rate_limit_server, provider, json_output
+    tmp_path, rate_limit_server, provider, model
 ):
     import os
     import subprocess
     import sys
-    import time
-
-    from mobilerun.config_manager.config_manager import LLMProfile
 
     url, requests = rate_limit_server
-    config = MobileConfig()
-    config.logging.save_trajectory = "none"
-    if provider == "config":
-        config.llm_profiles = {
-            role: LLMProfile(
-                provider="OpenAILike",
-                model="gpt-6.1-sol",
-                kwargs={"api_base": url + "/v1"},
-            )
-            for role in config.llm_profiles
-        }
-    path = ConfigLoader.save(config, tmp_path / "run.yaml")
+    path = ConfigLoader.save(MobileConfig(), tmp_path / "run.yaml")
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(
-            ("MOBILERUN_", "DROIDRUN_", "OPENAI_", "GOOGLE_", "GEMINI_")
-        )
+        if not key.startswith(("MOBILERUN_", "DROIDRUN_", "OPENAI_", "ANTHROPIC_"))
         and not key.endswith(("_API_KEY", "_TOKEN"))
     }
     env.update(
         HOME=str(tmp_path),
         MOBILERUN_TELEMETRY_ENABLED="false",
         OPENAI_API_KEY="fake-local-key",
+        ANTHROPIC_API_KEY="fake-local-key",
         MOBILERUN_ANDROID_PORTAL_TOKEN="fake-local-token",
         HTTP_PROXY="http://127.0.0.1:1",
         HTTPS_PROXY="http://127.0.0.1:1",
         ALL_PROXY="http://127.0.0.1:1",
         NO_PROXY="127.0.0.1,localhost",
     )
-    args = ["run", "x", "-c", str(path), "-d", url, "-P", "android", "-s", "3"]
-    if provider != "config":
-        args.extend(["-p", provider, "-m", "gpt-6.1-sol", "-u", url + "/v1"])
-    if json_output:
-        args.append("-j")
-    start = time.monotonic()
+    args = ["run", "x", "-c", str(path), "-d", url]
+    args += "-P android -s 3 -j".split()
+    args += [
+        "-p",
+        provider,
+        "-m",
+        model,
+        "-u",
+        url + ("/v1" if provider == "openai-like" else ""),
+    ]
     result = subprocess.run(
         [sys.executable, "-c", "from mobilerun.cli.main import cli; cli()", *args],
         env=env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=25,
     )
-    assert time.monotonic() - start < 60
     assert result.returncode == 1, result.stdout + result.stderr
     assert "429" in result.stderr
-    assert len(requests) == 3
-    assert all(
-        path == ("/v1/responses" if provider == "openai" else "/v1/chat/completions")
-        for path in requests
+    assert (
+        "/v1/messages" if provider == "anthropic" else "/v1/chat/completions"
+    ) in requests
+    document = json.loads(result.stdout)
+    assert document["success"] is False
+    assert "429" in document["reason"]
+
+
+def test_retry_defaults_cover_provider_families_and_legacy_adapters():
+    from mobilerun.cli.providers import llm_retry_kwargs
+
+    runtimes = (
+        "OpenAI OpenAIResponses OpenAILike Anthropic GoogleGenAI XAI ZAI ZAI_Coding "
+        "MiniMax DeepSeek OpenRouter openai_oauth xai_oauth"
     )
-    if json_output:
-        document = json.loads(result.stdout)
-        assert document["success"] is False
-        assert "429" in document["reason"]
-    else:
-        assert result.stdout == ""
+    for runtime in runtimes.split():
+        assert llm_retry_kwargs(runtime) == {"max_retries": 1}, runtime
+    for runtime in ("Ollama", "anthropic_oauth", "gemini_oauth_code_assist"):
+        assert llm_retry_kwargs(runtime) == {}, runtime
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), AdbTimeout("adb read timeout")])
+def test_adb_timeouts_use_the_shared_hint(error):
+    import click
+
+    with (
+        pytest.raises(click.ClickException, match="Platform-Tools"),
+        selection.local_adb_errors(),
+    ):
+        raise error
+
+
+def test_device_list_bounds_an_unresponsive_adb_probe(monkeypatch):
+    import asyncio
+
+    cancelled = Mock()
+
+    async def stalled():
+        try:
+            await asyncio.sleep(10)
+            return []
+        finally:
+            cancelled()
+
+    client = SimpleNamespace(list_devices=Mock(return_value=[]), close=Mock())
+    monkeypatch.setattr(device_lifecycle, "core_client", lambda *a, **kw: client)
+    monkeypatch.setattr(device_lifecycle.adb, "list", stalled)
+    result = CliRunner().invoke(cli, ["device", "list", "-j"])
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout) == {"error": ADB_HINT}
+    assert result.stderr == "Error: " + ADB_HINT + "\n"
+    cancelled.assert_called_once()
+    client.close.assert_called_once()

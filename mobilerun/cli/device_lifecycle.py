@@ -98,7 +98,7 @@ def _list_target(api_url, scope):
             if scope == "local" and not devices:
                 # Core discovery treats ADB failures as an empty list. Let the
                 # library try startup so an unavailable server is reported.
-                asyncio.run(adb.list())
+                asyncio.run(asyncio.wait_for(adb.list(), 3))
         rows = []
         for device in devices:
             rows.append(
