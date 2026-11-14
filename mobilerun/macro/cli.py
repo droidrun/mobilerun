@@ -12,6 +12,7 @@ from rich.console import Console
 
 from mobilerun.cli.options import (
     Group,
+    config_option,
     coro,
     device_options,
     emit,
@@ -318,12 +319,15 @@ async def _show_dry_run(
 
 @macro_cli.command(epilog=examples("mobilerun macro list ./macros"))
 @click.argument("directory", type=click.Path(exists=True), default="trajectories")
+@config_option
 @verbose_option
 @json_option
-def list(directory: str, verbose: bool, json_output: bool):
+def list(directory: str, config_path: Optional[str], verbose: bool, json_output: bool):
     """List available trajectory folders in a directory."""
     from mobilerun.agent.utils.trajectory import Trajectory
+    from mobilerun.config_manager import ConfigLoader
 
+    ConfigLoader.load(config_path)
     logger = configure_logging(bool(verbose))
 
     # Resolve directory (checks working dir, then package dir)

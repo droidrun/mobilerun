@@ -907,5 +907,5 @@ def test_device_commands_do_not_accept_tcp_or_unused_list_flags():
         assert all(
             "--tcp" not in getattr(param, "opts", ()) for param in command.params
         ), path
-    for flag in ("-a", "-d", "-P", "-c"):
+    for flag in ("-a", "-d", "-P"):
         assert runner.invoke(cli, ["device", "list", flag, "x"]).exit_code == 2

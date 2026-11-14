@@ -25,7 +25,12 @@ from mobilerun.cli.options import (
     max_steps_option,
     tcp_option,
 )
-from mobilerun.cli.providers import PROVIDERS, llm_url_kwargs, run_provider_option
+from mobilerun.cli.providers import (
+    PROVIDERS,
+    llm_retry_kwargs,
+    llm_url_kwargs,
+    run_provider_option,
+)
 from mobilerun.cli.selection import _native_driver, select_device
 from mobilerun.log_handlers import CLILogHandler, configure_logging
 
@@ -86,15 +91,27 @@ async def _run_task(
     """Execute a task and return the result-event fields."""
     from mobilerun_core_local.driver.visual_remote import VISUAL_REMOTE_CONNECTION
 
+    from mobilerun.config_manager import ConfigLoader
+
+    config = ConfigLoader.load(config_path)
+    if delegate_model and (provider or "").strip().lower() != "typesafe":
+        delegation = config.agent.delegation
+        action_reasoning = config.agent.reasoning if reasoning is None else reasoning
+        role = "executor" if action_reasoning else "fast_agent"
+        if (
+            (delegation and delegation.primary) or role
+        ) not in config.decision_profiles:
+            raise click.UsageError(
+                "--delegate-model needs a decision model picking actions: pass "
+                "-p TypeSafe or set decision_profiles in the config."
+            )
+
     from mobilerun import MobileAgent
     from mobilerun.agent.selectors import LlamaIndexLLMSelector
     from mobilerun.agent.utils.llm_picker import load_llm
     from mobilerun.cli.event_handler import EventHandler
-    from mobilerun.config_manager import ConfigLoader
     from mobilerun.config_manager.config_manager import DecisionProfile
     from mobilerun.telemetry import print_telemetry_message
-
-    config = ConfigLoader.load(config_path)
 
     # Print cloud link in a box
     if config.logging.rich_text:
@@ -271,12 +288,15 @@ async def _run_task(
         if provider or model:
             if not (provider and model):
                 raise ValueError("--provider and --model must be given together")
-            llm_kwargs = {}
+            llm_kwargs = llm_retry_kwargs(provider)
             if temperature is not None:
                 llm_kwargs["temperature"] = temperature
             llm_kwargs.update(llm_url_kwargs(provider, llm_url))
             llm = load_llm(provider, model=model, **llm_kwargs)
         else:
+            for profile in config.llm_profiles.values():
+                for key, value in llm_retry_kwargs(profile.provider).items():
+                    profile.kwargs.setdefault(key, value)
             if llm_url is not None:
                 for profile in config.llm_profiles.values():
                     profile.kwargs.update(llm_url_kwargs(profile.provider, llm_url))
@@ -354,17 +374,7 @@ def _drop_delegation(config: MobileConfig) -> None:
 def _apply_delegate_model(config: MobileConfig, spec: str | None = None) -> None:
     from mobilerun.cli.configure_wizard import ensure_llm_delegation
 
-    delegation = config.agent.delegation
     role = _action_role(config)
-    if (
-        spec
-        and ((delegation and delegation.primary) or role)
-        not in config.decision_profiles
-    ):
-        raise click.UsageError(
-            "--delegate-model needs a decision model picking actions: pass "
-            "-p TypeSafe or set decision_profiles in the config."
-        )
     profile = _delegate_profile(config, role, spec) if spec else None
     ensure_llm_delegation(config, role, profile)
 

@@ -173,7 +173,10 @@ def test_delegate_model_alone_keeps_the_agent_provider(monkeypatch):
     )
 
     assert agents[0]["config"].llm_profiles["delegate"] == LLMProfile(
-        provider="OpenAILike", model="org/model-b", base_url="https://llm.test"
+        provider="OpenAILike",
+        model="org/model-b",
+        base_url="https://llm.test",
+        kwargs={"max_retries": 0},
     )
 
 
@@ -187,7 +190,7 @@ def test_delegate_model_on_the_agent_provider_keeps_its_settings(monkeypatch):
     )
 
     assert agents[0]["config"].llm_profiles["delegate"] == LLMProfile(
-        provider="OpenAI", model="gpt-6-luna", kwargs={"timeout": 30}
+        provider="OpenAI", model="gpt-6-luna", kwargs={"timeout": 30, "max_retries": 0}
     )
 
 

@@ -80,3 +80,20 @@ def llm_url_kwargs(runtime, url):
             {"base_url": url} if spec.url_keyword == "http_options" else url
         )
     }
+
+
+def llm_retry_kwargs(runtime):
+    """Leave retries to the agent instead of nesting OpenAI SDK/adapter retries."""
+    from mobilerun.agent.utils.llm_picker import normalize_provider_name
+
+    if normalize_provider_name(runtime) in {
+        "OpenAIResponses",
+        "OpenAILike",
+        "OpenRouter",
+        "DeepSeek",
+        "MiniMax",
+        "ZAI",
+        "openai_oauth",
+    }:
+        return {"max_retries": 0}
+    return {}

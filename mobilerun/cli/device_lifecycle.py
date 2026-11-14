@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import click
 from async_adbutils import adb
 
@@ -36,14 +38,18 @@ from mobilerun.cli.selection import core_client, local_adb_errors, select_device
     ),
 )
 @target_option
+@config_option
 @api_url_option
 @verbose_option
 @json_option
 @click.option(
     "--all", "all_devices", is_flag=True, help="List local and cloud devices."
 )
-def list_devices(target, api_url, verbose, json_output, all_devices):
+def list_devices(target, config_path, api_url, verbose, json_output, all_devices):
     """List devices in the selected target."""
+    from mobilerun.config_manager import ConfigLoader
+
+    ConfigLoader.load(config_path)
     rows, errors = [], []
     scopes = ["local", "cloud"] if all_devices else [target]
     for scope in scopes:
@@ -89,6 +95,10 @@ def _list_target(api_url, scope):
     try:
         with local_adb_errors(scope == "local"):
             devices = client.list_devices(filters={"state": None}, scope=scope)
+            if scope == "local" and not devices:
+                # Core discovery treats ADB failures as an empty list. Let the
+                # library try startup so an unavailable server is reported.
+                asyncio.run(adb.list())
         rows = []
         for device in devices:
             rows.append(

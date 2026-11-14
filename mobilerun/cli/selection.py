@@ -22,7 +22,12 @@ def local_adb_errors(enabled=True):
 
     try:
         yield
-    except (AdbError, ConnectionRefusedError, FileNotFoundError) as exc:
+    except (
+        AdbError,
+        ConnectionRefusedError,
+        FileNotFoundError,
+        ModuleNotFoundError,
+    ) as exc:
         message = str(exc).lower()
         missing_binary = (
             isinstance(exc, FileNotFoundError)
@@ -35,6 +40,10 @@ def local_adb_errors(enabled=True):
         unavailable = (
             isinstance(exc, ConnectionRefusedError)
             or missing_binary
+            or (
+                isinstance(exc, ModuleNotFoundError)
+                and exc.name in {"adbutils", "adbutils.binaries"}
+            )
             or (
                 isinstance(exc, AdbError)
                 and any(

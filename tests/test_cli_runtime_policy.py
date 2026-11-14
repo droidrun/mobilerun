@@ -83,8 +83,6 @@ def test_local_adb_missing_or_server_unreachable(monkeypatch, error, args):
 
 
 def test_local_adb_server_can_start_on_first_use(monkeypatch, tmp_path):
-    import asyncio
-
     binary = tmp_path / "adb"
     binary.write_text("#!/bin/sh\nexit 0\n")
     binary.chmod(0o755)
@@ -93,9 +91,7 @@ def test_local_adb_server_can_start_on_first_use(monkeypatch, tmp_path):
     # The library owns startup: reaching list() must be allowed on a closed port.
     listing = AsyncMock(return_value=[])
     monkeypatch.setattr(device_lifecycle.adb, "list", listing)
-    client = SimpleNamespace(
-        list_devices=lambda **kwargs: asyncio.run(listing()), close=Mock()
-    )
+    client = SimpleNamespace(list_devices=Mock(return_value=[]), close=Mock())
     monkeypatch.setattr(device_lifecycle, "core_client", lambda *args, **kwargs: client)
     result = CliRunner().invoke(cli, ["device", "list"])
     assert result.exit_code == 0, result.output
@@ -314,10 +310,7 @@ def test_readme_real_error_examples():
         "Config",
         "ADB",
     ]
-    assert (
-        document["checks"][-1]["detail"]
-        == "No adb exe could be found. Install adb on your system"
-    )
+    assert document["checks"][-1]["detail"] == options.ADB_HINT
 
 
 def test_doctor_reports_library_adb_error(monkeypatch):

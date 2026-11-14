@@ -172,8 +172,11 @@ async def check_config(
 
 async def check_adb(debug: bool) -> CheckResult:
     """Check ADB is available and list devices."""
+    from mobilerun.cli.selection import local_adb_errors
+
     try:
-        devices = await adb.list()
+        with local_adb_errors():
+            devices = await adb.list()
         count = len(devices)
         return CheckResult(
             "ADB",
