@@ -561,7 +561,7 @@ def test_helper_availability_does_not_change_original_tool_registry(
 
 
 @pytest.mark.parametrize("temperature", [None, 0.0, 0.2])
-def test_cli_custom_provider_retains_original_constructor_defaults(
+def test_cli_custom_provider_uses_bounded_retry_defaults(
     monkeypatch, cli_agents, temperature
 ):
     config = MobileConfig()
@@ -585,6 +585,7 @@ def test_cli_custom_provider_retains_original_constructor_defaults(
     expected: dict[str, object] = {
         "model": "test",
         "base_url": "https://example.test",
+        "max_retries": 1,
     }
     if temperature is not None:
         expected["temperature"] = temperature

@@ -325,7 +325,7 @@ was used, or `"credential":"login"` when the saved sign-in was used.
 without Android SDK Platform-Tools (the Config path varies by platform):
 
 ```json
-{"ok":false,"checks":[{"name":"SDK Version","status":"warn","detail":"0.8.0 (could not check latest); GitHub API unreachable"},{"name":"Config","status":"pass","detail":"/home/user/.config/droidrun/config.yaml"},{"name":"ADB","status":"fail","detail":"No adb exe could be found. Install adb on your system"}]}
+{"ok":false,"checks":[{"name":"SDK Version","status":"warn","detail":"0.8.0 (could not check latest); GitHub API unreachable"},{"name":"Config","status":"pass","detail":"/home/user/.config/droidrun/config.yaml"},{"name":"ADB","status":"fail","detail":"adb was not found or is not running. Install Android SDK Platform-Tools (https://developer.android.com/studio/releases/platform-tools) and check `mobilerun doctor`."}]}
 ```
 
 `device list --all` lists local devices first, then cloud devices. If either
@@ -334,6 +334,8 @@ listing fails, the other result is kept and a warning goes to stderr. It exits
 success. With `-j`, it returns `{"devices":[...],"errors":[{"target":"cloud","error":"..."}]}`.
 Listing a single target keeps the plain JSON list on success and fails normally
 when that target is unavailable.
+If adb is unavailable, local listing exits 1 with an Android SDK Platform-Tools
+hint; it does not count as a successful empty listing.
 
 Other errors contain only `error`. Usage errors and interruptions may leave
 stdout empty. The run command emits `success`, `reason`, and `steps` after a
