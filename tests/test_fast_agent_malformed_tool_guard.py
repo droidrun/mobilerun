@@ -8,6 +8,8 @@ from llama_index.core.base.llms.types import ChatMessage, ChatResponse
 from mobilerun.agent.action_result import ActionResult
 from mobilerun.agent.droid.state import MobileAgentState
 from mobilerun.agent.fast_agent.fast_agent import FastAgent
+from mobilerun.agent.selectors import LlamaIndexLLMSelector
+from mobilerun.tools.ui.provider import StateProvider
 
 MALFORMED_RESPONSE = """I'm still on the main feed. I need to tap the Profile tab.
 
@@ -70,8 +72,11 @@ class _PromptResolver:
         return None
 
 
-class _StateProvider:
+class _StateProvider(StateProvider):
     requires_coordinate_tools = False
+
+    def __init__(self):
+        super().__init__(None)
 
     async def get_state(self):
         return SimpleNamespace(
@@ -96,6 +101,9 @@ class _Registry:
 
     def get_param_types(self):
         return {"index": "number", "success": "boolean"}
+
+    def get_signatures(self):
+        return {name: {} for name in self.tools}
 
     async def execute(self, name, parameters, _action_ctx, workflow_ctx=None):
         self.executed.append((name, parameters))
@@ -126,7 +134,7 @@ def _run_sequence(responses, pending_message=None):
             ui=None,
         )
         agent = FastAgent(
-            llm=SimpleNamespace(),
+            action_selector=LlamaIndexLLMSelector(SimpleNamespace()),
             agent_config=config,
             registry=registry,
             action_ctx=action_ctx,
@@ -137,11 +145,11 @@ def _run_sequence(responses, pending_message=None):
 
         with (
             patch(
-                "mobilerun.agent.fast_agent.fast_agent.acall_with_retries",
+                "mobilerun.agent.selectors.llama_index_llm.acall_with_retries",
                 new=responder,
             ),
             patch(
-                "mobilerun.agent.fast_agent.fast_agent.get_usage_from_response",
+                "mobilerun.agent.selectors.llama_index_llm.get_usage_from_response",
                 return_value=None,
             ),
         ):

@@ -18,7 +18,10 @@ logger = logging.getLogger("mobilerun")
 
 
 def _get_required_profiles(
-    config: MobileConfig, output_model: Type[BaseModel] | None = None
+    config: MobileConfig,
+    output_model: Type[BaseModel] | None = None,
+    *,
+    load_action_llm: bool = True,
 ) -> List[str]:
     """
     Determine which LLM profiles are required based on agent configuration.
@@ -26,6 +29,8 @@ def _get_required_profiles(
     Args:
         config: Mobilerun configuration containing agent settings
         output_model: Optional Pydantic model for structured output extraction
+        load_action_llm: Whether action selection needs an LLM rather than a
+            directly supplied decision model
 
     Returns:
         List of required profile names
@@ -35,6 +40,12 @@ def _get_required_profiles(
     else:
         # Direct execution mode only needs FastAgent and helper agents
         profiles = ["fast_agent", "app_opener"]
+
+    # Native decision models replace only the active action-selection role.
+    # Planning and helper roles remain native LLMs.
+    action_role = "executor" if config.agent.reasoning else "fast_agent"
+    if not load_action_llm or action_role in config.decision_profiles:
+        profiles.remove(action_role)
 
     # Add structured_output if output_model is provided
     if output_model is not None:
@@ -77,7 +88,10 @@ def validate_llm_dict(
 
 
 def validate_llm_profiles(
-    config: MobileConfig, output_model: Type[BaseModel] | None = None
+    config: MobileConfig,
+    output_model: Type[BaseModel] | None = None,
+    *,
+    load_action_llm: bool = True,
 ) -> List[str]:
     """
     Validate that required LLM profiles exist in the configuration.
@@ -85,6 +99,7 @@ def validate_llm_profiles(
     Args:
         config: Mobilerun configuration containing LLM profiles
         output_model: Optional Pydantic model for structured output extraction
+        load_action_llm: Whether the active action role requires an LLM profile
 
     Returns:
         List of required profile names
@@ -92,7 +107,9 @@ def validate_llm_profiles(
     Raises:
         ValueError: If any required profiles are missing from config
     """
-    required_profiles = _get_required_profiles(config, output_model)
+    required_profiles = _get_required_profiles(
+        config, output_model, load_action_llm=load_action_llm
+    )
     missing_profiles = [
         name for name in required_profiles if name not in config.llm_profiles
     ]
@@ -114,6 +131,8 @@ def load_agent_llms(
     custom_model: str | None = None,
     temperature: float | None = None,
     output_model: Type[BaseModel] | None = None,
+    custom_llm_kwargs: dict[str, Any] | None = None,
+    load_action_llm: bool = True,
     **kwargs: Any,
 ) -> dict[str, LLM]:
     """
@@ -125,6 +144,10 @@ def load_agent_llms(
         custom_model: Optional custom model to use for all agents
         temperature: Optional temperature override for all agents
         output_model: Optional Pydantic model for structured output extraction
+        custom_llm_kwargs: Exact constructor options for a custom provider; when
+            supplied, provider defaults are left intact unless explicitly overridden.
+        load_action_llm: Whether to load the active action role in profile mode.
+            False for a directly supplied decision model; helper roles are unchanged.
         **kwargs: Additional kwargs to pass to LLM constructor (base_url, api_base, etc.)
 
     Returns:
@@ -132,6 +155,8 @@ def load_agent_llms(
         - If reasoning=True: {manager, executor, app_opener, structured_output?}
         - If reasoning=False: {fast_agent, app_opener, structured_output?}
         - structured_output is only included if output_model is provided
+        - Configured decision profiles replace the active action role in profile
+          mode, so that role does not require an LLM profile
 
     Raises:
         ValueError: If required LLM profiles are missing from config
@@ -147,10 +172,13 @@ def load_agent_llms(
             custom_model = list(config.llm_profiles.values())[0].model
 
         # Build kwargs
-        llm_kwargs = {}
+        # Copy caller-owned options before applying explicit overrides. None
+        # preserves the SDK's legacy 0.3 default; even an empty dict opts into
+        # provider defaults instead, matching direct load_llm construction.
+        llm_kwargs: dict[str, Any] = dict(custom_llm_kwargs or {})
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
-        else:
+        elif custom_llm_kwargs is None:
             llm_kwargs["temperature"] = kwargs.get("temperature", 0.3)
 
         # Add any additional kwargs (base_url, api_base, etc.)
@@ -180,10 +208,12 @@ def load_agent_llms(
     logger.debug("📋 Loading LLMs from config profiles...")
 
     # Determine which LLMs are needed and validate they exist
-    profile_names = validate_llm_profiles(config, output_model)
+    profile_names = validate_llm_profiles(
+        config, output_model, load_action_llm=load_action_llm
+    )
 
     # Apply temperature override to all profiles if specified
-    overrides = {}
+    overrides: dict[str, dict[str, Any]] = {}
     if temperature is not None:
         overrides = {name: {"temperature": temperature} for name in profile_names}
 
@@ -207,6 +237,7 @@ def merge_llms_with_config(
     config: MobileConfig,
     llms: dict[str, LLM],
     output_model: Type[BaseModel] | None = None,
+    load_action_llm: bool = True,
     **kwargs: Any,
 ) -> dict[str, LLM]:
     """
@@ -217,6 +248,7 @@ def merge_llms_with_config(
         llms: Partial dictionary of LLM instances provided by user. Keys may be
             a subset of required agent names.
         output_model: Optional Pydantic model for structured output extraction
+        load_action_llm: Whether the active action role still needs an LLM
         **kwargs: Additional kwargs forwarded when loading missing profiles
     Returns:
         A dictionary containing the union of provided LLMs and any LLMs loaded
@@ -225,7 +257,9 @@ def merge_llms_with_config(
         ValueError: If required profiles are missing from both the provided
             llms dict and the config profiles.
     """
-    required = _get_required_profiles(config, output_model)
+    required = _get_required_profiles(
+        config, output_model, load_action_llm=load_action_llm
+    )
 
     missing = [name for name in required if name not in llms]
     if not missing:

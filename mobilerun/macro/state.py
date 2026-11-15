@@ -39,16 +39,22 @@ def build_screen_snapshot(ui_state: Any) -> Dict[str, Any]:
     return normalize_ui_state(ui_state)
 
 
-def node_semantic_key(node: Dict[str, Any]) -> Tuple[Any, ...]:
-    return (
-        node.get("resource_id"),
-        node.get("class"),
-        node.get("text"),
-        node.get("content_description"),
-        node.get("clickable"),
-        node.get("enabled"),
-        node.get("focused"),
-    )
+SEMANTIC_FIELDS = (
+    "resource_id",
+    "class",
+    "text",
+    "content_description",
+    "clickable",
+    "enabled",
+    "focused",
+)
+OPTIONAL_SEMANTIC_FIELDS = ("clickable", "enabled", "focused")
+
+
+def node_semantic_key(
+    node: Dict[str, Any], skip: Iterable[str] = ()
+) -> Tuple[Any, ...]:
+    return tuple(node.get(field) for field in SEMANTIC_FIELDS if field not in skip)
 
 
 def _extract_elements(ui_state: Any) -> List[Dict[str, Any]]:

@@ -27,6 +27,10 @@ todo.txt
 
 config.yaml
 
+# Local environment files can contain secrets
+.env
+.env.*
+
 credentials.yaml
 **/credentials.yaml
 !**/credentials_example.yaml

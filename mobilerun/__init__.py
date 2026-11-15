@@ -20,6 +20,7 @@ _logger.propagate = False
 # Import main classes for easier access
 from mobilerun.agent import ResultEvent  # noqa: E402
 from mobilerun.agent.droid import MobileAgent, MobileAgentState  # noqa: E402
+from mobilerun.agent.utils.decision_loader import load_decision_model  # noqa: E402
 from mobilerun.agent.utils.errors import HtmlErrorPageFilter  # noqa: E402
 from mobilerun.agent.utils.llm_picker import load_llm  # noqa: E402
 
@@ -36,6 +37,9 @@ from mobilerun.config_manager import (  # noqa: E402
     AgentConfig,
     AppCardConfig,
     CredentialsConfig,
+    DecisionConfig,
+    DecisionProfile,
+    DelegationConfig,
     # Feature configs
     DeviceConfig,
     ExecutorConfig,
@@ -63,6 +67,7 @@ __all__ = [
     "MobileAgent",
     "MobileAgentState",
     "load_llm",
+    "load_decision_model",
     "ResultEvent",
     # Tools / Drivers
     "DeviceDriver",
@@ -86,6 +91,9 @@ __all__ = [
     "ToolsConfig",
     "CredentialsConfig",
     "LLMProfile",
+    "DecisionProfile",
+    "DecisionConfig",
+    "DelegationConfig",
 ]
 
 # Legacy aliases — deprecated, will be removed in v0.8.0

@@ -114,14 +114,14 @@ def test_failed_state_read_invalidates_current_evidence_and_recovers(
 
         ctx = SimpleNamespace(
             write_event_to_stream=lambda event: None,
-            store=SimpleNamespace(set=AsyncMock()),
+            store=SimpleNamespace(set=AsyncMock(), get=AsyncMock(return_value="")),
         )
         with (
             patch(
-                "mobilerun.agent.fast_agent.fast_agent.acall_with_retries", new=respond
+                "mobilerun.agent.selectors.llama_index_llm.acall_with_retries", new=respond
             ),
             patch(
-                "mobilerun.agent.fast_agent.fast_agent.get_usage_from_response",
+                "mobilerun.agent.selectors.llama_index_llm.get_usage_from_response",
                 return_value=None,
             ),
             patch.dict("os.environ", {"MOBILERUN_STREAM_SCREENSHOTS": "0"}),

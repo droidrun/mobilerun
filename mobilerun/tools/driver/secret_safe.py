@@ -202,25 +202,46 @@ def _is_input_node(node: dict) -> bool:
     )
 
 
-def _collect_leaves(node: Any, out: list, in_input: bool, structured: bool) -> None:
-    """Ordered (leaf, is_input) pairs: nodes with their own text and no children.
+# Other texts a node may repeat its own text in, piece by piece.
+_ECHO_KEYS = ("contentDescription", "hint", "stateDescription", "tooltipText", "value")
+_DETAIL_ECHO_KEYS = ("description", "hint", "stateDescription")
 
-    ``is_input`` is true for an input node or anything below one.
+
+def _mask_node(node: dict, placeholder: str, key: str = "text") -> None:
+    """Mask a node's piece and every other text that may echo it."""
+    node[key] = placeholder
+    for key in _ECHO_KEYS:
+        if isinstance(node.get(key), str) and node[key]:
+            node[key] = placeholder
+    details = node.get("details")
+    if isinstance(details, dict):
+        for key in _DETAIL_ECHO_KEYS:
+            if isinstance(details.get(key), str) and details[key]:
+                details[key] = placeholder
+
+
+def _collect_leaves(
+    node: Any, out: list, in_input: bool, structured: bool, field: str = "text"
+) -> None:
+    """Ordered (leaf, is_input) pairs: nodes with their own ``field`` and no children.
+
+    ``is_input`` is true for an input node or anything below one. iOS keeps
+    typed text in ``value``, so both fields are scanned.
     """
     if isinstance(node, list):
         for item in node:
-            _collect_leaves(item, out, in_input, structured)
+            _collect_leaves(item, out, in_input, structured, field)
     elif isinstance(node, dict):
         below = in_input or (structured and _is_input_node(node))
         children = node.get("children")
         if isinstance(children, list) and children:
-            _collect_leaves(children, out, below, structured)
-        elif isinstance(node.get("text"), str) and node["text"]:
+            _collect_leaves(children, out, below, structured, field)
+        elif isinstance(node.get(field), str) and node[field]:
             out.append((node, below))
         else:
             for key, value in node.items():
                 if key not in _NON_TEXT_KEYS and isinstance(value, (list, dict)):
-                    _collect_leaves(value, out, below, structured)
+                    _collect_leaves(value, out, below, structured, field)
 
 
 def _tree_is_structured(node: Any) -> bool:
@@ -462,29 +483,30 @@ class SecretRedactor:
         entries = [e for e in self._entries if e.segmentable]
         if not entries and not self.mask_card_numbers:
             return
-        leaves: list = []
-        _collect_leaves(root, leaves, in_input, structured)
-        if len(leaves) < 2:
-            return
-        if self.mask_card_numbers:
-            self._scan_card_runs(leaves)
-        for entry in entries:
-            restricted = not entry.applies(False, structured)
-            run: list = []
-            for node, eligible in [*leaves, (None, False)]:
-                if restricted and not eligible:
-                    self._scan_run(entry, run)
-                    run = []
-                elif node is not None:
-                    run.append(node)
-            self._scan_run(entry, run)
+        for field in ("text", "value"):
+            leaves: list = []
+            _collect_leaves(root, leaves, in_input, structured, field)
+            if len(leaves) < 2:
+                continue
+            if self.mask_card_numbers:
+                self._scan_card_runs(leaves, field)
+            for entry in entries:
+                restricted = not entry.applies(False, structured)
+                run: list = []
+                for node, eligible in [*leaves, (None, False)]:
+                    if restricted and not eligible:
+                        self._scan_run(entry, run, field)
+                        run = []
+                    elif node is not None:
+                        run.append(node)
+                self._scan_run(entry, run, field)
 
     @staticmethod
-    def _scan_card_runs(leaves: list) -> None:
+    def _scan_card_runs(leaves: list, field: str = "text") -> None:
         chunks, spans = [], []
         offset = 0
         for node, _ in leaves:
-            text = node["text"]
+            text = node[field]
             chunks.append(text)
             spans.append((offset, offset + len(text)))
             offset += len(text) + 1
@@ -497,17 +519,17 @@ class SecretRedactor:
                 stop += 1
             if stop - index >= 2:
                 for node, _ in leaves[index:stop]:
-                    node["text"] = PLACEHOLDER.format("card_number")
+                    _mask_node(node, PLACEHOLDER.format("card_number"), field)
 
     @staticmethod
-    def _scan_run(entry: _Entry, run: list) -> None:
+    def _scan_run(entry: _Entry, run: list, field: str = "text") -> None:
         placeholder = PLACEHOLDER.format(entry.secret_id)
         for i in range(len(run)):
             window = []
             end = min(len(run), i + entry.max_compact)
             for index in range(i, end):
                 node = run[index]
-                if not entry.accepts(node["text"]):
+                if not entry.accepts(node[field]):
                     break
                 window.append(node)
             if len(window) < 2:
@@ -515,8 +537,8 @@ class SecretRedactor:
             for separator in ("", " "):
                 joined, spans = "", []
                 for node in window:
-                    spans.append((len(joined), len(joined) + len(node["text"])))
-                    joined += node["text"] + separator
+                    spans.append((len(joined), len(joined) + len(node[field])))
+                    joined += node[field] + separator
                 for match in entry.pattern.finditer(joined):
                     hit = [
                         node
@@ -525,7 +547,7 @@ class SecretRedactor:
                     ]
                     if len(hit) >= 2:
                         for node in hit:
-                            node["text"] = placeholder
+                            _mask_node(node, placeholder, field)
 
     def redact_ui_tree(self, data: Any) -> Any:
         """Redact the payload of ``driver.get_ui_tree()``."""

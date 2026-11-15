@@ -9,6 +9,7 @@ dependencies = ["mobilerun==0.7.4"]
 anthropic = ["mobilerun[anthropic]==0.7.4"]
 deepseek = ["mobilerun[deepseek]==0.7.4"]
 langfuse = ["mobilerun[langfuse]==0.7.4"]
+typesafe = ["mobilerun[typesafe]==0.7.4"]
 dev = ["mobilerun[dev]==0.7.4"]
 
 [project.scripts]

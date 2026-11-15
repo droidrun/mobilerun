@@ -48,7 +48,11 @@ _ELEMENT_TYPE_RE = re.compile(r"\s*(.+?),")
 _LABEL_RE = re.compile(r"label:\s*'([^']*)'")
 _IDENTIFIER_RE = re.compile(r"identifier:\s*'([^']*)'")
 _PLACEHOLDER_RE = re.compile(r"placeholderValue:\s*'([^']*)'")
-_VALUE_RE = re.compile(r"value:\s*([^,}]+)")
+# Values are unquoted and may contain commas; stop at the next attribute or flag.
+_VALUE_RE = re.compile(
+    r"value:\s*(.+?)\s*(?=,\s*(?:identifier:|label:|placeholderValue:|Selected\b"
+    r"|Disabled\b|Enabled\b|Focused\b|Keyboard\b)|}|$)"
+)
 _CLOCK_RE = re.compile(r"^\d{1,2}:\d{2}$")
 
 
