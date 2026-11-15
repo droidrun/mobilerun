@@ -498,7 +498,7 @@ except Exception:
 @click.option(
     "--provider",
     "-p",
-    help="LLM provider (OpenAI, openai_oauth, XAI, Ollama, Anthropic, anthropic_oauth, GoogleGenAI, gemini_oauth_code_assist, DeepSeek)",
+    help="LLM provider (OpenAI, openai_oauth, XAI, Ollama, Anthropic, anthropic_oauth, GoogleGenAI, gemini_oauth_code_assist, DeepSeek, Requesty)",
     default=None,
 )
 @click.option(
@@ -512,7 +512,7 @@ except Exception:
 @click.option(
     "--base_url",
     "-u",
-    help="Base URL for API (e.g., OpenRouter or Ollama)",
+    help="Base URL for API (e.g., OpenRouter, Requesty, or Ollama)",
     default=None,
 )
 @click.option(
@@ -1115,7 +1115,7 @@ async def doctor(device: str | None, debug: bool | None):
     "--provider",
     type=str,
     default=None,
-    help="Provider family (gemini, openai, anthropic, XAI, ollama, openai_like, minimax, zai).",
+    help="Provider family (gemini, openai, anthropic, XAI, ollama, openai_like, minimax, zai, requesty).",
 )
 @click.option(
     "--auth-mode",
