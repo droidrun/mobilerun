@@ -118,7 +118,8 @@ def test_failed_state_read_invalidates_current_evidence_and_recovers(
         )
         with (
             patch(
-                "mobilerun.agent.selectors.llama_index_llm.acall_with_retries", new=respond
+                "mobilerun.agent.selectors.llama_index_llm.acall_with_retries",
+                new=respond,
             ),
             patch(
                 "mobilerun.agent.selectors.llama_index_llm.get_usage_from_response",
