@@ -39,9 +39,9 @@ def test_manager_prompt_grounds_screen_reading_results(template, vision):
         assert text in prompt
     if vision:
         assert "supplied screenshot" in prompt
-        assert "Vision is disabled" not in prompt
+        assert "Vision is off" not in prompt
     else:
-        assert "Vision is disabled" in prompt
+        assert "Vision is off" in prompt
 
 
 @pytest.mark.parametrize("vision", [False, True])
@@ -57,4 +57,4 @@ def test_stateful_manager_passes_vision_to_prompt(vision):
 
     prompt = asyncio.run(agent._build_system_prompt())
     assert ("supplied screenshot" in prompt) is vision
-    assert ("Vision is disabled" in prompt) is not vision
+    assert ("Vision is off" in prompt) is not vision

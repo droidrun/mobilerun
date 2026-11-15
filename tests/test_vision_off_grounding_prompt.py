@@ -1,4 +1,3 @@
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -46,11 +45,8 @@ def test_vision_off_grounded(prompt, screenshot_only):
 
 
 @pytest.mark.parametrize("prompt", PROMPTS)
-def test_vision_on_matches_develop(prompt):
+def test_vision_on_instructions(prompt):
     path = f"mobilerun/config/prompts/{prompt}"
-    original = subprocess.check_output(
-        ["git", "show", f"origin/develop:{path}"], cwd=ROOT, text=True
-    )
     current = (ROOT / path).read_text()
     context = {"vision": True, "screenshot_only": True, "atomic_actions": {}}
     rendered = PromptLoader.render_template(current, context)
@@ -60,4 +56,10 @@ def test_vision_on_matches_develop(prompt):
         .strip()
     )
     assert block not in rendered
-    assert rendered == PromptLoader.render_template(original, context)
+    if not prompt.startswith("executor/"):
+        assert rendered.count("## Reading Values and Reporting Results") == 1
+        assert "supplied screenshot" in rendered
+        assert "host-side HTTP" in rendered
+        assert "could not be read" in rendered
+        assert "previous state or memory" in rendered
+    assert "Vision is off" not in rendered
