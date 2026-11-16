@@ -1322,7 +1322,7 @@ def test_gpt_6_models_reject_unsupported_reasoning_effort(
 
 @pytest.mark.parametrize(
     ("model", "context_window"),
-    [("MiniMax-M3", 1_000_000), ("MiniMax-M2.7", 204_800)],
+    [("MiniMax-M3", 1_000_000), ("MiniMax-M2.5", 204_800)],
 )
 @pytest.mark.parametrize("provider", ["MiniMax", "OpenAILike"])
 def test_minimax_endpoint_gets_capabilities_and_split_reasoning(

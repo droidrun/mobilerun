@@ -38,14 +38,20 @@ def _is_anthropic(model_id: str) -> bool:
     return model_id.startswith("claude")
 
 
-def model_uses_normalized_coordinates(model_id: str) -> bool:
-    """Whether the model answers screenshot positions on a 0-1000 grid.
+# Measured on-device: these answer on a 0-1000 grid whatever space is declared.
+# Gemini 4 follows the declared pixel space.
+_NORMALIZED_COORDINATE_MODELS = (
+    "gemma",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-pro",
+)
 
-    Gemma and Gemini 3.8 Flash ground in normalized coordinates and ignore a
-    declared pixel space.
-    """
+
+def model_uses_normalized_coordinates(model_id: str) -> bool:
+    """Whether the model answers screenshot positions on a 0-1000 grid."""
     model = model_id.lower()
-    return "gemma" in model or "gemini-3.8-flash" in model
+    return any(marker in model for marker in _NORMALIZED_COORDINATE_MODELS)
 
 
 def model_effective_dims(model_id: str, width: int, height: int) -> tuple[int, int]:

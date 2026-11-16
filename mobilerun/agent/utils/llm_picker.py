@@ -796,7 +796,7 @@ def load_llm(provider_name: str, model: str | None = None, **kwargs: Any) -> LLM
             GeminiOAuthCodeAssistLLM,
         )
 
-        _validate_gemini_oauth_model(kwargs.get("model"))
+        _validate_gemini_oauth_model(kwargs.get("custom_model") or kwargs.get("model"))
         # Drop removed/legacy params a stale config YAML might still carry, so
         # construction doesn't fail and the legacy credential slot can't be
         # selected.

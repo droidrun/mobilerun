@@ -75,20 +75,31 @@ OPENAI_REASONING_EFFORTS: dict[str, frozenset[str]] = {
 
 GEMINI_API_DEFAULT_MODEL = "gemini-3.8-flash"
 GEMINI_OAUTH_DEFAULT_MODEL = "gemini-3.8-flash-tiered"
-# Antigravity still advertises these ids, but generation returns a retirement
-# notice instead of a model response. This does not apply to Developer API ids.
+# Ids the Antigravity catalog no longer serves: generation returns a retirement
+# notice or 404. This does not apply to Developer API ids.
 GEMINI_OAUTH_RETIRED_MODELS = frozenset(
-    {"gemini-3.5-flash-low", "gemini-3.5-flash-extra-low", "gemini-3-flash-agent"}
+    {
+        "gemini-3.7-flash-tiered",
+        "gemini-3.6-flash-low",
+        "gemini-3.6-flash-medium",
+        "gemini-3.6-flash-high",
+        "gemini-3.5-flash-low",
+        "gemini-3.5-flash-extra-low",
+        "gemini-3.1-pro-low",
+        "gemini-3-flash-agent",
+        "gemini-pro-agent",
+    }
 )
 GEMINI_API_MODELS: tuple[str, ...] = (
     GEMINI_API_DEFAULT_MODEL,
+    "gemini-4-hydrogen",
     "gemini-4-argon",
+    "gemini-4-carbon",
     "gemini-3.5-flash-lite",
     "gemini-3.1-pro-preview",
 )
 _GEMINI_OAUTH_MODEL_DISPLAY_NAMES: dict[str, str] = {
     "gemini-3.8-flash-tiered": "gemini-3.8-flash",
-    "gemini-3.7-flash-tiered": "gemini-3.7-flash",
 }
 GEMINI_UNSUPPORTED_SAMPLING_PARAMS = frozenset({"temperature", "top_p", "top_k"})
 
@@ -99,9 +110,7 @@ def gemini_model_omits_sampling_params(model: object) -> bool:
     Google recommends the default temperature for Gemini 3 and later models.
     """
     model_id = str(model or "").strip()
-    return (
-        model_id.startswith(("gemini-3", "gemini-4")) or model_id == "gemini-pro-agent"
-    )
+    return model_id.startswith(("gemini-3", "gemini-4"))
 
 
 PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (

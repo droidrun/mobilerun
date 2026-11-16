@@ -15,10 +15,9 @@ from mobilerun.agent.utils.llm_picker import load_llm
     "model",
     (
         "gemini-3.8-flash-tiered",
-        "gemini-3.7-flash-tiered",
-        "gemini-3.6-flash-low",
-        "gemini-3.6-flash-medium",
-        "gemini-3.6-flash-high",
+        "gemini-3.8-flash-low",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high",
     ),
 )
 def test_gemini_oauth_profile_sends_supported_models_verbatim(
@@ -104,9 +103,7 @@ def _text_chunk(text: str, *, final: bool = False):
     return {"traceId": f"trace-{text}", "response": response}
 
 
-@pytest.mark.parametrize(
-    "model", ("gemini-3.8-flash-tiered", "gemini-3.7-flash-tiered")
-)
+@pytest.mark.parametrize("model", ("gemini-3.8-flash-tiered",))
 def test_tiered_complete_routes_exact_model_over_sse(model: str) -> None:
     llm = _gemini_llm(model)
     session = _SSESession([_text_chunk("O"), _text_chunk("K", final=True)])
@@ -131,9 +128,7 @@ def test_tiered_complete_routes_exact_model_over_sse(model: str) -> None:
     assert request["contents"] == [{"role": "user", "parts": [{"text": "Reply OK"}]}]
 
 
-@pytest.mark.parametrize(
-    "model", ("gemini-3.8-flash-tiered", "gemini-3.7-flash-tiered")
-)
+@pytest.mark.parametrize("model", ("gemini-3.8-flash-tiered",))
 def test_tiered_stream_chat_routes_exact_model_and_image_payload(model: str) -> None:
     import base64
 
@@ -204,13 +199,9 @@ def test_fetch_available_models_uses_friendly_names_for_tiered_gemini_entries():
                     "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
                     "supportsImages": True,
                 },
-                "gemini-3.7-flash-tiered": {
+                "gemini-3.8-flash-high": {
                     "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
-                    "supportsImages": True,
-                },
-                "gemini-3.6-flash-high": {
-                    "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
-                    "displayName": "Gemini 3.6 Flash (High)",
+                    "displayName": "Gemini 3.8 Flash (High)",
                     "supportsImages": True,
                 },
             }
@@ -224,13 +215,8 @@ def test_fetch_available_models_uses_friendly_names_for_tiered_gemini_entries():
             "supports_images": True,
         },
         {
-            "id": "gemini-3.7-flash-tiered",
-            "display_name": "gemini-3.7-flash",
-            "supports_images": True,
-        },
-        {
-            "id": "gemini-3.6-flash-high",
-            "display_name": "Gemini 3.6 Flash (High)",
+            "id": "gemini-3.8-flash-high",
+            "display_name": "Gemini 3.8 Flash (High)",
             "supports_images": True,
         },
     ]
@@ -240,7 +226,6 @@ def test_fetch_available_models_uses_friendly_names_for_tiered_gemini_entries():
     ("model_id", "expected_display_name"),
     [
         ("gemini-3.8-flash-tiered", "gemini-3.8-flash"),
-        ("gemini-3.7-flash-tiered", "gemini-3.7-flash"),
     ],
 )
 def test_fetch_available_models_overrides_tiered_provider_display_name(
@@ -465,8 +450,8 @@ def test_oauth_explicit_default_model_is_honored_not_preset():
 
     # explicit model equal to DEFAULT_MODEL must NOT fall through to a preset
     assert (
-        load_llm("gemini_oauth_code_assist", model="gemini-3.7-flash-tiered").model
-        == "gemini-3.7-flash-tiered"
+        load_llm("gemini_oauth_code_assist", model="gemini-3.8-flash-tiered").model
+        == "gemini-3.8-flash-tiered"
     )
 
 
@@ -475,13 +460,33 @@ def test_oauth_explicit_agy_models_are_honored():
 
     for m in (
         "gemini-3-flash",
-        "gemini-pro-agent",
-        "gemini-3.1-pro-low",
-        "gemini-3.6-flash-low",
-        "gemini-3.6-flash-medium",
-        "gemini-3.6-flash-high",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-pro",
     ):
         assert load_llm("gemini_oauth_code_assist", model=m).model == m
+
+
+@pytest.mark.parametrize(
+    "model",
+    (
+        "gemini-3.7-flash-tiered",
+        "gemini-3.6-flash-high",
+        "gemini-3.1-pro-low",
+        "gemini-pro-agent",
+    ),
+)
+def test_oauth_models_the_catalog_no_longer_serves_are_rejected(model: str):
+    from mobilerun.agent.utils.llm_picker import load_llm
+
+    with pytest.raises(ValueError, match="is retired"):
+        load_llm("gemini_oauth_code_assist", model=model)
+
+
+def test_custom_model_override_is_validated_like_the_model():
+    from mobilerun.agent.utils.llm_picker import load_llm
+
+    with pytest.raises(ValueError, match="Gemini Developer API id"):
+        load_llm("gemini_oauth_code_assist", custom_model="gemini-4-argon")
 
 
 def test_oauth_preset_key_still_resolves():
@@ -602,7 +607,6 @@ def test_wizard_oauth_detection_handles_provider_field_names(tmp_path):
     ("model", "expected_config"),
     (
         ("gemini-3.8-flash-high", {}),
-        ("gemini-pro-agent", {}),
         ("gemini-2.5-flash", {"temperature": 0.2}),
     ),
 )
