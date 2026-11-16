@@ -371,6 +371,7 @@ class FastAgent(Workflow):
                 logger.warning(f"Failed to capture screenshot: {e}")
 
         # Get device state
+        state_read_failed = False
         ui_state = None
         try:
             ui_state = await self.state_provider.get_state()
@@ -397,6 +398,18 @@ class FastAgent(Workflow):
         except DeviceDisconnectedError:
             raise
         except Exception as e:
+            state_read_failed = True
+            ui_state = None
+            # A previous observation is not evidence of the current screen.
+            # Invalidate action targets too, not just the model-facing text.
+            self.action_ctx.ui = None
+            self.shared_state.previous_formatted_device_state = (
+                self.shared_state.formatted_device_state
+            )
+            self.shared_state.formatted_device_state = ""
+            self.shared_state.focused_text = ""
+            self.shared_state.a11y_tree = []
+            self.shared_state.phone_state = {}
             err_desc = str(e) or type(e).__name__
             logger.warning(
                 f"⚠️ Error retrieving state from the connected device: {err_desc}"
@@ -434,6 +447,14 @@ class FastAgent(Workflow):
 
             # Current device state → last user message
             current_state = self.shared_state.formatted_device_state.strip()
+            if state_read_failed:
+                current_state = (
+                    "Device state unavailable: the current UI state could not be read. "
+                    "Do not treat a previous state or memory as the current screen. "
+                    "Retry the observation if needed; if a requested value remains "
+                    "unreadable, report that it could not be read and complete with "
+                    "success=false rather than guessing."
+                )
             if current_state:
                 messages_to_send[last_user_idx].blocks.append(
                     TextBlock(

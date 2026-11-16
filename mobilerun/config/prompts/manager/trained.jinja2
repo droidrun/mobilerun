@@ -1,3 +1,7 @@
+{% if not vision %}
+{% include "shared/vision_off_grounding.jinja2" %}
+
+{% endif %}
 Plan actions for an Android phone task.
 
 <user_request>
@@ -33,6 +37,9 @@ Plan actions for an Android phone task.
 <current_state>
 {{ current_state }}
 </current_state>
+
+
+{% include "shared/reading_values.jinja2" %}
 
 <guidelines>
 - Use `open_app` to open apps, not the app drawer

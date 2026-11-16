@@ -23,6 +23,11 @@ logger = logging.getLogger("mobilerun")
 _MACRO_FOCUS_SETTLE_SECONDS = 0.5
 
 
+def _require_ui_state(ctx: "ActionContext") -> None:
+    if ctx.ui is None:
+        raise ValueError("Device UI state is unavailable. Retry to get a fresh state.")
+
+
 # ---------------------------------------------------------------------------
 # Core UI actions
 # ---------------------------------------------------------------------------
@@ -175,6 +180,7 @@ def _validate_normalized_point(
 def _convert_action_point(
     x: int | float, y: int | float, *, ctx: "ActionContext"
 ) -> tuple[int, int]:
+    _require_ui_state(ctx)
     _validate_screenshot_only_point(x, y, ctx=ctx)
     _validate_normalized_point(x, y, ctx=ctx)
     _require_active_coordinate_contract(ctx)
@@ -260,6 +266,7 @@ def _record_driver_log_delta(
 async def click(index: int, *, ctx: "ActionContext") -> ActionResult:
     """Click the element with the given index."""
     try:
+        _require_ui_state(ctx)
         pre_ui = await _macro_pre_ui(ctx)
         x, y = ctx.ui.get_element_coords(index)
         await ctx.driver.tap(x, y)
@@ -291,6 +298,7 @@ async def click(index: int, *, ctx: "ActionContext") -> ActionResult:
 async def long_press(index: int, *, ctx: "ActionContext") -> ActionResult:
     """Long press the element with the given index."""
     try:
+        _require_ui_state(ctx)
         pre_ui = await _macro_pre_ui(ctx)
         x, y = ctx.ui.get_element_coords(index)
         await ctx.driver.swipe(x, y, x, y, 1000)
@@ -374,6 +382,7 @@ async def click_area(
 ) -> ActionResult:
     """Click center of area."""
     try:
+        _require_ui_state(ctx)
         pre_ui = await _macro_pre_ui(ctx)
         _validate_screenshot_only_point(x1, y1, ctx=ctx)
         _validate_screenshot_only_point(x2, y2, ctx=ctx)
@@ -405,6 +414,8 @@ async def type_text(
 ) -> ActionResult:
     """Type text into an indexed element or the currently focused input."""
     try:
+        if index is not None and index != -1:
+            _require_ui_state(ctx)
         pre_ui = await _macro_pre_ui(ctx)
         if index is not None and index != -1:
             x, y = ctx.ui.get_element_coords(index)
@@ -670,6 +681,11 @@ async def type_secret(
     secret_id: str, index: int, *, ctx: "ActionContext"
 ) -> ActionResult:
     """Type a secret credential into an input field without exposing the value."""
+    if index != -1 and ctx.ui is None:
+        return ActionResult(
+            success=False,
+            summary="Device UI state is unavailable. Retry to get a fresh state.",
+        )
     if ctx.credential_manager is None:
         return ActionResult(
             success=False,

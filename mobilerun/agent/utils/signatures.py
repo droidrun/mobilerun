@@ -321,7 +321,10 @@ async def build_tool_registry(
         },
         description=(
             "Mark task as complete. "
-            "success=true if task succeeded, false if failed. "
+            "success=true only when the requested outcome is verified. "
+            "For screen-reading tasks, report only observed values and name their "
+            "app/page source. If any requested value could not be read, say so "
+            "in message and use success=false; never guess missing values. "
             "message contains the result, answer, or explanation."
         ),
     )

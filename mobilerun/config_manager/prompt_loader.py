@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import aiofiles
+from jinja2 import FileSystemLoader
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 
@@ -30,6 +31,9 @@ class PromptLoader:
         """Get or create cached sandboxed Jinja2 environment."""
         if cls._env is None:
             cls._env = ImmutableSandboxedEnvironment(
+                loader=FileSystemLoader(
+                    Path(__file__).resolve().parent.parent / "config" / "prompts"
+                ),
                 trim_blocks=True,  # Remove first newline after block
                 lstrip_blocks=True,  # Strip leading whitespace before blocks
                 keep_trailing_newline=False,
