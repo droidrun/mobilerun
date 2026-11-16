@@ -429,8 +429,9 @@ def _wait_for_validation(client, item):
             item_id, wait_s=VALIDATION_POLL_SECONDS, timeout=timeout
         ).data,
         lambda item: item.status != "pending",
-        # The server long-polls (wait_s); no client-side pause between requests.
-        delays=(0, 0),
+        # The server long-polls (wait_s); pause only between polls so an
+        # immediate pending answer cannot become a tight loop.
+        delays=(0, 1),
     )
 
 

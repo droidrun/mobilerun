@@ -871,7 +871,7 @@ def test_check_remote_polls_until_done(sdk, file, clock):
     result = check(file, "-j")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["status"] == "done"
-    assert sum(clock.sleeps) == 0
+    assert clock.sleeps == [0, 1]
     assert sdk.scripts.validations.retrieve.call_count == 2
     assert sdk.scripts.validations.retrieve.call_args.args == (ID1,)
     assert sdk.scripts.validations.retrieve.call_args.kwargs["wait_s"] == 5
@@ -936,8 +936,8 @@ def test_check_remote_pending_after_deadline(sdk, file, clock):
     assert result.exit_code == 0, result.output
     assert result.stdout == f"{ID1}\n"
     assert "still pending" in result.stderr
-    assert sum(clock.sleeps) == 0
-    assert sdk.scripts.validations.retrieve.call_count == 12
+    assert clock.sleeps[:3] == [0, 1, 1]
+    assert sdk.scripts.validations.retrieve.call_count == 10
 
 
 def test_check_remote_no_wait(sdk, file, clock):
