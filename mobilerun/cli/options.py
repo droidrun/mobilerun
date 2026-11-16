@@ -8,10 +8,12 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import traceback
 import unicodedata
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from functools import wraps
+from pathlib import Path
 
 import click
 
@@ -647,3 +649,86 @@ def stdout():
 def examples(*lines, docs=None):
     text = "\b\nExamples:\n" + "\n".join("  " + line for line in lines)
     return text + (f"\n\nDocs: {docs}" if docs else "")
+
+
+# Exit code of `mobilerun_routines inspect` for a script that fails validation.
+INVALID_EXIT_CODE = 3
+
+
+@contextmanager
+def cloud_client(api_url):
+    # Keep the SDK and core imports out of help, completion, and version startup.
+    from mobilerun_core.connection.cloud import make_sdk_client
+
+    from mobilerun.cli.selection import require_cloud_api_key
+
+    client = make_sdk_client(require_cloud_api_key(), api_url)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+def _issue_line(issue, prefix=""):
+    message = issue.get("message", "")
+    if issue.get("line") is not None:
+        message = f"line {issue['line']}: {message}"
+    elif isinstance(issue.get("field"), str):
+        message = f"{issue['field'] or '(document)'}: {message}"
+    repair = issue.get("repair")
+    hint = repair.get("hint") if isinstance(repair, dict) else None
+    if hint:
+        message += f" — {hint}"
+    return prefix + message
+
+
+def print_issues(document):
+    """Render a validation document: errors as lines, warnings with a prefix."""
+    if not isinstance(document, dict):
+        click.echo(str(document), err=True)
+        return
+    errors = document.get("errors")
+    if isinstance(errors, list) and errors:
+        for issue in errors:
+            if isinstance(issue, dict):
+                click.echo(_issue_line(issue), err=True)
+    else:
+        code = document.get("code")
+        message = document.get("message", "")
+        if code or message:
+            click.echo(f"{code}: {message}" if code else message, err=True)
+    warnings = document.get("warnings")
+    for issue in warnings if isinstance(warnings, list) else []:
+        if isinstance(issue, dict):
+            click.echo(_issue_line(issue, "warning: "), err=True)
+
+
+def write_file(path, data, *, force):
+    """Publish a complete file; without `force` only if the destination is free."""
+    if path.exists() and not force:
+        raise click.ClickException(
+            f"{path} already exists; use --force to overwrite it."
+        )
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=".mobilerun-pull-", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if force:
+            os.replace(temporary, path)
+        else:
+            # Linking publishes the complete file only if the destination is free.
+            os.link(temporary, path)
+    except FileExistsError:
+        raise click.ClickException(
+            f"{path} already exists; use --force to overwrite it."
+        ) from None
+    except OSError as exc:
+        raise click.ClickException(f"Cannot write {path}: {exc}") from None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

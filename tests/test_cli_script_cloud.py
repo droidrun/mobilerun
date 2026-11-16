@@ -19,6 +19,7 @@ from mobilerun_sdk import (
 from mobilerun_sdk.types.script import Script
 from mobilerun_sdk.types.script_source import ScriptSource
 from mobilerun_sdk.types.script_source_response import ScriptSourceResponse
+from mobilerun_sdk.types.scripts.validation import Validation
 
 from mobilerun.cli import deviceauth, script, selection
 from mobilerun.cli.main import cli
@@ -47,6 +48,23 @@ def record(**updates):
     )
     values.update(updates)
     return Script(**values)
+
+
+def validation(**updates):
+    values = dict(
+        id=ID1,
+        createdAt=datetime(2026, 11, 16, tzinfo=timezone.utc),
+        status="done",
+        valid=True,
+        errors=[],
+        warnings=[],
+        outputKind="value",
+        datasetKey=None,
+        inputSchema={"type": "object"},
+        outputSchema={"type": "string"},
+    )
+    values.update(updates)
+    return Validation(**values)
 
 
 def page(*items, has_next=False):
@@ -192,25 +210,39 @@ def test_push_wait_inspection(sdk, file, clock, status, exit_code, json_output):
     "error,expected",
     [
         (
-            {"code": "invalid_script", "message": "Invalid", "errors": [
-                {"message": "Entry point missing", "line": 4,
-                 "repair": {"hint": "Define main"}},
-                {"message": "Schema missing"},
-                {"message": "Add schema", "repair": {"hint": "Use a type"}},
-            ]},
+            {
+                "code": "invalid_script",
+                "message": "Invalid",
+                "errors": [
+                    {
+                        "message": "Entry point missing",
+                        "line": 4,
+                        "repair": {"hint": "Define main"},
+                    },
+                    {"message": "Schema missing"},
+                    {"message": "Add schema", "repair": {"hint": "Use a type"}},
+                ],
+            },
             "line 4: Entry point missing — Define main\nSchema missing\n"
             "Add schema — Use a type\n",
         ),
         (None, "Inspection rejected\n"),
         (
-            {"code": "invalid_script", "message": "Invalid",
-             "errors": ["not an issue", {"message": "Invalid", "repair": "bad"}]},
+            {
+                "code": "invalid_script",
+                "message": "Invalid",
+                "errors": ["not an issue", {"message": "Invalid", "repair": "bad"}],
+            },
             "Invalid\n",
         ),
-        ({"code": "invalid_script", "message": "Invalid", "errors": []},
-         "invalid_script: Invalid\n"),
-        ({"code": "invalid_script", "message": "Invalid", "errors": "bad"},
-         "invalid_script: Invalid\n"),
+        (
+            {"code": "invalid_script", "message": "Invalid", "errors": []},
+            "invalid_script: Invalid\n",
+        ),
+        (
+            {"code": "invalid_script", "message": "Invalid", "errors": "bad"},
+            "invalid_script: Invalid\n",
+        ),
     ],
 )
 def test_push_rejected_diagnostics(sdk, file, error, expected):
@@ -809,3 +841,105 @@ def test_error_details_text_is_bounded_json_is_complete(sdk, shape):
     else:
         assert len(lines) == 1
     assert lines[0].endswith("…")
+
+
+def check(*args):
+    return invoke("check", "--remote", *args)
+
+
+def test_check_remote_valid_summary(sdk, file):
+    sdk.scripts.validations.create.return_value = SimpleNamespace(data=validation())
+    result = check(file)
+    assert result.exit_code == 0, result.output
+    assert result.stdout == (
+        "Output kind: value\nDataset key: None\n"
+        'Input schema:\n{\n  "type": "object"\n}\n'
+        'Output schema:\n{\n  "type": "string"\n}\n'
+    )
+    assert result.stderr == ""
+    sdk.scripts.validations.create.assert_called_once_with(source=SOURCE)
+
+
+def test_check_remote_polls_until_done(sdk, file, clock):
+    sdk.scripts.validations.create.return_value = SimpleNamespace(
+        data=validation(status="pending", valid=None)
+    )
+    sdk.scripts.validations.retrieve.side_effect = [
+        SimpleNamespace(data=validation(status="pending", valid=None)),
+        SimpleNamespace(data=validation()),
+    ]
+    result = check(file, "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["status"] == "done"
+    assert clock.sleeps == [1, 2]
+    assert sdk.scripts.validations.retrieve.call_args.args == (ID1,)
+    assert sdk.scripts.validations.retrieve.call_args.kwargs["wait_s"] == 5
+
+
+ISSUES = [
+    {
+        "code": "no_entry",
+        "message": "Entry point missing",
+        "line": 4,
+        "repair": {"action": "edit", "hint": "Define main"},
+    },
+    {"code": "no_schema", "message": "Schema missing"},
+]
+WARNINGS = [{"code": "slow", "message": "Slow import", "line": 1}]
+
+
+def test_check_remote_invalid_renders_issues(sdk, file):
+    sdk.scripts.validations.create.return_value = SimpleNamespace(
+        data=validation(valid=False, errors=ISSUES, warnings=WARNINGS)
+    )
+    result = check(file)
+    assert result.exit_code == 3, result.output
+    assert result.stdout == ""
+    assert result.stderr == (
+        "line 4: Entry point missing — Define main\n"
+        "Schema missing\nwarning: line 1: Slow import\n"
+    )
+
+
+def test_check_remote_invalid_json_is_server_document(sdk, file):
+    sdk.scripts.validations.create.return_value = SimpleNamespace(
+        data=validation(valid=False, errors=ISSUES)
+    )
+    result = check(file, "-j")
+    assert result.exit_code == 3, result.output
+    document = json.loads(result.stdout)
+    assert document["valid"] is False
+    assert document["errors"][0]["line"] == 4
+    assert result.stderr.startswith("line 4: Entry point missing")
+
+
+def test_check_remote_failed_validation(sdk, file):
+    sdk.scripts.validations.create.return_value = SimpleNamespace(
+        data=validation(status="failed", valid=None)
+    )
+    result = check(file)
+    assert result.exit_code == 1, result.output
+    assert result.stderr == "Validation failed\n"
+
+
+def test_check_remote_pending_after_deadline(sdk, file, clock):
+    pending = SimpleNamespace(data=validation(status="pending", valid=None))
+    sdk.scripts.validations.create.return_value = pending
+    sdk.scripts.validations.retrieve.return_value = pending
+    result = check(file)
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"{ID1}\n"
+    assert "still pending" in result.stderr
+    assert sum(clock.sleeps) == 60
+
+
+def test_check_remote_no_wait(sdk, file, clock):
+    sdk.scripts.validations.create.return_value = SimpleNamespace(
+        data=validation(status="pending", valid=None)
+    )
+    result = check(file, "--no-wait")
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"{ID1}\n"
+    assert f"mobilerun script check {file} --remote" in result.stderr
+    assert clock.sleeps == []
+    sdk.scripts.validations.retrieve.assert_not_called()

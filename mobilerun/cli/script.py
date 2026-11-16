@@ -10,14 +10,15 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
 import click
 
 from mobilerun.cli.options import (
+    INVALID_EXIT_CODE,
     Group,
     api_url_option,
+    cloud_client,
     convert_api_error,
     device_option,
     emit,
@@ -27,10 +28,16 @@ from mobilerun.cli.options import (
     json_option,
     no_input_option,
     platform_option,
+    print_issues,
     redact_secrets,
     target_option,
     verbose_option,
+    write_file,
 )
+
+# Total wait for inspection or validation, and the server-side long-poll per request.
+WAIT_SECONDS = 60
+VALIDATION_POLL_SECONDS = 5
 
 python_option = click.option(
     "--python", "python_path", help="Python interpreter for the script."
@@ -88,39 +95,22 @@ def init_script(path, python_path, verbose):
     raise click.exceptions.Exit(result.returncode)
 
 
-def _print_script_errors(error):
-    if error is None:
-        click.echo("Inspection rejected", err=True)
-        return
-    if not isinstance(error, dict):
-        click.echo(str(error), err=True)
-        return
-    errors = error.get("errors")
-    if not isinstance(errors, list) or not errors:
-        code = error.get("code")
-        message = error.get("message", "")
-        click.echo(f"{code}: {message}" if code else message, err=True)
-        return
-    for issue in errors:
-        if not isinstance(issue, dict):
-            continue
-        message = issue.get("message", "")
-        if issue.get("line") is not None:
-            message = f"line {issue['line']}: {message}"
-        repair = issue.get("repair")
-        hint = repair.get("hint") if isinstance(repair, dict) else None
-        if hint:
-            message += f" — {hint}"
-        click.echo(message, err=True)
+def _emit_summary(document):
+    for label, key in (
+        ("Entry point", "entrypoint"),
+        ("Output kind", "outputKind"),
+        ("Dataset key", "datasetKey"),
+    ):
+        if key in document:
+            emit(f"{label}: {document[key]}")
+    for label, key in (
+        ("Input schema", "inputSchema"),
+        ("Output schema", "outputSchema"),
+    ):
+        emit(f"{label}:\n" + json.dumps(document[key], indent=2))
 
 
-@script_cli.command("check", epilog=examples("mobilerun script check script.py -j"))
-@click.argument("path", type=click.Path(exists=True, dir_okay=False))
-@python_option
-@json_option
-@verbose_option
-def check_script(path, python_path, json_output, verbose):
-    """Inspect a script's entry point and schemas."""
+def _check_local(path, python_path, json_output):
     interpreter = _interpreter(python_path)
     result = subprocess.run(
         [interpreter, "-m", "mobilerun_routines", "inspect", path],
@@ -142,12 +132,60 @@ def check_script(path, python_path, json_output, verbose):
     if json_output:
         emit(result.stdout.rstrip("\n"))
     else:
-        document = json.loads(result.stdout)
-        emit(f"Entry point: {document['entrypoint']}")
-        emit(f"Output kind: {document['outputKind']}")
-        emit(f"Dataset key: {document['datasetKey']}")
-        emit("Input schema:\n" + json.dumps(document["inputSchema"], indent=2))
-        emit("Output schema:\n" + json.dumps(document["outputSchema"], indent=2))
+        _emit_summary(json.loads(result.stdout))
+
+
+def _check_remote(path, wait, api_url, json_output):
+    source = _read_source(Path(path))
+    with cloud_client(api_url) as client:
+        item = client.scripts.validations.create(source=source).data
+        if wait:
+            item = _wait_for_validation(client, item)
+    document = item.model_dump(mode="json", by_alias=True)
+    if json_output:
+        emit(document, json_output=True)
+    if item.status == "pending":
+        if not json_output:
+            emit(item.id)
+        click.echo(
+            f"Validation still pending; run `mobilerun script check {path} --remote` again.",
+            err=True,
+        )
+        return
+    if item.status == "failed":
+        print_issues(document if item.errors else {"message": "Validation failed"})
+        raise click.exceptions.Exit(1)
+    if not json_output and item.valid:
+        _emit_summary(document)
+    print_issues(document)
+    if not item.valid:
+        raise click.exceptions.Exit(INVALID_EXIT_CODE)
+
+
+@script_cli.command(
+    "check",
+    epilog=examples(
+        "mobilerun script check script.py -j",
+        "mobilerun script check script.py --remote",
+    ),
+)
+@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@python_option
+@click.option("--remote", is_flag=True, help="Validate in Mobilerun Cloud.")
+@click.option(
+    "--wait/--no-wait", default=True, help="With --remote, wait up to 60 seconds."
+)
+@api_url_option
+@json_option
+@verbose_option
+def check_script(path, python_path, remote, wait, api_url, json_output, verbose):
+    """Inspect a script's entry point and schemas."""
+    if remote and python_path:
+        raise click.UsageError("--remote and --python cannot be combined.")
+    if remote:
+        _check_remote(path, wait, api_url, json_output)
+    else:
+        _check_local(path, python_path, json_output)
 
 
 def _device_flags(
@@ -278,20 +316,6 @@ def run_script(
         raise click.exceptions.Exit(result.returncode)
 
 
-@contextmanager
-def _script_client(api_url):
-    # Keep the SDK and core imports out of help, completion, and version startup.
-    from mobilerun_core.connection.cloud import make_sdk_client
-
-    from mobilerun.cli.selection import require_cloud_api_key
-
-    client = make_sdk_client(require_cloud_api_key(), api_url)
-    try:
-        yield client
-    finally:
-        client.close()
-
-
 def _script_versions(client, **filters):
     items = []
     page = 1
@@ -363,15 +387,15 @@ def _print_script(item, json_output, *, metadata=False):
         )
 
 
-def _wait_for_inspection(client, item):
+def _poll_until(client, item, fetch, is_final):
     import httpx
     from mobilerun_sdk import APIError
 
-    # Retried requests could outlive the inspection wait budget.
+    # Retried requests could outlive the wait budget.
     poller = client.with_options(max_retries=0)
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + WAIT_SECONDS
     delay = 1
-    while item.status not in {"ready", "rejected"}:
+    while not is_final(item):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
@@ -380,14 +404,41 @@ def _wait_for_inspection(client, item):
         if remaining <= 0:
             break
         try:
-            item = poller.scripts.retrieve(
-                item.id, timeout=httpx.Timeout(min(remaining, 10))
-            ).data
+            item = fetch(poller, item.id, httpx.Timeout(min(remaining, 10)))
         except APIError:
             # The upload succeeded: retain its identity even if polling fails.
             break
         delay = 2
     return item
+
+
+def _wait_for_inspection(client, item):
+    return _poll_until(
+        client,
+        item,
+        lambda poller, item_id, timeout: poller.scripts.retrieve(
+            item_id, timeout=timeout
+        ).data,
+        lambda item: item.status in {"ready", "rejected"},
+    )
+
+
+def _wait_for_validation(client, item):
+    return _poll_until(
+        client,
+        item,
+        lambda poller, item_id, timeout: poller.scripts.validations.retrieve(
+            item_id, wait_s=VALIDATION_POLL_SECONDS, timeout=timeout
+        ).data,
+        lambda item: item.status != "pending",
+    )
+
+
+def _read_source(file):
+    try:
+        return file.read_bytes().decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise click.ClickException(f"Cannot read {file}: {exc}") from None
 
 
 @script_cli.command("push", epilog=examples("mobilerun script push hello.py"))
@@ -407,10 +458,7 @@ def _wait_for_inspection(client, item):
 @verbose_option
 def push_script(file, name, description, manifest, wait, api_url, json_output, verbose):
     """Upload a new immutable version of a Python script."""
-    try:
-        source = file.read_bytes().decode("utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise click.ClickException(f"Cannot read {file}: {exc}") from None
+    source = _read_source(file)
     params = {"name": name if name is not None else file.name, "source": source}
     if description is not None:
         params["description"] = description
@@ -421,14 +469,14 @@ def push_script(file, name, description, manifest, wait, api_url, json_output, v
             raise click.BadParameter(str(exc), param_hint="--manifest") from None
         if not isinstance(params["manifest"], dict):
             raise click.BadParameter("Expected a JSON object.", param_hint="--manifest")
-    with _script_client(api_url) as client:
+    with cloud_client(api_url) as client:
         item = client.scripts.create(**params).data
         if wait:
             item = _wait_for_inspection(client, item)
     _print_script(item, json_output)
     if item.status == "rejected":
         error = _script_document(item).get("inspectError")
-        _print_script_errors(error)
+        print_issues(error or {"message": "Inspection rejected"})
         raise click.exceptions.Exit(1)
     if wait and item.status != "ready":
         click.echo(
@@ -453,7 +501,7 @@ def list_scripts(name, search, api_url, json_output, verbose):
     filters = {"latest": "true"} if name is None else {"name": name}
     if search is not None:
         filters["search"] = search
-    with _script_client(api_url) as client:
+    with cloud_client(api_url) as client:
         items = _script_versions(client, **filters)
     if name is not None:
         items.sort(key=lambda item: item.version, reverse=True)
@@ -487,7 +535,7 @@ def list_scripts(name, search, api_url, json_output, verbose):
 @verbose_option
 def show_script(name_or_id, version, api_url, json_output, verbose):
     """Show script metadata, manifest, schemas, and inspection errors."""
-    with _script_client(api_url) as client:
+    with cloud_client(api_url) as client:
         item = _resolve_script(client, name_or_id, version)
     _print_script(item, json_output, metadata=True)
 
@@ -521,7 +569,7 @@ def pull_script(name_or_id, version, output, force, api_url, json_output, verbos
         raise click.ClickException(
             f"{path} already exists; use --force to overwrite it."
         )
-    with _script_client(api_url) as client:
+    with cloud_client(api_url) as client:
         item = _resolve_script(client, name_or_id, version)
         source = client.scripts.source(item.id).data
     data = source.source.encode("utf-8")
@@ -530,29 +578,7 @@ def pull_script(name_or_id, version, output, force, api_url, json_output, verbos
         raise click.ClickException(
             "Script source SHA-256 does not match the API; no file written."
         )
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            dir=path.parent, prefix=".mobilerun-pull-", delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        if force:
-            os.replace(temporary, path)
-        else:
-            # Linking publishes the complete file only if the destination is free.
-            os.link(temporary, path)
-    except FileExistsError:
-        raise click.ClickException(
-            f"{path} already exists; use --force to overwrite it."
-        ) from None
-    except OSError as exc:
-        raise click.ClickException(f"Cannot write {path}: {exc}") from None
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    write_file(path, data, force=force)
     document = {
         "id": item.id,
         "name": item.name,
@@ -611,7 +637,7 @@ def delete_script(
         raise click.UsageError(
             "Deletion requires --yes when input is unavailable or --no-input is set."
         )
-    with _script_client(api_url) as client:
+    with cloud_client(api_url) as client:
         versions, by_id = _lookup_script_versions(client, name_or_id)
         if by_id and all_versions:
             raise click.UsageError("--all requires a script name, not an id.")

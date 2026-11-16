@@ -417,3 +417,11 @@ def test_run_device_error_does_not_start_routines(monkeypatch, source, flags, me
         assert "mobilerun auth login" in result.stderr
     call.assert_called_once()
     assert call.call_args.args[0] == [sys.executable, "-c", "import mobilerun_routines"]
+
+
+def test_check_remote_rejects_python(source):
+    result = CliRunner().invoke(
+        cli, ["script", "check", source, "--remote", "--python", sys.executable]
+    )
+    assert result.exit_code == 2, result.output
+    assert "--remote and --python cannot be combined" in result.stderr
