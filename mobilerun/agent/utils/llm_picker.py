@@ -91,6 +91,9 @@ ZAI_GLOBAL_API_BASE = "https://api.z.ai/api/paas/v4"
 # Antigravity OAuth catalog. Catch these locally so users get the applicable
 # OAuth choices instead of a remote model-not-found response.
 GEMINI_OAUTH_UNSUPPORTED_MODELS = {
+    "gemini-4-hydrogen",
+    "gemini-4-argon",
+    "gemini-4-carbon",
     "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
@@ -101,6 +104,7 @@ GEMINI_OAUTH_UNSUPPORTED_MODELS = {
 OPENAI_RESPONSES_MODELS_WITHOUT_SAMPLING_PARAMS = {
     "gpt-6-astra",
     "gpt-6.1-sol",
+    "gpt-6.1-terra",
     "gpt-6-sol",
     "gpt-6-luna",
     "gpt-5.6-sol",

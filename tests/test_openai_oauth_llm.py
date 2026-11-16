@@ -421,6 +421,7 @@ def test_oauth_structured_extraction_prompts_for_schema(
     ("model", "effort"),
     (
         ("gpt-6.1-sol", "max"),
+        ("gpt-6.1-terra", "none"),
         ("gpt-6-sol", "none"),
         ("gpt-6-luna", "xhigh"),
         ("gpt-5.6-sol", "high"),
@@ -455,7 +456,9 @@ def test_oauth_forwards_configured_reasoning_for_every_model(
     assert request["reasoning"] == {"effort": effort}
 
 
-@pytest.mark.parametrize("model", ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"))
+@pytest.mark.parametrize(
+    "model", ("gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna")
+)
 def test_oauth_gpt_6_sol_and_luna_have_no_reasoning_default(tmp_path, model) -> None:
     llm = _offline_oauth_llm(tmp_path, model=model)
 

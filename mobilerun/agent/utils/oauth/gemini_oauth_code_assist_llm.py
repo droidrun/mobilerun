@@ -170,7 +170,8 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
 
     MODEL_PRESETS: ClassVar[Dict[str, str]] = {
         "flash": GEMINI_OAUTH_DEFAULT_MODEL,
-        "pro": "gemini-pro-agent",
+        # The consumer entitlement serves its pro tier with the same model.
+        "pro": GEMINI_OAUTH_DEFAULT_MODEL,
         "flash_lite": "gemini-3.5-flash-lite",
     }
 

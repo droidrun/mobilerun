@@ -79,8 +79,10 @@ def test_opus_4_8_payload_sends_max_tokens_without_temperature():
         ("claude-sonnet-5-5", 1_000_000),
         ("claude-opus-5", 1_000_000),
         ("claude-sonnet-5", 1_000_000),
+        ("claude-fable-5-2", 1_000_000),
         ("claude-fable-5-1", 1_000_000),
         ("claude-fable-5", 1_000_000),
+        ("claude-haiku-5-5", 1_000_000),
         ("claude-opus-4-8", 1_000_000),
         ("claude-opus-4-7", 1_000_000),
         ("claude-opus-4-6", 1_000_000),
@@ -102,8 +104,10 @@ def test_current_model_metadata_has_verified_context_window(model, context_windo
         "claude-sonnet-5-5",
         "claude-opus-5",
         "claude-sonnet-5",
+        "claude-fable-5-2",
         "claude-fable-5-1",
         "claude-fable-5",
+        "claude-haiku-5-5",
         "claude-opus-4-8",
         "claude-opus-4-7",
     ],
@@ -131,18 +135,40 @@ def test_models_without_sampling_strip_all_final_payload_overrides(model):
 
 
 @pytest.mark.parametrize(
-    "model", ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]
+    "model",
+    [
+        "claude-fable-5-2",
+        "claude-fable-5-1",
+        "claude-haiku-5-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+    ],
 )
 def test_current_models_use_high_resolution_vision_budget(model):
     assert model in ANTHROPIC_HIGHRES_MODELS
 
 
+@pytest.mark.parametrize(
+    ("model", "marked"),
+    [
+        ("claude-haiku-5-5", True),
+        ("claude-haiku-4-5", False),
+        ("claude-fable-5-2", True),
+    ],
+)
+def test_billing_marker_is_sent_except_for_haiku_4(model, marked):
+    session = _session_for(model=model)
+
+    system = session.payload.get("system") or []
+    assert any("cc_version=" in block["text"] for block in system) is marked
+
+
 def test_fable_5_1_uses_current_claude_code_identity_defaults():
     session = _session_for(model="claude-fable-5-1")
 
-    assert DEFAULT_CLAUDE_CODE_VERSION == "2.1.281"
-    assert DEFAULT_USER_AGENT == "claude-cli/2.1.281"
-    assert DEFAULT_CC_VERSION == "2.1.281.000"
+    assert DEFAULT_CLAUDE_CODE_VERSION == "2.1.325"
+    assert DEFAULT_USER_AGENT == "claude-cli/2.1.325"
+    assert DEFAULT_CC_VERSION == "2.1.325.000"
     assert session.headers["User-Agent"] == DEFAULT_USER_AGENT
     assert f"cc_version={DEFAULT_CC_VERSION};" in session.payload["system"][0]["text"]
 

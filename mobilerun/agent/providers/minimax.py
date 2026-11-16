@@ -13,6 +13,7 @@ MINIMAX_DEFAULT_MODEL = "MiniMax-M3"
 
 MINIMAX_MODEL_CONTEXT_WINDOWS = {
     "MiniMax-M3": 1_000_000,
+    "MiniMax-M3.1-Flash": 1_000_000,
     "MiniMax-M2.7": 204_800,
     "MiniMax-M2.7-highspeed": 204_800,
     "MiniMax-M2.5": 204_800,

@@ -53,11 +53,11 @@ OPENAI_OAUTH_UNSUPPORTED_MODELS = frozenset(
 )
 # No longer offered, but still recognized when normalizing saved model ids.
 OPENAI_LEGACY_MODELS = frozenset(
-    {"gpt-6-sol", "gpt-6-luna", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
+    {"gpt-6-sol", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
 )
 # GPT-6 ids are missing from llama-index's static OpenAI metadata.
 OPENAI_GPT6_MODELS = frozenset(
-    {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"}
+    {"gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"}
 )
 OPENAI_GPT6_CONTEXT_WINDOW = 1_050_000
 _OPENAI_LOW_TO_MAX_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
@@ -65,6 +65,7 @@ _OPENAI_NONE_TO_MAX_EFFORTS = _OPENAI_LOW_TO_MAX_EFFORTS | {"none"}
 OPENAI_REASONING_EFFORTS: dict[str, frozenset[str]] = {
     "gpt-6-astra": _OPENAI_LOW_TO_MAX_EFFORTS,
     "gpt-6.1-sol": _OPENAI_LOW_TO_MAX_EFFORTS,
+    "gpt-6.1-terra": _OPENAI_NONE_TO_MAX_EFFORTS,
     "gpt-6-sol": _OPENAI_NONE_TO_MAX_EFFORTS,
     "gpt-6-luna": _OPENAI_NONE_TO_MAX_EFFORTS,
     "gpt-5.6-sol": _OPENAI_NONE_TO_MAX_EFFORTS,
@@ -81,8 +82,9 @@ GEMINI_OAUTH_RETIRED_MODELS = frozenset(
 )
 GEMINI_API_MODELS: tuple[str, ...] = (
     GEMINI_API_DEFAULT_MODEL,
+    "gemini-4-hydrogen",
     "gemini-4-argon",
-    "gemini-3.7-flash",
+    "gemini-4-carbon",
     "gemini-3.5-flash-lite",
     "gemini-3.1-pro-preview",
 )
@@ -128,10 +130,7 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                     "gemini-3.8-flash-low",
                     "gemini-3.8-flash-medium",
                     "gemini-3.8-flash-high",
-                    "gemini-3.7-flash-tiered",
                     "gemini-3.5-flash-lite",
-                    "gemini-pro-agent",
-                    "gemini-3.1-pro-low",
                 ),
                 credential_path=str(GEMINI_OAUTH_CREDENTIAL_PATH),
             ),
@@ -149,6 +148,8 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 models=(
                     OPENAI_API_DEFAULT_MODEL,
                     "gpt-6.1-sol",
+                    "gpt-6.1-terra",
+                    "gpt-6-luna",
                     "gpt-5.6-sol",
                     "gpt-5.6-terra",
                     "gpt-5.6-luna",
@@ -163,6 +164,8 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 models=(
                     OPENAI_OAUTH_DEFAULT_MODEL,
                     "gpt-6.1-sol",
+                    "gpt-6.1-terra",
+                    "gpt-6-luna",
                     "gpt-5.6-sol",
                     "gpt-5.6-terra",
                     "gpt-5.6-luna",
@@ -262,8 +265,7 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 default_model=MINIMAX_DEFAULT_MODEL,
                 models=(
                     MINIMAX_DEFAULT_MODEL,
-                    "MiniMax-M2.7",
-                    "MiniMax-M2.7-highspeed",
+                    "MiniMax-M3.1-Flash",
                 ),
                 requires_api_key=True,
                 requires_base_url=True,
@@ -283,6 +285,8 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 default_model="glm-5",
                 models=(
                     "glm-5",
+                    "glm-5.3",
+                    "glm-5.3-flash",
                     "glm-5v-turbo",
                     "glm-4.7",
                 ),
@@ -296,7 +300,7 @@ PROVIDER_FAMILIES: tuple[ProviderFamilySpec, ...] = (
                 runtime_transport_provider_name="OpenAILike",
                 auth_mode="coding_api",
                 default_model="glm-4.7",
-                models=("glm-4.7",),
+                models=("glm-4.7", "glm-5.3", "glm-5.3-flash"),
                 requires_api_key=True,
                 requires_base_url=True,
                 base_url="https://api.z.ai/api/coding/paas/v4",

@@ -43,6 +43,7 @@ def test_normalize_provider_name_accepts_user_facing_aliases(
         "gpt-6-sol",
         "gpt-6-luna",
         "gpt-6.1-sol",
+        "gpt-6.1-terra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -75,6 +76,7 @@ def test_openai_responses_current_reasoning_models_omit_sampling_params(
         "gpt-6-sol",
         "gpt-6-luna",
         "gpt-6.1-sol",
+        "gpt-6.1-terra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -148,6 +150,7 @@ def test_openai_structured_predict_omits_per_call_sampling_params(
         ("gpt-6-sol", 1_050_000),
         ("gpt-6-luna", 1_050_000),
         ("gpt-6.1-sol", 1_050_000),
+        ("gpt-6.1-terra", 1_050_000),
         ("gpt-5.6-sol", 1_050_000),
         ("gpt-5.6-terra", 1_050_000),
         ("gpt-5.6-luna", 1_050_000),
@@ -464,6 +467,8 @@ def test_gemini_oauth_allows_live_unadvertised_2_5_ids(model: str) -> None:
         "gemini-3-flash-preview",
         "gemini-3.1-pro-preview",
         "gemini-4-argon",
+        "gemini-4-hydrogen",
+        "gemini-4-carbon",
     ],
 )
 def test_gemini_3_google_genai_models_omit_sampling_configuration(model: str) -> None:
@@ -871,7 +876,14 @@ def test_gemini_oauth_supported_choices_come_from_registry() -> None:
 
 @pytest.mark.parametrize(
     "model",
-    ["claude-opus-4-8", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"],
+    [
+        "claude-opus-4-8",
+        "claude-fable-5-1",
+        "claude-fable-5-2",
+        "claude-haiku-5-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+    ],
 )
 def test_anthropic_opus_4_omits_default_temperature(model: str) -> None:
     llm = load_llm(
@@ -970,7 +982,8 @@ def test_anthropic_profile_uses_the_shared_2048_token_default() -> None:
 
 
 @pytest.mark.parametrize(
-    "model", ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]
+    "model",
+    ["claude-fable-5-1", "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
 )
 def test_anthropic_forced_tool_choice_models_use_text_structured_output(
     monkeypatch, model: str
@@ -1007,7 +1020,8 @@ def test_anthropic_forced_tool_choice_models_use_text_structured_output(
 
 
 @pytest.mark.parametrize(
-    "model", ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]
+    "model",
+    ["claude-fable-5-1", "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
 )
 def test_anthropic_forced_tool_choice_models_override_function_program_mode(
     model: str,
@@ -1022,6 +1036,19 @@ def test_anthropic_forced_tool_choice_models_override_function_program_mode(
     )
 
     assert llm.pydantic_program_mode is PydanticProgramMode.LLM
+
+
+def test_haiku_5_5_keeps_function_structured_output() -> None:
+    from llama_index.core.types import PydanticProgramMode
+
+    llm = load_llm(
+        "Anthropic",
+        model="claude-haiku-5-5",
+        api_key="stub",
+        pydantic_program_mode=PydanticProgramMode.FUNCTION,
+    )
+
+    assert llm.pydantic_program_mode is PydanticProgramMode.FUNCTION
 
 
 @pytest.mark.parametrize("max_tokens", [512, 4096])
@@ -1041,6 +1068,8 @@ def test_anthropic_preserves_explicit_max_tokens(max_tokens: int) -> None:
     ("model", "context_window"),
     [
         ("claude-fable-5-1", 1_000_000),
+        ("claude-fable-5-2", 1_000_000),
+        ("claude-haiku-5-5", 1_000_000),
         ("claude-opus-5-5", 1_000_000),
         ("claude-sonnet-5-5", 1_000_000),
         ("claude-opus-5", 1_000_000),
@@ -1251,7 +1280,9 @@ def test_ollama_wizard_default_includes_context_window() -> None:
     assert DEFAULT_KWARGS_BY_VARIANT["Ollama"] == {"context_window": 32768}
 
 
-@pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"])
+@pytest.mark.parametrize(
+    "model", ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"]
+)
 def test_gpt_6_sol_and_luna_forward_reasoning_without_a_default(model: str) -> None:
     configured = load_llm(
         "OpenAIResponses",
@@ -1270,6 +1301,7 @@ def test_gpt_6_sol_and_luna_forward_reasoning_without_a_default(model: str) -> N
     [
         ("gpt-6-astra", "none"),
         ("gpt-6.1-sol", "none"),
+        ("gpt-6.1-terra", "minimal"),
         ("gpt-6-sol", "minimal"),
         ("gpt-6-luna", "minimal"),
     ],

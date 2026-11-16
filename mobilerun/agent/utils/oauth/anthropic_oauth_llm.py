@@ -66,7 +66,7 @@ DEFAULT_OAUTH_BETA = "oauth-2025-04-20"
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 # Model access is Claude Code version-gated, so keep the HTTP user agent and
 # billing marker derived from the same verified-compatible client version.
-DEFAULT_CLAUDE_CODE_VERSION = "2.1.281"
+DEFAULT_CLAUDE_CODE_VERSION = "2.1.325"
 DEFAULT_USER_AGENT = f"claude-cli/{DEFAULT_CLAUDE_CODE_VERSION}"
 DEFAULT_CC_VERSION = f"{DEFAULT_CLAUDE_CODE_VERSION}.000"
 DEFAULT_CC_ENTRYPOINT = "cli"
@@ -857,7 +857,9 @@ class AnthropicOAuthLLM(CustomLLM):
             return True
         if self.billing_header_mode == "never":
             return False
-        return not model_id.startswith("claude-haiku")
+        # Haiku 4.x needs no billing marker; later Haiku models are rejected
+        # without it.
+        return not model_id.startswith("claude-haiku-4")
 
     @staticmethod
     def _supports_temperature(model_id: str) -> bool:

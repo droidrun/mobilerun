@@ -34,6 +34,8 @@ def test_model_effective_dims_per_provider():
 def test_claude_5_models_use_high_resolution_budget():
     for model in (
         "claude-fable-5-1",
+        "claude-fable-5-2",
+        "claude-haiku-5-5",
         "claude-opus-5",
         "claude-opus-5-5",
         "claude-sonnet-5-5",

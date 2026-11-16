@@ -17,11 +17,14 @@ def test_gemini_api_key_catalog_uses_current_flash_models() -> None:
     assert variant.default_model == "gemini-3.8-flash"
     assert models == (
         "gemini-3.8-flash",
+        "gemini-4-hydrogen",
         "gemini-4-argon",
-        "gemini-3.7-flash",
+        "gemini-4-carbon",
         "gemini-3.5-flash-lite",
         "gemini-3.1-pro-preview",
     )
+    # Deprecated: the API routes it to gemini-3.8-flash.
+    assert "gemini-3.7-flash" not in models
     assert "gemini-3-flash-preview" not in models
     assert "gemini-3.1-flash-lite" not in models
     assert "gemini-3.1-flash-lite-preview" not in models
@@ -37,11 +40,12 @@ def test_gemini_oauth_catalog_uses_antigravity_consumer_models() -> None:
         "gemini-3.8-flash-low",
         "gemini-3.8-flash-medium",
         "gemini-3.8-flash-high",
-        "gemini-3.7-flash-tiered",
         "gemini-3.5-flash-lite",
-        "gemini-pro-agent",
-        "gemini-3.1-pro-low",
     )
+    # No longer served to consumer logins (404).
+    assert "gemini-3.7-flash-tiered" not in models
+    assert "gemini-pro-agent" not in models
+    assert "gemini-3.1-pro-low" not in models
     # Slow legacy ids remain custom-only rather than advertised.
     assert "gemini-3-flash" not in models
     assert "gemini-3.6-flash-high" not in models
@@ -99,8 +103,11 @@ def test_anthropic_catalogs_list_the_current_lineup() -> None:
         "claude-sonnet-5",
         "claude-sonnet-5-5",
         "claude-opus-5-5",
-        "claude-fable-5-1",
+        "claude-fable-5-2",
+        "claude-haiku-5-5",
     )
+    # Superseded by Fable 5.2; still accepted as a custom id.
+    assert "claude-fable-5-1" not in api_key_models
     assert oauth_variant.default_model == "claude-sonnet-5"
     assert oauth_models == api_key_models
 
@@ -113,6 +120,8 @@ def test_openai_oauth_catalog_hides_unsupported_codex_model() -> None:
     assert models == (
         "gpt-6-astra",
         "gpt-6.1-sol",
+        "gpt-6.1-terra",
+        "gpt-6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -129,12 +138,12 @@ def test_openai_api_key_catalog_uses_current_default_model() -> None:
     assert models == (
         "gpt-6-astra",
         "gpt-6.1-sol",
+        "gpt-6.1-terra",
+        "gpt-6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
     )
-    # Listed live, but does not drive the agent's XML tool protocol.
-    assert "gpt-6-luna" not in models
 
 
 def test_default_profiles_use_gemini_3_8_flash() -> None:
@@ -184,3 +193,43 @@ def test_openai_unknown_models_pass_through(auth_mode: str) -> None:
 @pytest.mark.parametrize("auth_mode", ["api_key", "oauth"])
 def test_openai_gpt_6_alias_is_not_invented(auth_mode: str) -> None:
     assert normalize_model_id_for_variant("openai", auth_mode, "gpt-6") == "gpt-6"
+
+
+@pytest.mark.parametrize(
+    "model", ["gemini-4-hydrogen", "gemini-4-argon", "gemini-4-carbon"]
+)
+def test_gemini_4_developer_ids_are_rejected_for_the_oauth_catalog(model: str) -> None:
+    from mobilerun.agent.utils.llm_picker import load_llm
+
+    with pytest.raises(ValueError, match="Gemini Developer API id"):
+        load_llm("gemini_oauth_code_assist", model=model)
+
+
+def test_gemini_oauth_pro_preset_uses_a_served_model() -> None:
+    from mobilerun.agent.utils.oauth.gemini_oauth_code_assist_llm import (
+        GeminiOAuthCodeAssistLLM,
+    )
+
+    models = list_models_for_variant("gemini", "oauth")
+    assert set(GeminiOAuthCodeAssistLLM.MODEL_PRESETS.values()) <= set(models)
+
+
+def test_zai_catalogs_offer_glm_5_3() -> None:
+    assert list_models_for_variant("zai", "api_key") == (
+        "glm-5",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "glm-5v-turbo",
+        "glm-4.7",
+    )
+    assert list_models_for_variant("zai", "coding_api") == (
+        "glm-4.7",
+        "glm-5.3",
+        "glm-5.3-flash",
+    )
+
+
+def test_minimax_m3_1_flash_has_a_context_window() -> None:
+    from mobilerun.agent.providers.minimax import minimax_model_context_window
+
+    assert minimax_model_context_window("MiniMax-M3.1-Flash") == 1_000_000
