@@ -1,6 +1,6 @@
 import asyncio
+from types import SimpleNamespace
 
-import click
 import pytest
 from mobilerun_core_local.driver.android import AndroidPortalHttpDriver
 
@@ -37,7 +37,7 @@ def test_is_portal_http_url(device, expected):
 
 
 def test_portal_http_driver_requires_token():
-    with pytest.raises(ValueError, match="MOBILERUN_DEVICE_TOKEN"):
+    with pytest.raises(ValueError, match="MOBILERUN_ANDROID_PORTAL_TOKEN"):
         create_android_portal_http_driver(PORTAL_URL, None)
 
 
@@ -98,65 +98,76 @@ def _config_file(tmp_path):
 
 
 def test_device_commands_route_url_to_portal_http(tmp_path, monkeypatch, no_adb):
+    from mobilerun_core import Mobilerun
+
     from mobilerun.cli import device_commands
 
-    driver = FakePortalHttpDriver()
-    created = _record_factory(monkeypatch, device_commands, driver)
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
+    created = {}
 
-    result, is_ios = run(
-        device_commands._create_driver(
-            device=PORTAL_URL,
-            config_path=_config_file(tmp_path),
-            tcp=None,
-            ios=False,
-        )
-    )
+    def connect(self, device_id, **kwargs):
+        created.update(kwargs)
+        return SimpleNamespace(close=lambda: None)
 
-    assert result is driver and driver.connected
-    assert is_ios is False
-    assert created == {"url": PORTAL_URL, "token": "sekret"}
+    monkeypatch.setattr(Mobilerun, "connect", connect)
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
+    with device_commands.device_driver(
+        {
+            "device": PORTAL_URL,
+            "config_path": _config_file(tmp_path),
+            "platform": "android",
+            "api_url": "https://example.test/v1",
+        }
+    ):
+        pass
+    assert created["url"] == PORTAL_URL
+    assert created["token"] == "sekret"
+    assert created["backend"] == "local-android-http"
 
 
 def test_device_commands_url_without_token_fails_cleanly(tmp_path, monkeypatch, no_adb):
-    from mobilerun.cli import device_commands
+    from click.testing import CliRunner
 
-    monkeypatch.delenv("MOBILERUN_DEVICE_TOKEN", raising=False)
+    from mobilerun.cli.main import cli
 
-    with pytest.raises(click.ClickException, match="auth token"):
-        run(
-            device_commands._create_driver(
-                device=PORTAL_URL,
-                config_path=_config_file(tmp_path),
-                tcp=None,
-                ios=False,
-            )
-        )
+    monkeypatch.delenv("MOBILERUN_ANDROID_PORTAL_TOKEN", raising=False)
+    result = CliRunner().invoke(
+        cli, ["device", "ui", "-d", PORTAL_URL, "-c", _config_file(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "token" in result.output
 
 
 def test_ping_checks_portal_http_without_adb(monkeypatch, no_adb):
     from click.testing import CliRunner
+    from mobilerun_core import Mobilerun
 
-    from mobilerun.cli import main as cli_main
+    from mobilerun.cli.main import cli
 
-    driver = FakePortalHttpDriver()
-    created = _record_factory(monkeypatch, cli_main, driver)
-    monkeypatch.setattr(
-        cli_main.ConfigLoader,
-        "load",
-        lambda _: MobileConfig(device=DeviceConfig(auth_token="from-config")),
-    )
-    monkeypatch.delenv("MOBILERUN_DEVICE_TOKEN", raising=False)
+    created = {}
 
-    result = CliRunner().invoke(cli_main.cli, ["ping", "--device", PORTAL_URL])
+    def connect(self, device_id, **kwargs):
+        created.update(kwargs)
 
+        class Core:
+            def close(self):
+                pass
+
+            def ui(self):
+                return {}
+
+        return Core()
+
+    monkeypatch.setattr(Mobilerun, "connect", connect)
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
+    result = CliRunner().invoke(cli, ["device", "ping", "--device", PORTAL_URL])
     assert result.exit_code == 0, result.output
-    assert "Portal HTTP is reachable" in result.output
-    assert created == {"url": PORTAL_URL, "token": "from-config"}
+    assert "reachable" in result.output
+    assert created["url"] == PORTAL_URL
+    assert created["token"] == "sekret"
 
 
 def test_keyboard_cleanup_skips_portal_http_url(no_adb):
-    from mobilerun.cli import main as cli_main
+    import mobilerun.cli.run as cli_main
 
     config = MobileConfig(device=DeviceConfig(serial=PORTAL_URL))
 
@@ -205,7 +216,7 @@ def test_agent_routes_url_to_portal_http_driver(monkeypatch, no_adb):
     created = _record_factory(
         monkeypatch, agent_module, FakePortalHttpDriver(ConnectFailed())
     )
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
 
     config = MobileConfig(
         device=DeviceConfig(serial=PORTAL_URL),
@@ -257,7 +268,7 @@ def test_agent_treats_device_date_as_optional(monkeypatch, no_adb):
             raise NotImplementedError
 
     _record_factory(monkeypatch, agent_module, NoDateDriver())
-    monkeypatch.setenv("MOBILERUN_DEVICE_TOKEN", "sekret")
+    monkeypatch.setenv("MOBILERUN_ANDROID_PORTAL_TOKEN", "sekret")
 
     config = MobileConfig(
         device=DeviceConfig(serial=PORTAL_URL),

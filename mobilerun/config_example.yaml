@@ -153,7 +153,7 @@ device:
   # Bearer token for portal-HTTP device URLs: the token shown in the Android
   # Portal app (always required), or a `mobilerun-ios --local` server's
   # --local-token (loopback servers need none).
-  # The MOBILERUN_DEVICE_TOKEN env var overrides this value.
+  # MOBILERUN_ANDROID_PORTAL_TOKEN or MOBILERUN_IOS_PORTAL_TOKEN overrides this value for its platform.
   auth_token: null
 
 # === Telemetry Settings ===

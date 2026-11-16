@@ -422,7 +422,9 @@ def test_retired_oauth_models_fail_before_loading_credentials(
     monkeypatch.setattr(
         GeminiOAuthCodeAssistLLM, "_load_credentials_from_file", unexpected_load
     )
-    with pytest.raises(ValueError, match="retired.*gemini-3.8-flash-tiered.*configure"):
+    with pytest.raises(
+        ValueError, match="retired.*gemini-3.8-flash-tiered.*auth login gemini"
+    ):
         GeminiOAuthCodeAssistLLM(**{argument: model})
 
 
