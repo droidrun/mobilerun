@@ -1,21 +1,26 @@
-"""
-Mobilerun Agent Module.
+"""Mobilerun Agent Module.
 
 This module provides a ReAct agent for automating Android devices using reasoning and acting.
 """
 
-from mobilerun.agent.droid.droid_agent import MobileAgent
-from mobilerun.agent.droid.state import MobileAgentState
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-# Legacy aliases for backward compatibility
-_LEGACY_ALIASES = {
-    "DroidAgent": MobileAgent,
-    "DroidAgentState": MobileAgentState,
+if TYPE_CHECKING:
+    from mobilerun.agent.droid.droid_agent import MobileAgent
+    from mobilerun.agent.droid.state import MobileAgentState
+
+_EXPORTS = {
+    "MobileAgent": ("mobilerun.agent.droid.droid_agent", "MobileAgent"),
+    "MobileAgentState": ("mobilerun.agent.droid.state", "MobileAgentState"),
 }
+
+__all__ = ["MobileAgent", "MobileAgentState", "DroidAgent", "DroidAgentState"]
 
 
 def __getattr__(name):
-    if name in _LEGACY_ALIASES:
+    aliases = {"DroidAgent": "MobileAgent", "DroidAgentState": "MobileAgentState"}
+    if name in aliases:
         import warnings
 
         warnings.warn(
@@ -23,8 +28,14 @@ def __getattr__(name):
             DeprecationWarning,
             stacklevel=2,
         )
-        return _LEGACY_ALIASES[name]
+        return getattr(import_module(__name__), aliases[name])
+    if name in _EXPORTS:
+        module, attribute = _EXPORTS[name]
+        value = getattr(import_module(module), attribute)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["MobileAgent", "MobileAgentState", "DroidAgent", "DroidAgentState"]
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

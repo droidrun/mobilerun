@@ -257,7 +257,7 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
             raise ValueError(
                 f"Gemini OAuth model '{selected_model}' is retired. "
                 f"Use '{GEMINI_OAUTH_DEFAULT_MODEL}' or re-run "
-                "`mobilerun configure gemini` to choose an available model."
+                "`mobilerun auth login gemini` to choose an available model."
             )
 
         super().__init__(
@@ -604,9 +604,7 @@ class GeminiOAuthCodeAssistLLM(CustomLLM):
 
         # Headless environments: use authcode redirect flow (no local server)
         use_authcode = _is_headless_environment() or (
-            os.environ.get("MOBILERUN_OAUTH_MANUAL")
-            or os.environ.get("DROIDRUN_OAUTH_MANUAL")
-            or ""
+            os.environ.get("MOBILERUN_OAUTH_MANUAL") or ""
         ).lower() in ("1", "true", "yes")
         if use_authcode:
             return self.login_headless(

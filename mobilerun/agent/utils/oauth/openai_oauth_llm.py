@@ -712,7 +712,7 @@ class OpenAIOAuth(OpenAI):
             raise ValueError(
                 f"Model '{resolved_model}' is not supported with OpenAI OAuth "
                 f"ChatGPT-account credentials. Use '{OPENAI_OAUTH_DEFAULT_MODEL}' "
-                "or re-run `mobilerun configure openai`."
+                "or re-run `mobilerun auth login openai`."
             )
 
         seed_api_key = oauth_access_token or kwargs.pop("api_key", None) or "oauth"
@@ -776,9 +776,7 @@ class OpenAIOAuth(OpenAI):
 
         # Headless environments: use device code flow (no local server needed)
         use_device_code = _is_headless_environment() or (
-            os.environ.get("MOBILERUN_OAUTH_MANUAL")
-            or os.environ.get("DROIDRUN_OAUTH_MANUAL")
-            or ""
+            os.environ.get("MOBILERUN_OAUTH_MANUAL") or ""
         ).lower() in ("1", "true", "yes")
         if use_device_code:
             return self._login_device_code(

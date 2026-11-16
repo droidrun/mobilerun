@@ -1,4 +1,5 @@
 import asyncio
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -6,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from click.testing import CliRunner
 
+import mobilerun.cli.run as cli_run
 from mobilerun.cli import configure_wizard
 from mobilerun.cli import main as cli_main
 from mobilerun.config_manager.config_manager import (
@@ -23,26 +25,30 @@ class _Done:
 
     def __await__(self):
         async def done():
-            return SimpleNamespace(success=True)
+            return SimpleNamespace(success=True, reason=None, steps=0)
 
         return done().__await__()
 
 
 def _run(monkeypatch, config, **kwargs):
-    monkeypatch.setattr(cli_main.ConfigLoader, "load", lambda _path=None: config)
-    monkeypatch.setattr(cli_main, "_setup_cli_logging", lambda _: None)
-    monkeypatch.setattr(cli_main, "print_telemetry_message", lambda **kw: None)
-    monkeypatch.setattr(cli_main, "_cleanup_android_keyboard", AsyncMock())
+    monkeypatch.setattr(
+        "mobilerun.config_manager.ConfigLoader.load", lambda _path=None: config
+    )
+    monkeypatch.setattr(cli_run, "_setup_cli_logging", lambda _: None)
+    monkeypatch.setattr(
+        "mobilerun.telemetry.print_telemetry_message", lambda **kw: None
+    )
+    monkeypatch.setattr(cli_run, "_cleanup_android_keyboard", AsyncMock())
     load_llm = Mock()
-    monkeypatch.setattr(cli_main, "load_llm", load_llm)
+    monkeypatch.setattr("mobilerun.agent.utils.llm_picker.load_llm", load_llm)
     agents = []
 
     def agent(**agent_kwargs):
         agents.append(agent_kwargs)
         return SimpleNamespace(run=lambda: _Done())
 
-    monkeypatch.setattr(cli_main, "MobileAgent", agent)
-    success = asyncio.run(cli_main.run_command("Open Clock", **kwargs))
+    monkeypatch.setattr("mobilerun.MobileAgent", agent)
+    success = asyncio.run(cli_run.run_command("Open Clock", **kwargs))
     return success, agents, load_llm
 
 
@@ -167,21 +173,24 @@ def test_delegate_model_alone_keeps_the_agent_provider(monkeypatch):
     )
 
     assert agents[0]["config"].llm_profiles["delegate"] == LLMProfile(
-        provider="OpenAILike", model="org/model-b", base_url="https://llm.test"
+        provider="OpenAILike",
+        model="org/model-b",
+        base_url="https://llm.test",
+        kwargs={"max_retries": 1},
     )
 
 
 def test_delegate_model_on_the_agent_provider_keeps_its_settings(monkeypatch):
     config = MobileConfig()
     config.llm_profiles["fast_agent"] = LLMProfile(
-        provider="OpenAI", model="gpt-6.1-sol", kwargs={"timeout": 30}
+        provider="OpenAI", model="gpt-6.1-sol", kwargs={"timeout": 30, "max_retries": 4}
     )
     _, agents, _ = _run(
         monkeypatch, config, provider="TypeSafe", delegate_model="openai/gpt-6-luna"
     )
 
     assert agents[0]["config"].llm_profiles["delegate"] == LLMProfile(
-        provider="OpenAI", model="gpt-6-luna", kwargs={"timeout": 30}
+        provider="OpenAI", model="gpt-6-luna", kwargs={"timeout": 30, "max_retries": 4}
     )
 
 
@@ -200,8 +209,8 @@ def test_delegate_model_replaces_the_configured_delegate_llm(monkeypatch):
 
 
 def test_run_cli_forwards_the_delegate_options(monkeypatch):
-    run_command = AsyncMock(return_value=True)
-    monkeypatch.setattr(cli_main, "run_command", run_command)
+    run_command = AsyncMock(return_value=(True, None, 0))
+    monkeypatch.setattr(cli_run, "_run_task", run_command)
 
     result = CliRunner().invoke(
         cli_main.cli,
@@ -350,12 +359,12 @@ def test_typesafe_flag_keeps_the_configured_profile(monkeypatch):
     )
 
 
-def test_typesafe_base_url_goes_to_jev_not_the_helper_llms(monkeypatch):
+def test_typesafe_llm_url_goes_to_jev_not_the_helper_llms(monkeypatch):
     _, agents, _ = _run(
         monkeypatch,
         MobileConfig(),
         provider="TypeSafe",
-        base_url="https://typesafe.test",
+        llm_url="https://typesafe.test",
     )
 
     assert "base_url" not in agents[0]
@@ -786,3 +795,79 @@ def test_changing_the_llm_keeps_a_delegate_with_its_own_endpoint(monkeypatch):
     )
 
     assert config.llm_profiles["delegate"] == delegate
+
+
+def test_cli_delegate_model_accepts_openai_oauth_spelling(monkeypatch):
+    config = MobileConfig()
+    monkeypatch.setattr("mobilerun.config_manager.ConfigLoader.load", lambda _: config)
+    monkeypatch.setattr(cli_run, "_setup_cli_logging", lambda _: None)
+    monkeypatch.setattr(
+        "mobilerun.telemetry.print_telemetry_message", lambda **kw: None
+    )
+    monkeypatch.setattr(cli_run, "_cleanup_android_keyboard", AsyncMock())
+    agents = []
+
+    def agent(**kwargs):
+        agents.append(kwargs)
+        return SimpleNamespace(run=lambda: _Done())
+
+    monkeypatch.setattr("mobilerun.MobileAgent", agent)
+    # Polish keeps the constructor import at module scope; devx imports it lazily.
+    if hasattr(cli_run, "MobileAgent"):
+        monkeypatch.setattr(cli_run, "MobileAgent", agent)
+    result = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "run",
+            "Open Clock",
+            "-p",
+            "TypeSafe",
+            "--delegate-model",
+            "openai-oauth/gpt-x",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    profile = agents[0]["config"].llm_profiles["delegate"]
+    assert (profile.provider, profile.model) == ("openai_oauth", "gpt-x")
+
+
+def test_bad_delegation_spec_is_a_cli_usage_error(monkeypatch):
+    monkeypatch.setattr(
+        "mobilerun.config_manager.ConfigLoader.load", lambda _: MobileConfig()
+    )
+    result = CliRunner().invoke(
+        cli_main.cli, ["run", "x", "--delegate-model", "openai/gpt-x", "-j"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "--delegate-model needs a decision model" in result.stderr
+    assert result.stdout == ""
+    assert "Traceback" not in result.output
+
+
+def test_delegate_profile_config_error_is_a_json_failure(monkeypatch):
+    monkeypatch.setattr(
+        "mobilerun.config_manager.ConfigLoader.load", lambda _: MobileConfig()
+    )
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["run", "x", "-p", "TypeSafe", "--delegate-model", "openai-like/x", "-j"],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "needs a base URL" in json.loads(result.stdout)["error"]
+    assert "Traceback" not in result.output
+
+
+def test_conflicting_delegate_options_fail_before_config_load(monkeypatch):
+    load = Mock(side_effect=AssertionError("configuration must not be loaded"))
+    monkeypatch.setattr("mobilerun.config_manager.ConfigLoader.load", load)
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["run", "x", "-p", "TypeSafe", "--no-delegate", "--delegate-model", "a/b"],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "--delegate-model cannot be used with --no-delegate" in result.stderr
+    load.assert_not_called()

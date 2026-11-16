@@ -1438,7 +1438,7 @@ wheels = [
 
 [[package]]
 name = "mobilerun"
-version = "0.7.4"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -1459,6 +1459,7 @@ dependencies = [
     { name = "llama-index-llms-openrouter" },
     { name = "llama-index-workflows" },
     { name = "mcp" },
+    { name = "mobilerun-core", extra = ["local"] },
     { name = "mobilerun-core-local", extra = ["cloud"] },
     { name = "mobilerun-sdk" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
@@ -1468,6 +1469,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "rich" },
+    { name = "segno" },
     { name = "urllib3" },
 ]
 
@@ -1534,8 +1536,9 @@ requires-dist = [
     { name = "llama-index-workflows", specifier = ">=2.16.0,<3.0.0" },
     { name = "mcp", specifier = ">=1.28.1,<2.0.0" },
     { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
-    { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.6.3" },
-    { name = "mobilerun-sdk", specifier = ">=3.2.0" },
+    { name = "mobilerun-core", extras = ["local"], specifier = ">=1.12.0" },
+    { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
+    { name = "mobilerun-sdk", specifier = ">=6.1.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.40.0" },
@@ -1548,6 +1551,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14.1.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13.0" },
     { name = "safety", marker = "extra == 'dev'", specifier = ">=3.2.11" },
+    { name = "segno", specifier = ">=1.6.6" },
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.7.5,<0.8.0" },
     { name = "urllib3", specifier = ">=2.8.0" },
 ]
@@ -1565,8 +1569,25 @@ dev = [
 ]
 
 [[package]]
+name = "mobilerun-core"
+version = "1.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mobilerun-sdk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a7/f4/356f9ad9af849c1152fe466967cffd8f5973ffef62aa40f7e607d4646603/mobilerun_core-1.12.0.tar.gz", hash = "sha256:cca13d678ffb715dfcbd76d1166bdd5f44799bcb6920eb7129531e43dd5a13d3", size = 123751, upload-time = "2026-11-12T19:05:12.957Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/76/593c82c4c0dfdf22e75dfc1b8d248c591033aeba7ba28c744cc2349917ac/mobilerun_core-1.12.0-py3-none-any.whl", hash = "sha256:2f754c26712ee5fc42e30c1ab08154134b497d19579a2bba3c63dda081305190", size = 63833, upload-time = "2026-11-12T19:05:11.268Z" },
+]
+
+[package.optional-dependencies]
+local = [
+    { name = "mobilerun-core-local" },
+]
+
+[[package]]
 name = "mobilerun-core-local"
-version = "0.6.3"
+version = "0.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "async-adbutils" },
@@ -1574,9 +1595,9 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/ce/288ebd92a732d314d5122186863c72ed72b33cab70cce3073d5aaf8130e3/mobilerun_core_local-0.6.3.tar.gz", hash = "sha256:f7187d42f060767e58037c3aa3bdbf774920ea4e4519879c301c9b2bc7a00458", size = 54914, upload-time = "2026-10-13T17:02:26.808Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/b1/4d0c69257cc19ec85c2c816bdce4fc9d25f5af2def1de59cc89074988326/mobilerun_core_local-0.7.2.tar.gz", hash = "sha256:4730e1b839cd0d2d268f1ff3e830da0dde0152b74e782ba52ca96da830fb704b", size = 64928, upload-time = "2026-11-03T15:58:07.926Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/9b/19572366a08eef8c8c475693d71432af16ed5e12efcdc610cb2cad51356d/mobilerun_core_local-0.6.3-py3-none-any.whl", hash = "sha256:91364da308591a3c50911f481e4a6d783cde9ae91cc948bbfe4f9ea72c6e2d4a", size = 52246, upload-time = "2026-10-13T17:02:25.282Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/73/347d1ab1816eb6bc5780e2df7650eb5f75398f7ef9e5b4dcbdb75199e1ae/mobilerun_core_local-0.7.2-py3-none-any.whl", hash = "sha256:62f9e53b22589f78e46bd56d1417018f547657b9b6e60642fae140f691c28f30", size = 58337, upload-time = "2026-11-03T15:58:06.562Z" },
 ]
 
 [package.optional-dependencies]
@@ -1586,7 +1607,7 @@ cloud = [
 
 [[package]]
 name = "mobilerun-sdk"
-version = "3.2.0"
+version = "6.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1596,9 +1617,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e5/ae/e694c01c99395a8ecd2e633b60d7c4188395d12fff8dc304d4caf11572f0/mobilerun_sdk-3.2.0.tar.gz", hash = "sha256:b159845ecaf7abe94d4c92f329ae40ffbc94e3362fd34c4156d3f5fc8f7d8ccb", size = 187159, upload-time = "2026-05-21T12:31:40.396Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/32/d704aec338e7497eb49febbeae3ac9deb63c2eb6ca8c0ded5bbaf3db9501/mobilerun_sdk-6.1.1.tar.gz", hash = "sha256:b3d890788b25175497a71be913a71b000f2cf5285facd338a65a7b7c786cf94c", size = 351426, upload-time = "2026-11-10T17:01:44.02Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/dc/7baeb50a6029b05f8a70f557cc03051de0b4bbaf7c49fb4fd4cbc40351c3/mobilerun_sdk-3.2.0-py3-none-any.whl", hash = "sha256:e29cd465b743f634fe37966bc30b0e1d7aa8cf1edfba5f08a0a4d4bc84f1d1db", size = 232016, upload-time = "2026-05-21T12:31:38.769Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/f3/c3f48b3615635a1e321df4a1fb61a1b7522d6a655ae99ae8c2a06ecb29aa/mobilerun_sdk-6.1.1-py3-none-any.whl", hash = "sha256:2f2858330694283dbe2e814f9232a59b84976b31361e1f260a468eaa3a7d4c3c", size = 573416, upload-time = "2026-11-10T17:01:42.687Z" },
 ]
 
 [[package]]
@@ -2804,6 +2825,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c2/ef/0e07dfdb4104c4e42ae9fc6e8a0da7be2d72ac2ee198b32f7500796de8f3/safety_schemas-0.0.16.tar.gz", hash = "sha256:3bb04d11bd4b5cc79f9fa183c658a6a8cf827a9ceec443a5ffa6eed38a50a24e", size = 54815, upload-time = "2025-09-16T14:35:31.973Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/84/a2/7840cc32890ce4b84668d3d9dfe15a48355b683ae3fb627ac97ac5a4265f/safety_schemas-0.0.16-py3-none-any.whl", hash = "sha256:6760515d3fd1e6535b251cd73014bd431d12fe0bfb8b6e8880a9379b5ab7aa44", size = 39292, upload-time = "2025-09-16T14:35:32.84Z" },
+]
+
+[[package]]
+name = "segno"
+version = "1.6.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/2e/b396f750c53f570055bf5a9fc1ace09bed2dff013c73b7afec5702a581ba/segno-1.6.6.tar.gz", hash = "sha256:e60933afc4b52137d323a4434c8340e0ce1e58cec71439e46680d4db188f11b3", size = 1628586, upload-time = "2025-03-12T22:12:53.324Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/02/12c73fd423eb9577b97fc1924966b929eff7074ae6b2e15dd3d30cb9e4ae/segno-1.6.6-py3-none-any.whl", hash = "sha256:28c7d081ed0cf935e0411293a465efd4d500704072cdb039778a2ab8736190c7", size = 76503, upload-time = "2025-03-12T22:12:48.106Z" },
 ]
 
 [[package]]

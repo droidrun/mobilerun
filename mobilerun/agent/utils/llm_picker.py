@@ -147,7 +147,7 @@ def _validate_gemini_oauth_model(model: object) -> None:
         raise ValueError(
             f"Model '{model_id}' is a Gemini Developer API id and is not valid "
             f"for the Antigravity OAuth catalog. Re-run "
-            f"`mobilerun configure gemini` and pick one of: {supported}."
+            f"`mobilerun auth login gemini` and pick one of: {supported}."
         )
 
 

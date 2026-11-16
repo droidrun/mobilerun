@@ -45,7 +45,7 @@ def test_callback_factory_configures_otlp_export_and_instrumentor(
     monkeypatch.setattr(
         llama_index_instrumentation, "LlamaIndexInstrumentor", FakeInstrumentor
     )
-    monkeypatch.setenv("phoenix_project_name", "compatibility-tests")
+    monkeypatch.setenv("PHOENIX_PROJECT_NAME", "compatibility-tests")
 
     supplied_provider = object()
     result = phoenix.arize_phoenix_callback_handler(

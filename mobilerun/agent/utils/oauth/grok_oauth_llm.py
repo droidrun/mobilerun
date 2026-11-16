@@ -598,7 +598,7 @@ class GrokOAuthSessionManager:
     def _refresh(self, credentials: GrokOAuthCredentials) -> GrokOAuthCredentials:
         if not credentials.refresh_token:
             raise ValueError(
-                "No XAI OAuth refresh token is available. Run `mobilerun configure xai`."
+                "No XAI OAuth refresh token is available. Run `mobilerun auth login xai`."
             )
         payload = self._post_token(
             {
@@ -633,7 +633,7 @@ class GrokOAuthSessionManager:
                 )
                 if credentials is None:
                     raise ValueError(
-                        "No XAI OAuth credentials found. Run `mobilerun configure xai`."
+                        "No XAI OAuth credentials found. Run `mobilerun auth login xai`."
                     )
 
                 another_writer_refreshed = (
