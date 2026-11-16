@@ -385,6 +385,29 @@ active version count; `--name` shows every active version, newest first.
 to overwrite a file. `delete NAME` requires `--version N` or `--all`; an id deletes
 that version directly. Interactive deletion asks once; automation requires `--yes`.
 
+`mobilerun script check hello.py --remote` validates a script in the cloud instead
+of locally. It waits up to 60 seconds (`--no-wait` prints the validation id and
+returns), prints the same summary as the local check, and exits 3 with
+`line N: message — hint` issues when the script is invalid. `--remote` cannot be
+combined with `--python`.
+
+Routine documents are checked and stored through the cloud API, which decides
+whether a document is valid:
+
+```bash
+mobilerun routine schema -o routine.schema.json
+mobilerun routine check routine.json
+mobilerun routine push routine.json
+mobilerun routine pull ROUTINE_ID -o routine.json
+mobilerun routine list
+```
+
+`routine push` creates the routine disabled; activate it in Mobilerun Cloud.
+`routine push routine.json --id ROUTINE_ID` replaces an existing routine. Invalid
+documents exit 3 with `FIELD: message — hint` issues. `pull` prints to stdout
+without `-o` and requires `--force` to overwrite a file. All routine commands
+support `-j`.
+
 Cloud scripts use `MOBILERUN_API_KEY` or a saved `mobilerun auth login` sign-in
 (the legacy `MOBILERUN_CLOUD_API_KEY` also works), and `MOBILERUN_API_BASE_URL`
 (or `--api-url`) selects the endpoint. Until the script API is public on production,
