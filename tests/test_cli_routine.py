@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import call
 
 import httpx
 import pytest
@@ -173,7 +174,28 @@ def test_push_rejected_document_renders_issues(
     result = invoke("push", document_file, *(["-j"] if json_output else []))
     assert result.exit_code == 3, result.output
     assert result.stderr == ISSUES_TEXT
-    assert result.stdout == (json.dumps(body) + "\n" if json_output else "")
+    if json_output:
+        assert json.loads(result.stdout) == {
+            "error": "Invalid",
+            "status": 422,
+            "code": "document_invalid",
+            "details": ERRORS,
+        }
+    else:
+        assert result.stdout == ""
+
+
+def test_push_rejected_document_redacts_secrets(sdk, document_file):  # noqa: F811
+    leaky = [{**ERRORS[0], "message": "Bad value unit-cloud-script-key"}]
+    body = {"code": "document_invalid", "message": "Invalid", "details": leaky}
+    sdk.client.workflows.flows.create_from_document.side_effect = status_error(
+        422, body
+    )
+    result = invoke("push", document_file, "-j")
+    assert result.exit_code == 3, result.output
+    assert "unit-cloud-script-key" not in result.output
+    assert "[redacted]" in result.stdout
+    assert "[redacted]" in result.stderr
 
 
 def test_pull_stdout(sdk):  # noqa: F811
@@ -187,17 +209,21 @@ def test_pull_stdout(sdk):  # noqa: F811
 
 
 def test_pull_writes_file_and_refuses_overwrite(sdk, tmp_path):  # noqa: F811
-    sdk.client.workflows.flows.retrieve_document.return_value = SimpleNamespace(
-        data=DOCUMENT
-    )
+    retrieve = sdk.client.workflows.flows.retrieve_document
+    retrieve.return_value = SimpleNamespace(data=DOCUMENT)
     target = tmp_path / "out.json"
     first = invoke("pull", FLOW_ID, "-o", target)
+    first_bytes = target.read_bytes()
+    assert first.exit_code == 0, first.output
+    assert json.loads(first_bytes) == DOCUMENT
+    retrieve.return_value = SimpleNamespace(data={**DOCUMENT, "name": "Changed"})
     second = invoke("pull", FLOW_ID, "-o", target)
-    forced = invoke("pull", FLOW_ID, "-o", target, "--force")
-    assert first.exit_code == forced.exit_code == 0, first.output + forced.output
     assert second.exit_code == 1, second.output
     assert "already exists; use --force" in second.stderr
-    assert json.loads(target.read_text()) == DOCUMENT
+    assert target.read_bytes() == first_bytes
+    forced = invoke("pull", FLOW_ID, "-o", target, "--force")
+    assert forced.exit_code == 0, forced.output
+    assert json.loads(target.read_bytes()) == {**DOCUMENT, "name": "Changed"}
 
 
 def page(*items, has_next=False):
@@ -208,16 +234,18 @@ def page(*items, has_next=False):
 
 def test_list_collects_all_pages(sdk):  # noqa: F811
     second_id = "31fe8bac-cf2a-44af-af62-88aa6c73c0b2"
-    sdk.client.workflows.flows.list.side_effect = [
+    pages = [
         page(flow(), has_next=True),
         page(flow(id=second_id, name="Evening", lifecycle_status="enabled")),
     ]
+    listing = sdk.client.workflows.flows.list
+    listing.side_effect = pages
     text = invoke("list")
-    sdk.client.workflows.flows.list.side_effect = [
-        page(flow(), has_next=True),
-        page(flow(id=second_id, name="Evening", lifecycle_status="enabled")),
-    ]
+    assert listing.call_args_list == [call(page=1), call(page=2)]
+    listing.reset_mock()
+    listing.side_effect = pages
     data = invoke("list", "-j")
+    assert listing.call_args_list == [call(page=1), call(page=2)]
     assert text.exit_code == data.exit_code == 0, text.output + data.output
     assert text.stdout == (
         f"{FLOW_ID}\tMorning check\tdisabled\t2026-11-16T00:00:00+00:00\n"

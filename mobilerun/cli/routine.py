@@ -12,6 +12,7 @@ from mobilerun.cli.options import (
     Group,
     api_url_option,
     cloud_client,
+    convert_api_error,
     emit,
     emit_rows,
     examples,
@@ -41,7 +42,7 @@ def _read_document(file):
 
 
 def _push_document(client, flow_id, document, json_output):
-    """Create or replace a routine; render a rejected document, not raw error JSON."""
+    """Create or replace a routine; render a rejected document as issues."""
     from mobilerun_sdk import APIStatusError
 
     flows = client.workflows.flows
@@ -50,14 +51,24 @@ def _push_document(client, flow_id, document, json_output):
             return flows.create_from_document(document=document).data
         return flows.replace_document(flow_id, document=document).data
     except APIStatusError as exc:
-        body = exc.body if isinstance(exc.body, dict) else {}
-        details = body.get("details")
+        # The converted document redacts secrets; `-j` prints it as for other errors.
+        _, error, _ = convert_api_error(exc)
+        details = error.get("details")
         if exc.status_code != DOCUMENT_REJECTED_STATUS or not isinstance(details, list):
             raise
         if json_output:
-            emit(body, json_output=True)
+            emit(error, json_output=True)
         print_issues({"errors": details})
         raise click.exceptions.Exit(INVALID_EXIT_CODE) from None
+
+
+def _emit_or_write(document, output, force, json_output):
+    text = json.dumps(document, indent=2)
+    if output is None:
+        emit(document if json_output else text, json_output=json_output)
+        return
+    write_file(output, (text + "\n").encode("utf-8"), force=force)
+    emit({"path": str(output)} if json_output else str(output), json_output=json_output)
 
 
 @routine_cli.command(
@@ -77,12 +88,7 @@ def routine_schema(output, force, api_url, json_output, verbose):
     """Print the JSON schema of routine documents."""
     with cloud_client(api_url) as client:
         schema = client.workflows.flows.document_schema()
-    text = json.dumps(schema, indent=2)
-    if output is None:
-        emit(schema if json_output else text, json_output=json_output)
-        return
-    write_file(output, (text + "\n").encode("utf-8"), force=force)
-    emit({"path": str(output)} if json_output else str(output), json_output=json_output)
+    _emit_or_write(schema, output, force, json_output)
 
 
 @routine_cli.command(
@@ -151,18 +157,9 @@ def push_routine(file, flow_id, api_url, json_output, verbose):
 @verbose_option
 def pull_routine(flow_id, output, force, api_url, json_output, verbose):
     """Download a routine as a document."""
-    if output is not None and output.exists() and not force:
-        raise click.ClickException(
-            f"{output} already exists; use --force to overwrite it."
-        )
     with cloud_client(api_url) as client:
         document = client.workflows.flows.retrieve_document(flow_id).data
-    text = json.dumps(document, indent=2)
-    if output is None:
-        emit(document if json_output else text, json_output=json_output)
-        return
-    write_file(output, (text + "\n").encode("utf-8"), force=force)
-    emit({"path": str(output)} if json_output else str(output), json_output=json_output)
+    _emit_or_write(document, output, force, json_output)
 
 
 def _routines(client):

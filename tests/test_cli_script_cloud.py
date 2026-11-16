@@ -871,7 +871,8 @@ def test_check_remote_polls_until_done(sdk, file, clock):
     result = check(file, "-j")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["status"] == "done"
-    assert clock.sleeps == [1, 2]
+    assert sum(clock.sleeps) == 0
+    assert sdk.scripts.validations.retrieve.call_count == 2
     assert sdk.scripts.validations.retrieve.call_args.args == (ID1,)
     assert sdk.scripts.validations.retrieve.call_args.kwargs["wait_s"] == 5
 
@@ -925,12 +926,18 @@ def test_check_remote_failed_validation(sdk, file):
 def test_check_remote_pending_after_deadline(sdk, file, clock):
     pending = SimpleNamespace(data=validation(status="pending", valid=None))
     sdk.scripts.validations.create.return_value = pending
-    sdk.scripts.validations.retrieve.return_value = pending
+
+    def long_poll(*args, **kwargs):
+        clock.now += 5
+        return pending
+
+    sdk.scripts.validations.retrieve.side_effect = long_poll
     result = check(file)
     assert result.exit_code == 0, result.output
     assert result.stdout == f"{ID1}\n"
     assert "still pending" in result.stderr
-    assert sum(clock.sleeps) == 60
+    assert sum(clock.sleeps) == 0
+    assert sdk.scripts.validations.retrieve.call_count == 12
 
 
 def test_check_remote_no_wait(sdk, file, clock):

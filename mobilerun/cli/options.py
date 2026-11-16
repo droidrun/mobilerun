@@ -651,7 +651,7 @@ def examples(*lines, docs=None):
     return text + (f"\n\nDocs: {docs}" if docs else "")
 
 
-# Exit code of `mobilerun_routines inspect` for a script that fails validation.
+# Exit code when a validator rejects a script or routine document (as in mobilerun_routines inspect).
 INVALID_EXIT_CODE = 3
 
 

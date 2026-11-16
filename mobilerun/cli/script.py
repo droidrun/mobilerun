@@ -96,18 +96,13 @@ def init_script(path, python_path, verbose):
 
 
 def _emit_summary(document):
-    for label, key in (
-        ("Entry point", "entrypoint"),
-        ("Output kind", "outputKind"),
-        ("Dataset key", "datasetKey"),
-    ):
-        if key in document:
-            emit(f"{label}: {document[key]}")
-    for label, key in (
-        ("Input schema", "inputSchema"),
-        ("Output schema", "outputSchema"),
-    ):
-        emit(f"{label}:\n" + json.dumps(document[key], indent=2))
+    # Remote validations do not report it.
+    if "entrypoint" in document:
+        emit(f"Entry point: {document['entrypoint']}")
+    emit(f"Output kind: {document['outputKind']}")
+    emit(f"Dataset key: {document['datasetKey']}")
+    emit("Input schema:\n" + json.dumps(document["inputSchema"], indent=2))
+    emit("Output schema:\n" + json.dumps(document["outputSchema"], indent=2))
 
 
 def _check_local(path, python_path, json_output):
@@ -136,17 +131,20 @@ def _check_local(path, python_path, json_output):
 
 
 def _check_remote(path, wait, api_url, json_output):
-    source = _read_source(Path(path))
+    source = _read_source(path)
     with cloud_client(api_url) as client:
         item = client.scripts.validations.create(source=source).data
         if wait:
             item = _wait_for_validation(client, item)
     document = item.model_dump(mode="json", by_alias=True)
+    pending = item.status == "pending"
     if json_output:
         emit(document, json_output=True)
-    if item.status == "pending":
-        if not json_output:
-            emit(item.id)
+    elif pending:
+        emit(item.id)
+    elif item.valid:
+        _emit_summary(document)
+    if pending:
         click.echo(
             f"Validation still pending; run `mobilerun script check {path} --remote` again.",
             err=True,
@@ -155,8 +153,6 @@ def _check_remote(path, wait, api_url, json_output):
     if item.status == "failed":
         print_issues(document if item.errors else {"message": "Validation failed"})
         raise click.exceptions.Exit(1)
-    if not json_output and item.valid:
-        _emit_summary(document)
     print_issues(document)
     if not item.valid:
         raise click.exceptions.Exit(INVALID_EXIT_CODE)
@@ -169,11 +165,13 @@ def _check_remote(path, wait, api_url, json_output):
         "mobilerun script check script.py --remote",
     ),
 )
-@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @python_option
 @click.option("--remote", is_flag=True, help="Validate in Mobilerun Cloud.")
 @click.option(
-    "--wait/--no-wait", default=True, help="With --remote, wait up to 60 seconds."
+    "--wait/--no-wait",
+    default=True,
+    help=f"With --remote, wait up to {WAIT_SECONDS} seconds.",
 )
 @api_url_option
 @json_option
@@ -185,7 +183,7 @@ def check_script(path, python_path, remote, wait, api_url, json_output, verbose)
     if remote:
         _check_remote(path, wait, api_url, json_output)
     else:
-        _check_local(path, python_path, json_output)
+        _check_local(str(path), python_path, json_output)
 
 
 def _device_flags(
@@ -387,14 +385,14 @@ def _print_script(item, json_output, *, metadata=False):
         )
 
 
-def _poll_until(client, item, fetch, is_final):
+def _poll_until(client, item, fetch, is_final, delays=(1, 2)):
     import httpx
     from mobilerun_sdk import APIError
 
     # Retried requests could outlive the wait budget.
     poller = client.with_options(max_retries=0)
     deadline = time.monotonic() + WAIT_SECONDS
-    delay = 1
+    delay = delays[0]
     while not is_final(item):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -408,7 +406,7 @@ def _poll_until(client, item, fetch, is_final):
         except APIError:
             # The upload succeeded: retain its identity even if polling fails.
             break
-        delay = 2
+        delay = delays[1]
     return item
 
 
@@ -431,6 +429,8 @@ def _wait_for_validation(client, item):
             item_id, wait_s=VALIDATION_POLL_SECONDS, timeout=timeout
         ).data,
         lambda item: item.status != "pending",
+        # The server long-polls (wait_s); no client-side pause between requests.
+        delays=(0, 0),
     )
 
 
@@ -451,7 +451,9 @@ def _read_source(file):
     help="Manifest JSON with hosts, credentials, and scopes.",
 )
 @click.option(
-    "--wait/--no-wait", default=True, help="Wait up to 60 seconds for inspection."
+    "--wait/--no-wait",
+    default=True,
+    help=f"Wait up to {WAIT_SECONDS} seconds for inspection.",
 )
 @api_url_option
 @json_option
