@@ -88,13 +88,30 @@ def init_script(path, python_path, verbose):
     raise click.exceptions.Exit(result.returncode)
 
 
-def _print_script_errors(errors):
-    for error in errors:
-        prefix = f"line {error['line']}" if error.get("line") is not None else error["code"]
-        click.echo(f"{prefix}: {error['message']}", err=True)
-        hint = (error.get("repair") or {}).get("hint")
+def _print_script_errors(error):
+    if error is None:
+        click.echo("Inspection rejected", err=True)
+        return
+    if not isinstance(error, dict):
+        click.echo(str(error), err=True)
+        return
+    errors = error.get("errors")
+    if not isinstance(errors, list) or not errors:
+        code = error.get("code")
+        message = error.get("message", "")
+        click.echo(f"{code}: {message}" if code else message, err=True)
+        return
+    for issue in errors:
+        if not isinstance(issue, dict):
+            continue
+        message = issue.get("message", "")
+        if issue.get("line") is not None:
+            message = f"line {issue['line']}: {message}"
+        repair = issue.get("repair")
+        hint = repair.get("hint") if isinstance(repair, dict) else None
         if hint:
-            click.echo(f"  fix: {hint}", err=True)
+            message += f" — {hint}"
+        click.echo(message, err=True)
 
 
 @script_cli.command("check", epilog=examples("mobilerun script check script.py -j"))
@@ -111,21 +128,17 @@ def check_script(path, python_path, json_output, verbose):
         text=True,
         check=False,
     )
-    if result.returncode:
-        try:
-            document = json.loads(result.stdout)
-        except ValueError:
-            document = None
-        else:
-            if json_output:
-                emit(result.stdout.rstrip("\n"))
-        if not json_output and isinstance(document, dict) and document.get("errors"):
-            _print_script_errors(document["errors"])
-        elif result.stderr:
-            click.echo(result.stderr, err=True, nl=False)
-        raise click.exceptions.Exit(result.returncode)
     if result.stderr:
         click.echo(result.stderr, err=True, nl=False)
+    if result.returncode:
+        if json_output:
+            try:
+                json.loads(result.stdout)
+            except ValueError:
+                pass
+            else:
+                emit(result.stdout.rstrip("\n"))
+        raise click.exceptions.Exit(result.returncode)
     if json_output:
         emit(result.stdout.rstrip("\n"))
     else:
@@ -386,7 +399,9 @@ def _wait_for_inspection(client, item):
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Manifest JSON with hosts, credentials, and scopes.",
 )
-@click.option("--wait/--no-wait", default=True, help="Wait up to 60 seconds for inspection.")
+@click.option(
+    "--wait/--no-wait", default=True, help="Wait up to 60 seconds for inspection."
+)
 @api_url_option
 @json_option
 @verbose_option
@@ -413,10 +428,7 @@ def push_script(file, name, description, manifest, wait, api_url, json_output, v
     _print_script(item, json_output)
     if item.status == "rejected":
         error = _script_document(item).get("inspectError")
-        if error:
-            _print_script_errors(error.get("errors") or [error])
-        else:
-            click.echo("Inspection rejected", err=True)
+        _print_script_errors(error)
         raise click.exceptions.Exit(1)
     if wait and item.status != "ready":
         click.echo(

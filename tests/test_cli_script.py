@@ -3,7 +3,6 @@
 import json
 import subprocess
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -141,101 +140,45 @@ def test_check_output(monkeypatch, source, flags):
     assert call.call_args.args[0][-2:] == ["inspect", source]
 
 
-@pytest.mark.parametrize("flags", [[], ["-j"]])
-def test_check_failure_diagnostics(monkeypatch, source, flags):
-    document = {
-        "ok": False,
-        "error": {"code": "invalid_script", "message": "Invalid script"},
-        "errors": [
-            {
-                "code": "invalid_entrypoint",
-                "message": "Entry point missing",
-                "line": 4,
-                "repair": {"action": "edit", "hint": "Define main"},
-            },
-            {"code": "invalid_schema", "message": "Schema missing"},
-        ],
-        "warnings": [],
-    }
-    raw = json.dumps(document, indent=2) + "\n"
+@pytest.mark.parametrize(
+    "flags,expected_stdout",
+    [(["-j"], '{"ok": false, "errors": [{"message": "Entry point missing"}]}\n'),
+     ([], "")],
+)
+def test_check_failure_diagnostics(monkeypatch, source, flags, expected_stdout):
+    raw = '{"ok": false, "errors": [{"message": "Entry point missing"}]}\n'
+    stderr = "line 4: Entry point missing — Define main\nSchema missing\n"
     monkeypatch.setattr(
         script.subprocess,
         "run",
-        Mock(
-            side_effect=[
-                subprocess.CompletedProcess([], 0),
-                subprocess.CompletedProcess([], 3, raw, "package diagnostic\n"),
-            ]
-        ),
+        Mock(side_effect=[
+            subprocess.CompletedProcess([], 0),
+            subprocess.CompletedProcess([], 3, raw, stderr),
+        ]),
     )
     result = CliRunner().invoke(cli, ["script", "check", source, *flags])
     assert result.exit_code == 3, result.output
-    if flags:
-        assert json.loads(result.stdout) == document
-        assert result.stdout == raw
-        assert result.stderr == "package diagnostic\n"
-    else:
-        assert result.stdout == ""
-        assert result.stderr == (
-            "line 4: Entry point missing\n  fix: Define main\ninvalid_schema: Schema missing\n"
-        )
-
-
-@pytest.mark.parametrize("code", [3, 8])
-@pytest.mark.parametrize("flags", [[], ["-j"]])
-@pytest.mark.parametrize("stdout", ["", "not JSON", '{"ok": false}'])
-def test_check_error_passthrough(monkeypatch, source, code, flags, stdout):
-    monkeypatch.setattr(
-        script.subprocess,
-        "run",
-        Mock(
-            side_effect=[
-                subprocess.CompletedProcess([], 0),
-                subprocess.CompletedProcess([], code, stdout, "invalid entry point\n"),
-            ]
-        ),
-    )
-    result = CliRunner().invoke(cli, ["script", "check", source, *flags])
-    assert result.exit_code == code
-    assert result.stdout == (stdout + "\n" if flags and stdout.startswith("{") else "")
-    assert result.stderr == "invalid entry point\n"
+    assert result.stdout == expected_stdout
+    assert result.stderr == stderr
 
 
 @pytest.mark.parametrize(
-    "error,expected",
-    [
-        (
-            {
-                "code": "invalid_script",
-                "message": "Invalid script",
-                "errors": [
-                    {
-                        "code": "invalid_entrypoint",
-                        "message": "Entry point missing",
-                        "line": 4,
-                        "repair": {"action": "edit", "hint": "Define main"},
-                    },
-                    {"code": "invalid_schema", "message": "Schema missing"},
-                ],
-            },
-            "line 4: Entry point missing\n  fix: Define main\ninvalid_schema: Schema missing\n",
-        ),
-        (
-            {"code": "invalid_entrypoint", "message": "Entry point missing"},
-            "invalid_entrypoint: Entry point missing\n",
-        ),
-    ],
+    "stdout,expected_stdout",
+    [("", ""), ("not JSON", ""), ('{"ok": false}', '{"ok": false}\n')],
 )
-def test_push_rejected_diagnostics(monkeypatch, source, error, expected):
-    item = Mock(status="rejected")
-    item.model_dump.return_value = {"inspectError": error}
-    client = Mock()
-    client.scripts.create.return_value.data = item
-    monkeypatch.setattr(script, "_script_client", lambda api_url: nullcontext(client))
-    result = CliRunner().invoke(cli, ["script", "push", source, "--no-wait", "-j"])
-    assert result.exit_code == 1, result.output
-    assert json.loads(result.stdout)["inspectError"] == error
-    assert result.stderr == expected
+def test_check_error_passthrough(monkeypatch, source, stdout, expected_stdout):
+    monkeypatch.setattr(
+        script.subprocess,
+        "run",
+        Mock(side_effect=[
+            subprocess.CompletedProcess([], 0),
+            subprocess.CompletedProcess([], 3, stdout, "invalid entry point\n"),
+        ]),
+    )
+    result = CliRunner().invoke(cli, ["script", "check", source, "-j"])
+    assert result.exit_code == 3
+    assert result.stdout == expected_stdout
+    assert result.stderr == "invalid entry point\n"
 
 
 @pytest.mark.parametrize(

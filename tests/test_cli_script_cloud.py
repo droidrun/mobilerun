@@ -185,7 +185,39 @@ def test_push_wait_inspection(sdk, file, clock, status, exit_code, json_output):
     else:
         assert result.stdout == f"hello.py\t2\t{ID2}\t{status}\n"
     if error:
-        assert "entrypoint missing" in result.stderr
+        assert result.stderr == "invalid_entrypoint: entrypoint missing\n"
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (
+            {"code": "invalid_script", "message": "Invalid", "errors": [
+                {"message": "Entry point missing", "line": 4,
+                 "repair": {"hint": "Define main"}},
+                {"message": "Schema missing"},
+                {"message": "Add schema", "repair": {"hint": "Use a type"}},
+            ]},
+            "line 4: Entry point missing — Define main\nSchema missing\n"
+            "Add schema — Use a type\n",
+        ),
+        (None, "Inspection rejected\n"),
+        (
+            {"code": "invalid_script", "message": "Invalid",
+             "errors": ["not an issue", {"message": "Invalid", "repair": "bad"}]},
+            "Invalid\n",
+        ),
+        ({"code": "invalid_script", "message": "Invalid", "errors": []},
+         "invalid_script: Invalid\n"),
+        ({"code": "invalid_script", "message": "Invalid", "errors": "bad"},
+         "invalid_script: Invalid\n"),
+    ],
+)
+def test_push_rejected_diagnostics(sdk, file, error, expected):
+    sdk.scripts.create.return_value.data = record(status="rejected", inspectError=error)
+    result = invoke("push", file, "--no-wait", "-j")
+    assert result.exit_code == 1, result.output
+    assert result.stderr == expected
 
 
 def test_push_wait_timeout_is_success(sdk, file, clock):
