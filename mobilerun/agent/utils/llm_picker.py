@@ -21,6 +21,7 @@ from mobilerun.agent.providers.anthropic import (
     anthropic_model_omits_sampling_params,
     collect_stream_usage,
     record_stream_usage,
+    without_replayed_thinking,
 )
 from mobilerun.agent.providers.grok import (
     GROK_API_DEFAULT_MODEL,
@@ -637,13 +638,23 @@ def _load_anthropic(**kwargs: Any) -> LLM:
             record_stream_usage(self._client.messages)
             record_stream_usage(self._aclient.messages, is_async=True)
 
+        def chat(self, messages: Any, **kwargs: Any) -> Any:
+            messages = without_replayed_thinking(self.model, messages)
+            return super().chat(messages, **kwargs)
+
+        async def achat(self, messages: Any, **kwargs: Any) -> Any:
+            messages = without_replayed_thinking(self.model, messages)
+            return await super().achat(messages, **kwargs)
+
         def stream_chat(self, messages: Any, **kwargs: Any) -> Any:
+            messages = without_replayed_thinking(self.model, messages)
             usage = StreamUsage()
             with collect_stream_usage(usage):
                 response = super().stream_chat(messages, **kwargs)
             return usage.track(response)
 
         async def astream_chat(self, messages: Any, **kwargs: Any) -> Any:
+            messages = without_replayed_thinking(self.model, messages)
             usage = StreamUsage()
             with collect_stream_usage(usage):
                 response = await super().astream_chat(messages, **kwargs)

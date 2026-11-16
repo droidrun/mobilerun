@@ -1419,3 +1419,49 @@ def test_responses_parser_keeps_each_message_once() -> None:
         "second",
         "third",
     ]
+
+
+@pytest.mark.parametrize(
+    ("model", "replayed"),
+    [
+        ("claude-fable-5-2", False),
+        ("claude-opus-5-5", False),
+        ("claude-sonnet-5-5", False),
+        ("claude-haiku-5-5", False),
+        ("claude-sonnet-5", True),
+        ("claude-opus-4-8", True),
+    ],
+)
+def test_anthropic_bound_thinking_blocks_are_not_sent_back(
+    model: str, replayed: bool
+) -> None:
+    from llama_index.core.base.llms.types import ChatMessage
+
+    llm = load_llm("Anthropic", model=model, api_key="test-key")
+    captured: dict = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("stop before the network")
+
+    llm._client.messages.create = create
+    history = [
+        ChatMessage(role="user", content="state 1"),
+        ChatMessage(
+            role="assistant",
+            content="tap",
+            additional_kwargs={
+                "thinking": {"type": "thinking", "thinking": "", "signature": "sig"}
+            },
+        ),
+        ChatMessage(role="user", content="state 2"),
+    ]
+
+    with pytest.raises(RuntimeError, match="stop before the network"):
+        llm.chat(history)
+
+    assistant = captured["messages"][1]
+    types = [block["type"] for block in assistant["content"]]
+    assert ("thinking" in types) is replayed
+    assert "text" in types
+    assert "thinking" in history[1].additional_kwargs

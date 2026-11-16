@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Iterator, MutableMapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
@@ -97,6 +97,40 @@ ANTHROPIC_HIGHRES_MODELS = frozenset(
         "claude-mythos-5",
     }
 )
+
+
+# These models tie a thinking block to the exact conversation that produced
+# it and reject the block once an earlier turn changes. The agents rebuild
+# earlier turns on every step, so the blocks are not sent back.
+ANTHROPIC_MODELS_WITH_BOUND_THINKING = frozenset(
+    {
+        ANTHROPIC_FABLE_5_2_MODEL,
+        ANTHROPIC_FABLE_5_1_MODEL,
+        ANTHROPIC_OPUS_5_5_MODEL,
+        ANTHROPIC_SONNET_5_5_MODEL,
+        ANTHROPIC_HAIKU_5_5_MODEL,
+    }
+)
+
+
+def without_replayed_thinking(model: object, messages: Sequence[Any]) -> list[Any]:
+    """Drop stored thinking blocks for models that bind them to the history."""
+
+    if str(model or "").strip() not in ANTHROPIC_MODELS_WITH_BOUND_THINKING:
+        return list(messages)
+    cleaned = []
+    for message in messages:
+        extra = getattr(message, "additional_kwargs", None) or {}
+        if "thinking" in extra:
+            message = message.model_copy(
+                update={
+                    "additional_kwargs": {
+                        key: value for key, value in extra.items() if key != "thinking"
+                    }
+                }
+            )
+        cleaned.append(message)
+    return cleaned
 
 
 def anthropic_model_context_window(model: object) -> int | None:
