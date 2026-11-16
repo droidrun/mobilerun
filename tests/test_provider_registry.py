@@ -17,9 +17,7 @@ def test_gemini_api_key_catalog_uses_current_flash_models() -> None:
     assert variant.default_model == "gemini-3.8-flash"
     assert models == (
         "gemini-3.8-flash",
-        "gemini-4-hydrogen",
         "gemini-4-argon",
-        "gemini-4-carbon",
         "gemini-3.5-flash-lite",
         "gemini-3.1-pro-preview",
     )
