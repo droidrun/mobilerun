@@ -70,7 +70,7 @@ anthropic = [
     "llama-index-llms-anthropic>=0.8.6,<0.9.0",
 ]
 deepseek = []
-routines = ["mobilerun-routines[device,local]>=0.5.0"]
+routines = ["mobilerun-routines[device,local]>=0.1.0"]
 typesafe = ["typesafe-sdk>=0.7.5,<0.8.0"]
 dev = [
     "black==26.10.1",
@@ -104,8 +104,8 @@ mobilerun = "mobilerun.cli.main:cli"
 override-dependencies = ["filelock>=4.2.1"]
 
 [tool.uv.sources]
-mobilerun-routines = { git = "https://github.com/droidrun/mobilerun-routines", rev = "aade71a8eb36baea614e2b87c83f444bff380fa2" }
-mobilerun-sdk = { git = "https://github.com/droidrun/mobilerun-sdk-python", rev = "871123bcb8ed72fc577e4adfb7460b9ce0bbb246" }
+mobilerun-routines = { git = "https://github.com/droidrun/mobilerun-routines", rev = "f4d3e432d7c8937854480f125c29140c44d50630" }
+mobilerun-sdk = { git = "https://github.com/droidrun/mobilerun-sdk-python", rev = "4d7e391a16691f20c20d7fa463f30af4f957a964" }
 
 [tool.ruff]
 line-length = 100

@@ -1541,8 +1541,8 @@ requires-dist = [
     { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
     { name = "mobilerun-core", extras = ["local"], specifier = ">=1.12.0" },
     { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
-    { name = "mobilerun-routines", extras = ["device", "local"], marker = "extra == 'routines'", git = "https://github.com/droidrun/mobilerun-routines?rev=aade71a8eb36baea614e2b87c83f444bff380fa2" },
-    { name = "mobilerun-sdk", git = "https://github.com/droidrun/mobilerun-sdk-python?rev=871123bcb8ed72fc577e4adfb7460b9ce0bbb246" },
+    { name = "mobilerun-routines", extras = ["device", "local"], marker = "extra == 'routines'", git = "https://github.com/droidrun/mobilerun-routines?rev=f4d3e432d7c8937854480f125c29140c44d50630" },
+    { name = "mobilerun-sdk", git = "https://github.com/droidrun/mobilerun-sdk-python?rev=4d7e391a16691f20c20d7fa463f30af4f957a964" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.40.0" },
@@ -1611,8 +1611,8 @@ cloud = [
 
 [[package]]
 name = "mobilerun-routines"
-version = "0.5.0"
-source = { git = "https://github.com/droidrun/mobilerun-routines?rev=aade71a8eb36baea614e2b87c83f444bff380fa2#aade71a8eb36baea614e2b87c83f444bff380fa2" }
+version = "0.1.0"
+source = { git = "https://github.com/droidrun/mobilerun-routines?rev=f4d3e432d7c8937854480f125c29140c44d50630#f4d3e432d7c8937854480f125c29140c44d50630" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -1627,8 +1627,8 @@ local = [
 
 [[package]]
 name = "mobilerun-sdk"
-version = "6.1.1"
-source = { git = "https://github.com/droidrun/mobilerun-sdk-python?rev=871123bcb8ed72fc577e4adfb7460b9ce0bbb246#871123bcb8ed72fc577e4adfb7460b9ce0bbb246" }
+version = "6.2.1"
+source = { git = "https://github.com/droidrun/mobilerun-sdk-python?rev=4d7e391a16691f20c20d7fa463f30af4f957a964#4d7e391a16691f20c20d7fa463f30af4f957a964" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
