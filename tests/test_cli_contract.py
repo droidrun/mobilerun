@@ -433,6 +433,125 @@ def test_adb_device_commands_hand_the_keyboard_back(monkeypatch):
     assert calls == ["tap", "close", "keyboard:serial"]
 
 
+def _adb_selection(portal_mode="auto"):
+    config = MobileConfig()
+    config.device.portal_mode = portal_mode
+    return SimpleNamespace(
+        device="serial", backend="local-android-adb", platform="android", config=config
+    )
+
+
+def _fake_device_commands(monkeypatch, selection, device):
+    from mobilerun.cli import device_commands
+
+    client = SimpleNamespace(connect=Mock(return_value=device), close=Mock())
+    monkeypatch.setattr(
+        device_commands, "select_device", AsyncMock(return_value=selection)
+    )
+    monkeypatch.setattr(device_commands, "core_client", lambda *a, **kw: client)
+    disable = AsyncMock()
+    monkeypatch.setattr(device_commands, "disable_portal_keyboard", disable)
+    return client, disable
+
+
+@pytest.mark.parametrize(
+    ("configured", "command", "sent"),
+    [
+        ("auto", ["tap", "1", "2"], "auto"),
+        ("required", ["tap", "1", "2"], "required"),
+        ("disabled", ["tap", "1", "2"], "disabled"),
+        ("auto", ["ping"], "required"),
+        ("disabled", ["ping"], "disabled"),
+    ],
+)
+def test_device_commands_follow_the_configured_portal_mode(
+    monkeypatch, configured, command, sent
+):
+    device = SimpleNamespace(
+        tap=Mock(), ui=Mock(return_value=SimpleNamespace()), close=Mock()
+    )
+    client, disable = _fake_device_commands(
+        monkeypatch, _adb_selection(configured), device
+    )
+
+    result = CliRunner().invoke(cli, ["device", *command, "-d", "serial"])
+
+    assert result.exit_code == 0, result.output
+    assert client.connect.call_args.kwargs["portal_mode"] == sent
+    # With the Portal off, its keyboard was never switched on.
+    assert disable.await_count == (0 if sent == "disabled" else 1)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [SimpleNamespace(dead_tree=True), SimpleNamespace(a11y_tree_available=False)],
+)
+def test_ping_fails_without_a_usable_ui_tree(monkeypatch, state):
+    device = SimpleNamespace(ui=Mock(return_value=state), close=Mock())
+    _fake_device_commands(monkeypatch, _adb_selection(), device)
+
+    result = CliRunner().invoke(cli, ["device", "ping", "-d", "serial"])
+
+    assert result.exit_code == 1
+    assert "UI tree is unavailable" in result.output
+
+
+def test_ping_fails_when_the_portal_is_missing(monkeypatch):
+    def ui():
+        raise ConnectionError("Portal is not available on this Android device")
+
+    device = SimpleNamespace(ui=ui, close=Mock())
+    _fake_device_commands(monkeypatch, _adb_selection(), device)
+
+    result = CliRunner().invoke(cli, ["device", "ping", "-d", "serial"])
+
+    assert result.exit_code == 1
+    assert "Portal is not available" in result.output
+    assert "mobilerun device setup" in result.output
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("GoogleGenAI", "gemini"),
+        ("OpenAIResponses", "openai"),
+        ("openai_oauth", "openai-oauth"),
+        ("anthropic_oauth", "anthropic-oauth"),
+        ("gemini_oauth_code_assist", "gemini-oauth"),
+        ("xai_oauth", "xai-oauth"),
+        ("OpenAILike", "openai-like"),
+        ("openai_like", "openai-like"),
+        ("z.ai", "zai"),
+    ],
+)
+@pytest.mark.parametrize(
+    "command", [["run", "task"], ["configure"], ["macro", "replay", "x"]]
+)
+def test_removed_provider_names_point_at_the_new_one(command, old, new):
+    result = CliRunner().invoke(cli, [*command, "-p", old, "-m", "model"])
+
+    assert result.exit_code == 2
+    assert f"Removed provider name: {old}. Use {new} instead." in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["run", "task", "--no-debug"],
+        ["run", "task", "--no-vision-only"],
+        ["device", "apps", "--no-system"],
+        ["device", "tap", "1", "2", "--tcp"],
+        ["doctor", "--no-debug"],
+    ],
+)
+def test_removed_flags_that_restated_a_default_say_to_omit_them(args):
+    result = CliRunner().invoke(cli, args)
+
+    assert result.exit_code == 2
+    assert f"Removed option: {args[-1]}. Omit it." in result.output
+    assert "Did you mean" not in result.output
+
+
 def test_keyboard_is_left_alone_when_adb_never_answered(monkeypatch):
     from mobilerun.cli import device_commands
 
@@ -830,6 +949,7 @@ def test_device_verbs_call_core_directly(
     driver.list_apps.return_value = [{"package": "example"}]
     driver.screenshot.return_value = "cG5n"
     driver.ui_json.return_value = '{"a11y_tree": {"text": "Hello"}}'
+    driver.ui.return_value = SimpleNamespace(dead_tree=False)
     core = Mock()
     core.connect.return_value = driver
     factory = Mock(return_value=core)
@@ -839,6 +959,9 @@ def test_device_verbs_call_core_directly(
     getattr(driver, verb).assert_called_once_with(*expected_args, **expected_kwargs)
     assert core.connect.call_args.args == ("serial",)
     assert core.connect.call_args.kwargs["backend"] == "local-android-adb"
+    assert core.connect.call_args.kwargs["portal_mode"] == (
+        "required" if args == ["ping"] else "auto"
+    )
     assert factory.call_args.kwargs["base_url"] == "https://api.mobilerun.ai/v1"
     driver.close.assert_called_once()
     core.close.assert_called_once()

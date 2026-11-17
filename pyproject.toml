@@ -5,6 +5,7 @@ description = "A framework for controlling mobile devices through LLM agents"
 authors = [{ name = "Niels Schmidt", email = "niels@droidrun.ai" }]
 dependencies = [
     "async_adbutils",
+    "click>=8.3,<9",
     "llama-index==0.14.23",
     "posthog>=6.7.6",
     "pydantic>=2.11.10",

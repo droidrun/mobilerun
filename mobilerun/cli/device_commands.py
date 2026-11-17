@@ -41,8 +41,15 @@ UI_FLAGS = (
 )
 
 
+def _tree_unavailable(state):
+    return (
+        getattr(state, "dead_tree", False)
+        or getattr(state, "a11y_tree_available", True) is False
+    )
+
+
 @contextmanager
-def device_driver(params=None, *, selection=None):
+def device_driver(params=None, *, selection=None, require_portal=False):
     """Resolve Click's device options once and yield the connected core Device."""
     from mobilerun.agent.utils.android_device import is_portal_http_url
 
@@ -58,7 +65,15 @@ def device_driver(params=None, *, selection=None):
         )
     token = portal_token(selection)
     client = core_client(params["api_url"], cloud=selection.backend == "cloud")
-    with local_adb_errors(selection.backend == "local-android-adb"):
+    over_adb = selection.backend == "local-android-adb"
+    # Only the ADB backend can run with or without the Portal.
+    options = {}
+    if over_adb:
+        portal_mode = selection.config.device.portal_mode
+        if require_portal and portal_mode != "disabled":
+            portal_mode = "required"
+        options["portal_mode"] = portal_mode
+    with local_adb_errors(over_adb):
         try:
             connected = client.connect(
                 selection.device,
@@ -66,9 +81,10 @@ def device_driver(params=None, *, selection=None):
                 platform=selection.platform,
                 url=selection.device if is_portal_http_url(selection.device) else None,
                 token=token,
+                **options,
             )
-            # Connecting over ADB makes the Portal keyboard the active one.
-            keyboard_set = selection.backend == "local-android-adb"
+            # Connecting through the Portal makes its keyboard the active one.
+            keyboard_set = over_adb and options["portal_mode"] != "disabled"
             try:
                 yield connected
             except Exception as exc:
@@ -83,8 +99,18 @@ def device_driver(params=None, *, selection=None):
 
 
 def probe_device(params, *, selection=None):
-    with device_driver(params, selection=selection) as device:
-        device.ui()
+    """Read the UI once, through the Portal unless the config turns it off."""
+    with device_driver(params, selection=selection, require_portal=True) as device:
+        try:
+            state = device.ui()
+        except ConnectionError as exc:
+            if "Portal" not in str(exc):
+                raise
+            raise click.ClickException(
+                f"{exc}. Install it with `mobilerun device setup`."
+            ) from None
+        if _tree_unavailable(state):
+            raise click.ClickException("The device UI tree is unavailable.")
 
 
 @click.group(
@@ -196,10 +222,7 @@ def ui(json_output, all_elements, **params):
             emit(json.loads(device.ui_json()), json_output=True)
             return
         state = device.ui()
-        if (
-            getattr(state, "dead_tree", False)
-            or getattr(state, "a11y_tree_available", True) is False
-        ):
+        if _tree_unavailable(state):
             raise click.ClickException("The device UI tree is unavailable.")
         for line in ui_lines(state, all_elements):
             emit(line)

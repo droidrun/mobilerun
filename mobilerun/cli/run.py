@@ -490,6 +490,7 @@ class AgentOption(click.Option):
 
 @click.command(
     cls=Command,
+    removed_flags={**Command.removed_flags, "--device-id": "--backend-device"},
     epilog=examples(
         'mobilerun run "Open Settings"',
         'mobilerun run "Open Settings" -d DEVICE -p openai -m MODEL',

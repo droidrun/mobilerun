@@ -398,6 +398,10 @@ The old spellings are removed; there are no aliases. Replace them as follows:
 | Run `--steps` | `-s` / `--max-steps` |
 | Run `--control-backend`, `--device-id` | `--backend`, `--backend-device` for visual remote control |
 | Run `--no-vision-only` | Omit `--vision-only` |
+| Provider `GoogleGenAI`, `OpenAIResponses`, `OpenAILike` | `gemini`, `openai`, `openai-like` |
+| Provider `openai_oauth`, `anthropic_oauth`, `gemini_oauth_code_assist`, `xai_oauth` | `openai-oauth`, `anthropic-oauth`, `gemini-oauth`, `xai-oauth` |
+| Device command `--tcp` / `--no-tcp`, `apps --no-system` | Omit |
+| Device commands installing the Portal on first use | `mobilerun device setup` |
 | Setup `--path`, `-pv` | `--apk`, `--portal-version` |
 | Macro replay `-m` (step limit), `-t` (delay), `-s` (start step) | `-s` / `--max-steps`, `--delay`, `--start-from`; `-m` now selects a model |
 | `DROIDRUN_CONFIG`, `DROIDRUN_TELEMETRY_ENABLED` | `MOBILERUN_CONFIG`, `MOBILERUN_TELEMETRY_ENABLED` |

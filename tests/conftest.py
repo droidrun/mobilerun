@@ -23,6 +23,13 @@ CHROME_BAR = "com.android.chrome:id/url_bar"
 
 
 @pytest.fixture(autouse=True)
+def no_ambient_cloud_key(monkeypatch):
+    """A key exported in the developer's shell must not reach the tests."""
+    monkeypatch.delenv("MOBILERUN_API_KEY", raising=False)
+    monkeypatch.delenv("MOBILERUN_CLOUD_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def no_keyboard_hand_back(monkeypatch):
     """Device command tests fake the device, so nothing may reach real ADB."""
 

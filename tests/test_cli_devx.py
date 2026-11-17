@@ -842,12 +842,11 @@ def test_terminal_secret_input_is_hidden(monkeypatch, secret_command):
         lambda name: stream if name == "stdin" else original_stream(name),
     )
     original_prompt = click.prompt
+    reader = Mock(return_value="dummy-hidden-marker")
 
     def hidden_prompt(*args, **kwargs):
         assert kwargs["hide_input"] is True and kwargs["err"] is True
-        monkeypatch.setattr(
-            click.termui, "hidden_prompt_func", Mock(return_value="dummy-hidden-marker")
-        )
+        monkeypatch.setattr(click.termui, "hidden_prompt_func", reader)
         return original_prompt(*args, **kwargs)
 
     monkeypatch.setattr(click, "prompt", hidden_prompt)
@@ -857,7 +856,9 @@ def test_terminal_secret_input_is_hidden(monkeypatch, secret_command):
     stream.readline.assert_not_called()
     assert value() == "dummy-hidden-marker"
     assert "dummy-hidden-marker" not in result.output
-    assert ":" in result.stderr
+    # click writes the prompt itself or hands it to the hidden reader.
+    shown = result.stderr + "".join(map(str, reader.call_args.args))
+    assert ":" in shown
 
 
 def test_cloud_empty_list_has_cloud_hint(monkeypatch):

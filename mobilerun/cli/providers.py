@@ -43,11 +43,40 @@ PROVIDERS = {
 }
 
 
+_RENAMED_PROVIDERS = {
+    "googlegenai": "gemini",
+    "google": "gemini",
+    "gemini_oauth_code_assist": "gemini-oauth",
+    "openairesponses": "openai",
+    "gpt": "openai",
+    "openai_oauth": "openai-oauth",
+    "claude": "anthropic",
+    "anthropic_oauth": "anthropic-oauth",
+    "xai_oauth": "xai-oauth",
+    "openailike": "openai-like",
+    "openai_like": "openai-like",
+    "openai_compatible": "openai-like",
+    "z.ai": "zai",
+}
+
+
+class ProviderChoice(click.Choice):
+    """Point a removed provider name at its replacement."""
+
+    def convert(self, value, param, ctx):
+        renamed = _RENAMED_PROVIDERS.get(str(value).lower())
+        if renamed in self.choices:
+            self.fail(
+                f"Removed provider name: {value}. Use {renamed} instead.", param, ctx
+            )
+        return super().convert(value, param, ctx)
+
+
 def _provider_option(names, note=""):
     return click.option(
         "-p",
         "--provider",
-        type=click.Choice(names, case_sensitive=False),
+        type=ProviderChoice(names, case_sensitive=False),
         metavar="PROVIDER",
         help="LLM provider: "
         + ", ".join(names)

@@ -266,6 +266,14 @@ _REMOVED_FLAGS = {
     "--steps": "-s/--max-steps",
     "-pv": "--portal-version",
     "--control-backend": "--backend",
+    # No replacement: the flag restated the default.
+    "--no-debug": None,
+    "--no-vision-only": None,
+    "--no-system": None,
+    "--open-browser": None,
+    # Only reached on commands without a TCP mode.
+    "--tcp": None,
+    "--no-tcp": None,
 }
 
 
@@ -292,11 +300,11 @@ class HelpLayout:
                 if exc.option_name in {"p", "-p"} and legacy_cluster
                 else exc.option_name
             )
-            replacement = self.removed_flags.get(flag)
-            if replacement:
+            if flag in self.removed_flags:
+                replacement = self.removed_flags[flag]
+                advice = f"Use {replacement} instead." if replacement else "Omit it."
                 raise click.UsageError(
-                    f"Removed option: {flag}. Use {replacement} instead.",
-                    ctx,
+                    f"Removed option: {flag}. {advice}", ctx
                 ) from None
             if self.dash_hint:
                 exc.message += "\nPut `--` before arguments that start with a dash."
@@ -457,7 +465,10 @@ class Group(HelpLayout, click.Group):
                         "'" + " ".join(_follow(path, command, args[1:])) + "'"
                         for path, command in matches
                     )
-                    exc.message += f" Did you mean {suggestions}?"
+                    # A plain usage error keeps click from adding its own guess.
+                    raise click.UsageError(
+                        f"{exc.message} Did you mean {suggestions}?", ctx
+                    ) from None
             raise
 
     def suggest_commands(self, ctx, name):
