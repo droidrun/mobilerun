@@ -287,3 +287,23 @@ def test_agent_records_android_serial_when_portal_setup_fails(monkeypatch):
 
     assert agent.android_serial == "emulator-5556"
     assert config.device.serial is None
+
+
+def test_device_command_hand_back_disables_the_portal_keyboard(fake_adb):
+    from mobilerun.cli.selection import disable_portal_keyboard
+
+    asyncio.run(disable_portal_keyboard("emulator-0000"))
+
+    assert _serials(fake_adb) == ["emulator-0000"]
+    assert fake_adb[0].commands == [DISABLE_IME]
+
+
+def test_device_command_hand_back_ignores_adb_failures(monkeypatch):
+    from mobilerun.cli.selection import disable_portal_keyboard
+
+    async def device(serial=None):
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(cli_main.adb, "device", device)
+
+    asyncio.run(disable_portal_keyboard("emulator-0000"))

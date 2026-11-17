@@ -433,6 +433,34 @@ def test_adb_device_commands_hand_the_keyboard_back(monkeypatch):
     assert calls == ["tap", "close", "keyboard:serial"]
 
 
+def test_keyboard_is_left_alone_when_adb_never_answered(monkeypatch):
+    from mobilerun.cli import device_commands
+
+    def tap(*args, **kwargs):
+        raise ConnectionRefusedError
+
+    device = SimpleNamespace(tap=tap, close=Mock())
+    client = SimpleNamespace(connect=lambda *a, **kw: device, close=Mock())
+    selection = SimpleNamespace(
+        device="serial",
+        backend="local-android-adb",
+        platform="android",
+        config=MobileConfig(),
+    )
+    monkeypatch.setattr(
+        device_commands, "select_device", AsyncMock(return_value=selection)
+    )
+    monkeypatch.setattr(device_commands, "core_client", lambda *a, **kw: client)
+    disable = AsyncMock()
+    monkeypatch.setattr(device_commands, "disable_portal_keyboard", disable)
+
+    result = CliRunner().invoke(cli, ["device", "tap", "10", "20", "-d", "serial"])
+
+    assert result.exit_code == 1
+    assert "adb" in result.output.lower()
+    disable.assert_not_called()
+
+
 @pytest.mark.parametrize("backend", ["cloud", "local-android-http", "local-ios-http"])
 def test_other_backends_leave_the_keyboard_alone(monkeypatch, backend):
     from mobilerun.cli import device_commands

@@ -1,4 +1,4 @@
-"""Shared fakes for the secret approval tests."""
+"""Shared fixtures, and fakes for the secret approval tests."""
 
 import asyncio
 
@@ -20,6 +20,16 @@ CARD_CVC = "737"
 SHOP = "com.example.shop"
 CHROME = "com.android.chrome"
 CHROME_BAR = "com.android.chrome:id/url_bar"
+
+
+@pytest.fixture(autouse=True)
+def no_keyboard_hand_back(monkeypatch):
+    """Device command tests fake the device, so nothing may reach real ADB."""
+
+    async def skip(serial):
+        return None
+
+    monkeypatch.setattr("mobilerun.cli.device_commands.disable_portal_keyboard", skip)
 
 
 @pytest.fixture

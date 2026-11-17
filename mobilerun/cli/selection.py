@@ -16,10 +16,45 @@ if TYPE_CHECKING:
     from mobilerun.config_manager import MobileConfig
 
 
+def adb_unavailable(exc):
+    """Whether the failure means ADB itself could not be reached."""
+    from async_adbutils import AdbError, AdbTimeout
+
+    message = str(exc).lower()
+    missing_binary = (
+        isinstance(exc, FileNotFoundError)
+        and exc.filename
+        and (
+            str(exc.filename).rsplit("/", 1)[-1] in {"adb", "adb.exe"}
+            or exc.filename == os.environ.get("ADBUTILS_ADB_PATH")
+        )
+    )
+    return bool(
+        isinstance(exc, (ConnectionRefusedError, asyncio.TimeoutError, AdbTimeout))
+        or missing_binary
+        or (
+            isinstance(exc, ModuleNotFoundError)
+            and exc.name in {"adbutils", "adbutils.binaries"}
+        )
+        or (
+            isinstance(exc, AdbError)
+            and any(
+                text in message
+                for text in (
+                    "no adb exe",
+                    "cannot connect",
+                    "can't connect",
+                    "connection refused",
+                )
+            )
+        )
+    )
+
+
 @contextmanager
 def local_adb_errors(enabled=True):
     """Translate local ADB startup failures after the library tries to start it."""
-    from async_adbutils import AdbError, AdbTimeout
+    from async_adbutils import AdbError
 
     try:
         yield
@@ -30,35 +65,7 @@ def local_adb_errors(enabled=True):
         FileNotFoundError,
         ModuleNotFoundError,
     ) as exc:
-        message = str(exc).lower()
-        missing_binary = (
-            isinstance(exc, FileNotFoundError)
-            and exc.filename
-            and (
-                str(exc.filename).rsplit("/", 1)[-1] in {"adb", "adb.exe"}
-                or exc.filename == os.environ.get("ADBUTILS_ADB_PATH")
-            )
-        )
-        unavailable = (
-            isinstance(exc, (ConnectionRefusedError, asyncio.TimeoutError, AdbTimeout))
-            or missing_binary
-            or (
-                isinstance(exc, ModuleNotFoundError)
-                and exc.name in {"adbutils", "adbutils.binaries"}
-            )
-            or (
-                isinstance(exc, AdbError)
-                and any(
-                    text in message
-                    for text in (
-                        "no adb exe",
-                        "cannot connect",
-                        "can't connect",
-                        "connection refused",
-                    )
-                )
-            )
-        )
+        unavailable = adb_unavailable(exc)
         if enabled and unavailable:
             raise click.ClickException(ADB_HINT) from None
         raise
@@ -243,8 +250,11 @@ async def disable_portal_keyboard(serial):
     from async_adbutils import adb
     from mobilerun_core_local.driver.android.portal import disable_keyboard
 
-    try:
+    async def disable():
         await disable_keyboard(await adb.device(serial=serial))
+
+    try:
+        await asyncio.wait_for(disable(), timeout=10)
     except Exception:
         pass
 
