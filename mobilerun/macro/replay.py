@@ -204,6 +204,10 @@ class MacroPlayer:
         if not pre_state:
             return True, None, None
 
+        # The live state is masked. A recording may hold a typed secret in
+        # clear text, so it is also compared after the same masking.
+        masked_pre_state = self._redactor.redact_data(pre_state)
+
         deadline = time.monotonic() + self.state_timeout
         last_state = None
         last_result = None
@@ -211,6 +215,10 @@ class MacroPlayer:
         while True:
             current_state = await self.get_current_state_snapshot()
             result = compare_states(pre_state, current_state, self.state_threshold)
+            if not result.matches:
+                result = compare_states(
+                    masked_pre_state, current_state, self.state_threshold
+                )
             if result.matches:
                 return True, current_state, result
 
