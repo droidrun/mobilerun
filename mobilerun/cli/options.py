@@ -270,7 +270,6 @@ _REMOVED_FLAGS = {
     "--no-debug": None,
     "--no-vision-only": None,
     "--no-system": None,
-    "--open-browser": None,
     # Only reached on commands without a TCP mode.
     "--tcp": None,
     "--no-tcp": None,

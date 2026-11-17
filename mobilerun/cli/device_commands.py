@@ -70,7 +70,7 @@ def device_driver(params=None, *, selection=None, require_portal=False):
     options = {}
     if over_adb:
         portal_mode = selection.config.device.portal_mode
-        if require_portal and portal_mode != "disabled":
+        if require_portal and portal_mode == "auto":
             portal_mode = "required"
         options["portal_mode"] = portal_mode
     with local_adb_errors(over_adb):
@@ -89,6 +89,10 @@ def device_driver(params=None, *, selection=None, require_portal=False):
                 yield connected
             except Exception as exc:
                 keyboard_set = keyboard_set and not adb_unavailable(exc)
+                if over_adb and "Portal is not available" in str(exc):
+                    raise click.ClickException(
+                        f"{exc}. Install it with `mobilerun device setup`."
+                    ) from None
                 raise
             finally:
                 connected.close()
@@ -101,15 +105,7 @@ def device_driver(params=None, *, selection=None, require_portal=False):
 def probe_device(params, *, selection=None):
     """Read the UI once, through the Portal unless the config turns it off."""
     with device_driver(params, selection=selection, require_portal=True) as device:
-        try:
-            state = device.ui()
-        except ConnectionError as exc:
-            if "Portal" not in str(exc):
-                raise
-            raise click.ClickException(
-                f"{exc}. Install it with `mobilerun device setup`."
-            ) from None
-        if _tree_unavailable(state):
+        if _tree_unavailable(device.ui()):
             raise click.ClickException("The device UI tree is unavailable.")
 
 

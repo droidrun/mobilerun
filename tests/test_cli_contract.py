@@ -462,6 +462,8 @@ def _fake_device_commands(monkeypatch, selection, device):
         ("disabled", ["tap", "1", "2"], "disabled"),
         ("auto", ["ping"], "required"),
         ("disabled", ["ping"], "disabled"),
+        # An invalid value reaches the driver's own check on ping too.
+        ("bogus", ["ping"], "bogus"),
     ],
 )
 def test_device_commands_follow_the_configured_portal_mode(
@@ -508,6 +510,36 @@ def test_ping_fails_when_the_portal_is_missing(monkeypatch):
     assert result.exit_code == 1
     assert "Portal is not available" in result.output
     assert "mobilerun device setup" in result.output
+
+
+@pytest.mark.parametrize(
+    ("backend", "message"),
+    [
+        ("local-android-http", "Could not connect to Android Portal HTTP at URL"),
+        ("local-ios-http", "No iOS portal answered at URL"),
+    ],
+)
+def test_setup_hint_is_only_for_a_missing_portal_over_adb(
+    monkeypatch, backend, message
+):
+    def ui():
+        raise ConnectionError(message)
+
+    device = SimpleNamespace(ui=ui, close=Mock())
+    selection = SimpleNamespace(
+        device="http://127.0.0.1:8080",
+        backend=backend,
+        platform="android",
+        config=MobileConfig(),
+    )
+    _fake_device_commands(monkeypatch, selection, device)
+    monkeypatch.setattr("mobilerun.cli.device_commands.portal_token", lambda _: "token")
+
+    result = CliRunner().invoke(cli, ["device", "ping"])
+
+    assert result.exit_code == 1
+    assert message in result.output
+    assert "device setup" not in result.output
 
 
 @pytest.mark.parametrize(
