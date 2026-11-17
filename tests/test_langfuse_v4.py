@@ -1177,34 +1177,9 @@ def test_android_state_workers_cannot_corrupt_other_observations(
 
     large, small = data(4000, 8000), data(1000, 2000)
 
-    class PausingFilter(ConciseFilter):
-        def __init__(self):
-            self.observed_sizes = []
-
-        def filter(self, tree, context):
-            self.observed_sizes.append(context["screen_bounds"]["width"])
-            if cancelled and context["screen_bounds"]["width"] == 4000:
-                entered.set()
-                assert release.wait(5), "first worker was not released"
-            return super().filter(tree, context)
-
-    class PausingFormatter(IndexedFormatter):
-        def __setattr__(self, name, value):
-            if self is formatter and threading.get_ident() != loop_thread:
-                off_loop_writes.append(name)
-            super().__setattr__(name, value)
-
-        def format(self, tree, phone_state):
-            if not cancelled and self.screen_width == 4000:
-                entered.set()
-                assert release.wait(5), "first worker was not released"
-            return super().format(tree, phone_state)
-
-    # Keep synchronization events in method closures so per-call copies can
-    # isolate configuration without copying threading locks.
-    formatter = None
-    formatter = PausingFormatter()
-    tree_filter = PausingFilter()
+    formatter = IndexedFormatter()
+    tree_filter = ConciseFilter()
+    tree_filter.observed_sizes = []
     provider = AndroidStateProvider(
         SimpleNamespace(get_ui_tree=AsyncMock(side_effect=[large, small])),
         tree_filter,
@@ -1227,6 +1202,33 @@ def test_android_state_workers_cannot_corrupt_other_observations(
                 finished.set()
 
     monkeypatch.setattr(AndroidStateProvider, "_state_from_data", process)
+
+    # Only exact built-in instances are copied per call, so the built-in
+    # classes are patched instead of subclassed.
+    original_filter = ConciseFilter.filter
+    original_format = IndexedFormatter.format
+
+    def pausing_filter(self, tree, context):
+        self.observed_sizes.append(context["screen_bounds"]["width"])
+        if cancelled and context["screen_bounds"]["width"] == 4000:
+            entered.set()
+            assert release.wait(5), "first worker was not released"
+        return original_filter(self, tree, context)
+
+    def recording_setattr(self, name, value):
+        if self is formatter and threading.get_ident() != loop_thread:
+            off_loop_writes.append(name)
+        object.__setattr__(self, name, value)
+
+    def pausing_format(self, tree, phone_state):
+        if not cancelled and self.screen_width == 4000:
+            entered.set()
+            assert release.wait(5), "first worker was not released"
+        return original_format(self, tree, phone_state)
+
+    monkeypatch.setattr(ConciseFilter, "filter", pausing_filter)
+    monkeypatch.setattr(IndexedFormatter, "__setattr__", recording_setattr)
+    monkeypatch.setattr(IndexedFormatter, "format", pausing_format)
 
     def assert_published(state):
         assert provider.model_screenshot_width == state.model_screenshot_width

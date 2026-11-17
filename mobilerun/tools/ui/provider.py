@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 import httpx
 from mobilerun_core_local.driver.base import DeviceDisconnectedError
 
+from mobilerun.tools.filters import ConciseFilter, DetailedFilter
+from mobilerun.tools.formatters import IndexedFormatter
 from mobilerun.tools.helpers.coordinate import NORMALIZED_STATE_NOTE
 from mobilerun.tools.helpers.images import (
     fit_dimensions_to_max_side,
@@ -58,6 +60,10 @@ _SLOW_FETCH_NOTICE_S = 3.0
 # Portal's error when its accessibility service is not bound, e.g. after the
 # system force-stopped Portal. Waiting does not help, so recover right away.
 _A11Y_SERVICE_NOT_AVAILABLE = "Accessibility service not available"
+
+# Exact types that are copied per observation and run off the loop.
+_OWN_FILTERS = (ConciseFilter, DetailedFilter)
+_OWN_FORMATTERS = (IndexedFormatter,)
 
 
 def _is_timeout(error: BaseException) -> bool:
@@ -1486,6 +1492,15 @@ class AndroidStateProvider(StateProvider):
         return await self._state_from_data_async(combined_data)
 
     async def _state_from_data_async(self, combined_data: dict) -> UIState:
+        # A caller's own filter or formatter, subclasses included, may hold
+        # locks, keep state or use the running loop, so it is called in place
+        # on the event loop.
+        if not (
+            type(self.tree_filter) in _OWN_FILTERS
+            and type(self.tree_formatter) in _OWN_FORMATTERS
+        ):
+            return self._state_from_data(combined_data)
+
         # Workers may outlive cancellation. Only their per-call copies may change.
         processor = copy(self)
         processor.tree_filter = deepcopy(self.tree_filter)
