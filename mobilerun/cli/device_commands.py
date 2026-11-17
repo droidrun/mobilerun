@@ -23,6 +23,7 @@ from mobilerun.cli.options import (
 )
 from mobilerun.cli.selection import (
     core_client,
+    disable_portal_keyboard,
     local_adb_errors,
     portal_token,
     select_device,
@@ -69,6 +70,9 @@ def device_driver(params=None, *, selection=None):
                 yield connected
             finally:
                 connected.close()
+                if selection.backend == "local-android-adb":
+                    # Connecting made the Portal keyboard the active one.
+                    asyncio.run(disable_portal_keyboard(selection.device))
         finally:
             client.close()
 

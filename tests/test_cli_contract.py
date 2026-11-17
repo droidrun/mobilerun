@@ -357,11 +357,106 @@ def test_provider_table_matches_wizard_and_loaders():
                 resolve_provider_variant(provider.family, provider.auth_mode).id
                 == provider.runtime
             )
+    assert PROVIDERS["xai-oauth"].runtime == "xai_oauth"
     assert llm_url_kwargs("Ollama", "http://x") == {"base_url": "http://x"}
     assert llm_url_kwargs("OpenAIResponses", "http://x") == {"api_base": "http://x"}
     assert llm_url_kwargs("GoogleGenAI", "http://x") == {
         "http_options": {"base_url": "http://x"}
     }
+
+
+@pytest.mark.parametrize("provider", ["OpenAILike", "MiniMax", "ZAI", "DeepSeek"])
+def test_llm_url_replaces_a_saved_endpoint(provider):
+    from mobilerun.agent.utils.llm_picker import load_llm
+    from mobilerun.config_manager.config_manager import LLMProfile
+
+    profile = LLMProfile(
+        provider=provider,
+        model="model",
+        base_url="http://saved.test/v1",
+        api_base="http://saved.test/v1",
+        kwargs={"api_key": "key"},
+    )
+    profile.kwargs.update(llm_url_kwargs(provider, "http://flag.test/v1"))
+
+    llm = load_llm(provider, **profile.to_load_llm_kwargs())
+
+    assert llm.api_base == "http://flag.test/v1"
+
+
+@pytest.mark.parametrize("runtime", ["XAI", "xai_oauth"])
+def test_llm_url_is_refused_for_grok(runtime):
+    with pytest.raises(click.UsageError, match="not supported"):
+        llm_url_kwargs(runtime, "http://x")
+
+
+def test_run_accepts_the_grok_sign_in(monkeypatch):
+    callback = AsyncMock(return_value=(True, "done", 1))
+    monkeypatch.setattr(run_module, "_run_task", callback)
+
+    result = CliRunner().invoke(
+        cli, ["run", "task", "-p", "xai-oauth", "-m", "grok-4.7"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert callback.await_args.kwargs["provider"] == "xai_oauth"
+
+
+def test_adb_device_commands_hand_the_keyboard_back(monkeypatch):
+    from mobilerun.cli import device_commands
+
+    calls = []
+    device = SimpleNamespace(
+        tap=lambda *a, **kw: calls.append("tap"),
+        close=lambda: calls.append("close"),
+    )
+    client = SimpleNamespace(connect=lambda *a, **kw: device, close=Mock())
+    selection = SimpleNamespace(
+        device="serial",
+        backend="local-android-adb",
+        platform="android",
+        config=MobileConfig(),
+    )
+    monkeypatch.setattr(
+        device_commands, "select_device", AsyncMock(return_value=selection)
+    )
+    monkeypatch.setattr(device_commands, "core_client", lambda *a, **kw: client)
+
+    async def disable(serial):
+        calls.append(f"keyboard:{serial}")
+
+    monkeypatch.setattr(device_commands, "disable_portal_keyboard", disable)
+
+    result = CliRunner().invoke(cli, ["device", "tap", "10", "20", "-d", "serial"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == ["tap", "close", "keyboard:serial"]
+
+
+@pytest.mark.parametrize("backend", ["cloud", "local-android-http", "local-ios-http"])
+def test_other_backends_leave_the_keyboard_alone(monkeypatch, backend):
+    from mobilerun.cli import device_commands
+
+    device = SimpleNamespace(tap=Mock(), close=Mock())
+    client = SimpleNamespace(connect=lambda *a, **kw: device, close=Mock())
+    selection = SimpleNamespace(
+        device="http://127.0.0.1:8080",
+        backend=backend,
+        platform="android",
+        config=MobileConfig(),
+    )
+    monkeypatch.setattr(
+        device_commands, "select_device", AsyncMock(return_value=selection)
+    )
+    monkeypatch.setattr(device_commands, "core_client", lambda *a, **kw: client)
+    monkeypatch.setattr(device_commands, "portal_token", lambda _: "token")
+    disable = AsyncMock()
+    monkeypatch.setattr(device_commands, "disable_portal_keyboard", disable)
+
+    result = CliRunner().invoke(cli, ["device", "tap", "10", "20"])
+
+    assert result.exit_code == 0, result.output
+    disable.assert_not_called()
 
 
 def test_interrupt_exits_130(monkeypatch):

@@ -585,6 +585,7 @@ def test_cli_custom_provider_uses_bounded_retry_defaults(
     expected: dict[str, object] = {
         "model": "test",
         "base_url": "https://example.test",
+        "api_base": "https://example.test",
         "max_retries": 1,
     }
     if temperature is not None:

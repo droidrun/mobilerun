@@ -454,7 +454,7 @@ class Group(HelpLayout, click.Group):
                 matches = self.suggest_commands(ctx, args[0])
                 if matches:
                     suggestions = ", ".join(
-                        f"'{" ".join(_follow(path, command, args[1:]))}'"
+                        "'" + " ".join(_follow(path, command, args[1:])) + "'"
                         for path, command in matches
                     )
                     exc.message += f" Did you mean {suggestions}?"

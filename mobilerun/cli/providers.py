@@ -33,6 +33,7 @@ PROVIDERS = {
     "gemini": Provider("gemini", "api_key", "http_options"),
     "gemini-oauth": Provider("gemini", "oauth", "code_assist_endpoint"),
     "xai": Provider("xai", "api_key", "api_base"),
+    "xai-oauth": Provider("xai", "oauth", "api_base"),
     "ollama": Provider("ollama", "none", "base_url"),
     "openai-like": Provider("openai_like", "api_key", "base_url"),
     "minimax": Provider("minimax", "api_key", "base_url"),
@@ -67,14 +68,13 @@ run_provider_option = _provider_option(
 def llm_url_kwargs(runtime, url):
     if url is None:
         return {}
+    # These loaders prefer api_base, so set both or a saved api_base wins.
+    if runtime in {"OpenAILike", "DeepSeek", "MiniMax", "ZAI"}:
+        return {"base_url": url, "api_base": url}
     spec = next((spec for spec in PROVIDERS.values() if spec.runtime == runtime), None)
-    if spec is None:
-        # Only these loaders normalise the generic base_url keyword.
-        if runtime in {"OpenAILike", "DeepSeek", "MiniMax", "ZAI"}:
-            return {"base_url": url}
+    # Grok credentials only ever go to xAI's own endpoint.
+    if spec is None or runtime in {"XAI", "xai_oauth"}:
         raise click.UsageError(f"-u/--llm-url is not supported for provider {runtime}")
-    if runtime == "XAI":
-        raise click.UsageError("-u/--llm-url is not supported for provider XAI")
     return {
         spec.url_keyword: (
             {"base_url": url} if spec.url_keyword == "http_options" else url

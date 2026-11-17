@@ -238,6 +238,17 @@ async def _native_driver(selection, config, api_url):
         return driver
 
 
+async def disable_portal_keyboard(serial):
+    """Hand the phone's keyboard back after controlling it over ADB."""
+    from async_adbutils import adb
+    from mobilerun_core_local.driver.android.portal import disable_keyboard
+
+    try:
+        await disable_keyboard(await adb.device(serial=serial))
+    except Exception:
+        pass
+
+
 async def teardown_native_driver(driver):
     """Disable the framework keyboard after macro replay on local Android."""
     from mobilerun_core_local.driver.android import AndroidDriver
