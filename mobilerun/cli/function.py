@@ -1,4 +1,4 @@
-"""Manage cloud scripts and test sandbox scripts locally."""
+"""Manage Serverless Functions and test them locally."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ WAIT_SECONDS = 60
 VALIDATION_POLL_SECONDS = 5
 
 python_option = click.option(
-    "--python", "python_path", help="Python interpreter for the script."
+    "--python", "python_path", help="Python interpreter for the function."
 )
 
 
@@ -55,35 +55,35 @@ def _interpreter(python_path):
     else:
         interpreter = sys.executable
     result = subprocess.run(
-        [interpreter, "-c", "import mobilerun_routines"],
+        [interpreter, "-c", "import mobilerun_functions"],
         capture_output=True,
         check=False,
     )
     if result.returncode:
         click.echo(
-            f"mobilerun-routines is not installed in {interpreter}. "
-            'Install it with: pip install "mobilerun[routines]"',
+            f"mobilerun-functions is not installed in {interpreter}. "
+            'Install it with: pip install "mobilerun[functions]"',
             err=True,
         )
         raise click.exceptions.Exit(1)
     return interpreter
 
 
-@click.group(cls=Group, epilog=examples("mobilerun script init script.py"))
+@click.group(cls=Group, epilog=examples("mobilerun function init function.py"))
 @verbose_option
-def script_cli(verbose):
-    """Manage cloud scripts and test scripts locally."""
+def function_cli(verbose):
+    """Manage cloud functions and test functions locally."""
 
 
-@script_cli.command("init", epilog=examples("mobilerun script init script.py"))
+@function_cli.command("init", epilog=examples("mobilerun function init function.py"))
 @click.argument("path", type=click.Path(dir_okay=False))
 @python_option
 @verbose_option
-def init_script(path, python_path, verbose):
-    """Create a starter script."""
+def init_function(path, python_path, verbose):
+    """Create a starter function."""
     interpreter = _interpreter(python_path)
     result = subprocess.run(
-        [interpreter, "-m", "mobilerun_routines", "new", path],
+        [interpreter, "-m", "mobilerun_functions", "new", path],
         capture_output=True,
         text=True,
         check=False,
@@ -108,7 +108,7 @@ def _emit_summary(document):
 def _check_local(path, python_path, json_output):
     interpreter = _interpreter(python_path)
     result = subprocess.run(
-        [interpreter, "-m", "mobilerun_routines", "inspect", path],
+        [interpreter, "-m", "mobilerun_functions", "inspect", path],
         capture_output=True,
         text=True,
         check=False,
@@ -133,7 +133,7 @@ def _check_local(path, python_path, json_output):
 def _check_remote(path, wait, api_url, json_output):
     source = _read_source(path)
     with cloud_client(api_url) as client:
-        item = client.scripts.validations.create(source=source).data
+        item = client.functions.validations.create(source=source).data
         if wait:
             item = _wait_for_validation(client, item)
     document = item.model_dump(mode="json", by_alias=True)
@@ -146,7 +146,7 @@ def _check_remote(path, wait, api_url, json_output):
         _emit_summary(document)
     if pending:
         click.echo(
-            f"Validation still pending; run `mobilerun script check {path} --remote` again.",
+            f"Validation still pending; run `mobilerun function check {path} --remote` again.",
             err=True,
         )
         return
@@ -158,11 +158,11 @@ def _check_remote(path, wait, api_url, json_output):
         raise click.exceptions.Exit(INVALID_EXIT_CODE)
 
 
-@script_cli.command(
+@function_cli.command(
     "check",
     epilog=examples(
-        "mobilerun script check script.py -j",
-        "mobilerun script check script.py --remote",
+        "mobilerun function check function.py -j",
+        "mobilerun function check function.py --remote",
     ),
 )
 @click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
@@ -176,8 +176,8 @@ def _check_remote(path, wait, api_url, json_output):
 @api_url_option
 @json_option
 @verbose_option
-def check_script(path, python_path, remote, wait, api_url, json_output, verbose):
-    """Inspect a script's entry point and schemas."""
+def check_function(path, python_path, remote, wait, api_url, json_output, verbose):
+    """Inspect a function's entry point and schemas."""
     if remote and python_path:
         raise click.UsageError("--remote and --python cannot be combined.")
     if remote:
@@ -229,21 +229,21 @@ def _device_flags(
     ], env
 
 
-@script_cli.command(
-    "run", epilog=examples("mobilerun script run script.py --local --input '{}'")
+@function_cli.command(
+    "run", epilog=examples("mobilerun function run function.py --local --input '{}'")
 )
 @click.argument("path", type=click.Path(exists=True, dir_okay=False))
 @click.option(
     "--local", is_flag=True, required=True, help="Run in your local Python environment."
 )
-@click.option("--input", "input_json", help="Script input as JSON.")
+@click.option("--input", "input_json", help="Function input as JSON.")
 @click.option(
     "--input-file",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Read script input from a JSON file.",
+    help="Read function input from a JSON file.",
 )
 @click.option(
-    "--state-file", type=click.Path(dir_okay=False), help="Read and save script state."
+    "--state-file", type=click.Path(dir_okay=False), help="Read and save function state."
 )
 @python_option
 @device_option
@@ -252,7 +252,7 @@ def _device_flags(
 @api_url_option
 @json_option
 @verbose_option
-def run_script(
+def run_function(
     path,
     local,
     input_json,
@@ -266,7 +266,7 @@ def run_script(
     json_output,
     verbose,
 ):
-    """Run a script and print its result."""
+    """Run a function and print its result."""
     if (input_json is None) == (input_file is None):
         raise click.UsageError("Provide exactly one of --input or --input-file.")
     try:
@@ -280,14 +280,14 @@ def run_script(
         raise click.BadParameter(str(exc), param_hint=option) from None
     interpreter = _interpreter(python_path)
     device_args, env = _device_flags(device, target, platform, api_url)
-    with tempfile.TemporaryDirectory(prefix="mobilerun-script-") as directory:
+    with tempfile.TemporaryDirectory(prefix="mobilerun-function-") as directory:
         input_path = Path(directory) / "input.json"
         result_path = Path(directory) / "result.json"
         input_path.write_text(json.dumps(data), encoding="utf-8")
         command = [
             interpreter,
             "-m",
-            "mobilerun_routines",
+            "mobilerun_functions",
             "run",
             path,
             "--input-file",
@@ -298,7 +298,7 @@ def run_script(
         ]
         if state_file is not None:
             command.extend(["--state-file", state_file])
-        # Inherit stderr so script logs appear immediately while it runs.
+        # Inherit stderr so function logs appear immediately while it runs.
         result = subprocess.run(
             command, stdout=subprocess.PIPE, text=True, check=False, env=env
         )
@@ -310,15 +310,15 @@ def run_script(
                 else json.dumps(json.loads(raw), indent=2)
             )
         elif not result.returncode:
-            raise click.ClickException("The script did not write a result file.")
+            raise click.ClickException("The function did not write a result file.")
         raise click.exceptions.Exit(result.returncode)
 
 
-def _script_versions(client, **filters):
+def _function_versions(client, **filters):
     items = []
     page = 1
     while True:
-        result = client.scripts.list(page=page, **filters).data
+        result = client.functions.list(page=page, **filters).data
         items.extend(result.items)
         if not result.pagination.has_next:
             return items
@@ -326,31 +326,31 @@ def _script_versions(client, **filters):
 
 
 def _named_versions(client, name):
-    versions = _script_versions(client, name=name)
+    versions = _function_versions(client, name=name)
     if not versions:
-        raise click.ClickException(f"No script named {name}")
+        raise click.ClickException(f"No function named {name}")
     return sorted(versions, key=lambda item: item.version, reverse=True)
 
 
-def _lookup_script_versions(client, name_or_id):
+def _lookup_function_versions(client, name_or_id):
     from mobilerun_core.detect import is_uuid
     from mobilerun_sdk import NotFoundError
 
     if is_uuid(name_or_id):
         try:
-            return [client.scripts.retrieve(name_or_id).data], True
+            return [client.functions.retrieve(name_or_id).data], True
         except NotFoundError:
-            # Canonical UUIDs are also valid script names.
+            # Canonical UUIDs are also valid function names.
             pass
     return _named_versions(client, name_or_id), False
 
 
-def _resolve_script(client, name_or_id, version):
-    versions, _ = _lookup_script_versions(client, name_or_id)
-    return _select_script_version(versions, name_or_id, version)
+def _resolve_function(client, name_or_id, version):
+    versions, _ = _lookup_function_versions(client, name_or_id)
+    return _select_function_version(versions, name_or_id, version)
 
 
-def _select_script_version(versions, name_or_id, version):
+def _select_function_version(versions, name_or_id, version):
     if version is None:
         return versions[0]
     for item in versions:
@@ -362,12 +362,12 @@ def _select_script_version(versions, name_or_id, version):
     )
 
 
-def _script_document(item):
+def _function_document(item):
     return item.model_dump(mode="json", by_alias=True)
 
 
-def _print_script(item, json_output, *, metadata=False):
-    document = _script_document(item)
+def _print_function(item, json_output, *, metadata=False):
+    document = _function_document(item)
     if json_output:
         emit(document, json_output=True)
     elif metadata:
@@ -414,7 +414,7 @@ def _wait_for_inspection(client, item):
     return _poll_until(
         client,
         item,
-        lambda poller, item_id, timeout: poller.scripts.retrieve(
+        lambda poller, item_id, timeout: poller.functions.retrieve(
             item_id, timeout=timeout
         ).data,
         lambda item: item.status in {"ready", "rejected"},
@@ -425,7 +425,7 @@ def _wait_for_validation(client, item):
     return _poll_until(
         client,
         item,
-        lambda poller, item_id, timeout: poller.scripts.validations.retrieve(
+        lambda poller, item_id, timeout: poller.functions.validations.retrieve(
             item_id, wait_s=VALIDATION_POLL_SECONDS, timeout=timeout
         ).data,
         lambda item: item.status != "pending",
@@ -442,10 +442,10 @@ def _read_source(file):
         raise click.ClickException(f"Cannot read {file}: {exc}") from None
 
 
-@script_cli.command("push", epilog=examples("mobilerun script push hello.py"))
+@function_cli.command("push", epilog=examples("mobilerun function push hello.py"))
 @click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.option("--name", help="Script name (defaults to the file's basename).")
-@click.option("--description", help="Script description.")
+@click.option("--name", help="Function name (defaults to the file's basename).")
+@click.option("--description", help="Function description.")
 @click.option(
     "--manifest",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
@@ -459,8 +459,8 @@ def _read_source(file):
 @api_url_option
 @json_option
 @verbose_option
-def push_script(file, name, description, manifest, wait, api_url, json_output, verbose):
-    """Upload a new immutable version of a Python script."""
+def push_function(file, name, description, manifest, wait, api_url, json_output, verbose):
+    """Upload a new immutable version of a Python function."""
     source = _read_source(file)
     params = {"name": name if name is not None else file.name, "source": source}
     if description is not None:
@@ -473,43 +473,43 @@ def push_script(file, name, description, manifest, wait, api_url, json_output, v
         if not isinstance(params["manifest"], dict):
             raise click.BadParameter("Expected a JSON object.", param_hint="--manifest")
     with cloud_client(api_url) as client:
-        item = client.scripts.create(**params).data
+        item = client.functions.create(**params).data
         if wait:
             item = _wait_for_inspection(client, item)
-    _print_script(item, json_output)
+    _print_function(item, json_output)
     if item.status == "rejected":
-        error = _script_document(item).get("inspectError")
+        error = _function_document(item).get("inspectError")
         print_issues(error or {"message": "Inspection rejected"})
         raise click.exceptions.Exit(1)
     if wait and item.status != "ready":
         click.echo(
-            f"Inspection still pending; check with `mobilerun script show {item.name}`.",
+            f"Inspection still pending; check with `mobilerun function show {item.name}`.",
             err=True,
         )
 
 
-@script_cli.command(
+@function_cli.command(
     "list",
     epilog=examples(
-        "mobilerun script list", "mobilerun script list --name hello.py -j"
+        "mobilerun function list", "mobilerun function list --name hello.py -j"
     ),
 )
 @click.option("--name", help="List all versions of this exact name.")
-@click.option("--search", help="Search script names.")
+@click.option("--search", help="Search function names.")
 @api_url_option
 @json_option
 @verbose_option
-def list_scripts(name, search, api_url, json_output, verbose):
+def list_functions(name, search, api_url, json_output, verbose):
     """List the latest version per name, or all versions of one name."""
     filters = {"latest": "true"} if name is None else {"name": name}
     if search is not None:
         filters["search"] = search
     with cloud_client(api_url) as client:
-        items = _script_versions(client, **filters)
+        items = _function_versions(client, **filters)
     if name is not None:
         items.sort(key=lambda item: item.version, reverse=True)
     if json_output:
-        emit([_script_document(item) for item in items], json_output=True)
+        emit([_function_document(item) for item in items], json_output=True)
     else:
         emit_rows(
             ("NAME", "VERSION", "VERSIONS", "STATUS", "CREATED"),
@@ -526,8 +526,8 @@ def list_scripts(name, search, api_url, json_output, verbose):
         )
 
 
-@script_cli.command(
-    "show", epilog=examples("mobilerun script show hello.py --version 1 -j")
+@function_cli.command(
+    "show", epilog=examples("mobilerun function show hello.py --version 1 -j")
 )
 @click.argument("name_or_id")
 @click.option(
@@ -536,15 +536,15 @@ def list_scripts(name, search, api_url, json_output, verbose):
 @api_url_option
 @json_option
 @verbose_option
-def show_script(name_or_id, version, api_url, json_output, verbose):
-    """Show script metadata, manifest, schemas, and inspection errors."""
+def show_function(name_or_id, version, api_url, json_output, verbose):
+    """Show function metadata, manifest, schemas, and inspection errors."""
     with cloud_client(api_url) as client:
-        item = _resolve_script(client, name_or_id, version)
-    _print_script(item, json_output, metadata=True)
+        item = _resolve_function(client, name_or_id, version)
+    _print_function(item, json_output, metadata=True)
 
 
-@script_cli.command(
-    "pull", epilog=examples("mobilerun script pull hello.py --version 1 -o out.py")
+@function_cli.command(
+    "pull", epilog=examples("mobilerun function pull hello.py --version 1 -o out.py")
 )
 @click.argument("name_or_id")
 @click.option(
@@ -560,7 +560,7 @@ def show_script(name_or_id, version, api_url, json_output, verbose):
 @api_url_option
 @json_option
 @verbose_option
-def pull_script(name_or_id, version, output, force, api_url, json_output, verbose):
+def pull_function(name_or_id, version, output, force, api_url, json_output, verbose):
     """Download verified source to a local file."""
     # Never use a server-supplied name as a local path.
     path = (
@@ -573,13 +573,13 @@ def pull_script(name_or_id, version, output, force, api_url, json_output, verbos
             f"{path} already exists; use --force to overwrite it."
         )
     with cloud_client(api_url) as client:
-        item = _resolve_script(client, name_or_id, version)
-        source = client.scripts.source(item.id).data
+        item = _resolve_function(client, name_or_id, version)
+        source = client.functions.source(item.id).data
     data = source.source.encode("utf-8")
     digest = hashlib.sha256(data).hexdigest()
     if digest != source.sha256:
         raise click.ClickException(
-            "Script source SHA-256 does not match the API; no file written."
+            "Function source SHA-256 does not match the API; no file written."
         )
     write_file(path, data, force=force)
     document = {
@@ -609,11 +609,11 @@ def _emit_deleted(items, json_output, error=None):
         )
 
 
-@script_cli.command(
+@function_cli.command(
     "delete",
     epilog=examples(
-        "mobilerun script delete hello.py --version 1 --yes",
-        "mobilerun script delete hello.py --all --yes -j",
+        "mobilerun function delete hello.py --version 1 --yes",
+        "mobilerun function delete hello.py --all --yes -j",
     ),
 )
 @click.argument("name_or_id")
@@ -626,30 +626,30 @@ def _emit_deleted(items, json_output, error=None):
 @api_url_option
 @json_option
 @verbose_option
-def delete_script(
+def delete_function(
     name_or_id, version, all_versions, yes, no_input, api_url, json_output, verbose
 ):
-    """Delete one script version, or all versions of a name."""
+    """Delete one function version, or all versions of a name."""
     from mobilerun_core.detect import is_uuid
 
     if version is not None and all_versions:
         raise click.UsageError("Choose --version or --all, not both.")
     if not is_uuid(name_or_id) and version is None and not all_versions:
-        raise click.UsageError("A script name requires --version N or --all.")
+        raise click.UsageError("A function name requires --version N or --all.")
     if not yes and not input_allowed(no_input):
         raise click.UsageError(
             "Deletion requires --yes when input is unavailable or --no-input is set."
         )
     with cloud_client(api_url) as client:
-        versions, by_id = _lookup_script_versions(client, name_or_id)
+        versions, by_id = _lookup_function_versions(client, name_or_id)
         if by_id and all_versions:
-            raise click.UsageError("--all requires a script name, not an id.")
+            raise click.UsageError("--all requires a function name, not an id.")
         if not by_id and version is None and not all_versions:
-            raise click.UsageError("A script name requires --version N or --all.")
+            raise click.UsageError("A function name requires --version N or --all.")
         items = (
             versions
             if all_versions
-            else [_select_script_version(versions, name_or_id, version)]
+            else [_select_function_version(versions, name_or_id, version)]
         )
         if not yes and not click.confirm(
             f"Delete {len(items)} version(s) of {name_or_id}?", err=True
@@ -658,7 +658,7 @@ def delete_script(
         deleted = []
         for item in items:
             try:
-                client.scripts.delete(item.id)
+                client.functions.delete(item.id)
             except Exception as exc:
                 converted = convert_api_error(exc)
                 if converted:

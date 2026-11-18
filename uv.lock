@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -1489,13 +1489,13 @@ dev = [
     { name = "ruff" },
     { name = "safety" },
 ]
+functions = [
+    { name = "mobilerun-functions", extra = ["device", "local"] },
+]
 langfuse = [
     { name = "langfuse" },
     { name = "llama-index-instrumentation" },
     { name = "openinference-instrumentation-llama-index" },
-]
-routines = [
-    { name = "mobilerun-routines", extra = ["device", "local"] },
 ]
 typesafe = [
     { name = "typesafe-sdk" },
@@ -1541,8 +1541,8 @@ requires-dist = [
     { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
     { name = "mobilerun-core", extras = ["local"], specifier = ">=1.12.0" },
     { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
-    { name = "mobilerun-routines", extras = ["device", "local"], marker = "extra == 'routines'", git = "https://github.com/droidrun/mobilerun-routines?rev=f4d3e432d7c8937854480f125c29140c44d50630" },
-    { name = "mobilerun-sdk", git = "https://github.com/droidrun/mobilerun-sdk-python?rev=4d7e391a16691f20c20d7fa463f30af4f957a964" },
+    { name = "mobilerun-functions", extras = ["device", "local"], marker = "extra == 'functions'", git = "https://github.com/droidrun/mobilerun-functions?rev=35ee7eb882a081b1cb2c04cf418d0b1b67d0eed2" },
+    { name = "mobilerun-sdk", git = "https://github.com/droidrun/mobilerun-sdk-python?rev=35cf0804c6c5f36f5d52752853628be2d3de0541" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.40.0" },
@@ -1559,7 +1559,7 @@ requires-dist = [
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.7.5,<0.8.0" },
     { name = "urllib3", specifier = ">=2.8.0" },
 ]
-provides-extras = ["anthropic", "deepseek", "routines", "typesafe", "dev", "langfuse"]
+provides-extras = ["anthropic", "deepseek", "functions", "typesafe", "dev", "langfuse"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1610,9 +1610,9 @@ cloud = [
 ]
 
 [[package]]
-name = "mobilerun-routines"
+name = "mobilerun-functions"
 version = "0.1.0"
-source = { git = "https://github.com/droidrun/mobilerun-routines?rev=f4d3e432d7c8937854480f125c29140c44d50630#f4d3e432d7c8937854480f125c29140c44d50630" }
+source = { git = "https://github.com/droidrun/mobilerun-functions?rev=35ee7eb882a081b1cb2c04cf418d0b1b67d0eed2#35ee7eb882a081b1cb2c04cf418d0b1b67d0eed2" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -1628,7 +1628,7 @@ local = [
 [[package]]
 name = "mobilerun-sdk"
 version = "6.2.1"
-source = { git = "https://github.com/droidrun/mobilerun-sdk-python?rev=4d7e391a16691f20c20d7fa463f30af4f957a964#4d7e391a16691f20c20d7fa463f30af4f957a964" }
+source = { git = "https://github.com/droidrun/mobilerun-sdk-python?rev=35cf0804c6c5f36f5d52752853628be2d3de0541#35cf0804c6c5f36f5d52752853628be2d3de0541" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },

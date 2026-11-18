@@ -1,4 +1,4 @@
-"""Cloud script contracts against a fake generated SDK client, without network."""
+"""Cloud function contracts against a fake generated SDK client, without network."""
 
 import hashlib
 import json
@@ -16,12 +16,12 @@ from mobilerun_sdk import (
     APITimeoutError,
     NotFoundError,
 )
-from mobilerun_sdk.types.script import Script
-from mobilerun_sdk.types.script_source import ScriptSource
-from mobilerun_sdk.types.script_source_response import ScriptSourceResponse
-from mobilerun_sdk.types.scripts.validation import Validation
+from mobilerun_sdk.types.function_source import FunctionSource
+from mobilerun_sdk.types.function_source_response import FunctionSourceResponse
+from mobilerun_sdk.types.functions.function_validation import FunctionValidation
+from mobilerun_sdk.types.serverless_function import ServerlessFunction
 
-from mobilerun.cli import deviceauth, script, selection
+from mobilerun.cli import deviceauth, function, selection
 from mobilerun.cli.main import cli
 from mobilerun.config_manager import ConfigLoader
 
@@ -47,7 +47,7 @@ def record(**updates):
         sizeBytes=len(SOURCE.encode()),
     )
     values.update(updates)
-    return Script(**values)
+    return ServerlessFunction(**values)
 
 
 def validation(**updates):
@@ -64,7 +64,7 @@ def validation(**updates):
         outputSchema={"type": "string"},
     )
     values.update(updates)
-    return Validation(**values)
+    return FunctionValidation(**values)
 
 
 def page(*items, has_next=False):
@@ -87,22 +87,22 @@ def sdk(monkeypatch, tmp_path):
         "MOBILERUN_CLOUD_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("MOBILERUN_API_KEY", "unit-cloud-script-key")
+    monkeypatch.setenv("MOBILERUN_API_KEY", "unit-cloud-function-key")
     monkeypatch.setattr(deviceauth, "load_credentials", lambda: None)
-    monkeypatch.setattr(script, "input_allowed", lambda no_input: False)
+    monkeypatch.setattr(function, "input_allowed", lambda no_input: False)
     client = Mock()
     client.with_options.return_value = client
     factory = Mock(return_value=client)
     monkeypatch.setattr(cloud, "make_sdk_client", factory)
-    client.scripts.create.return_value = SimpleNamespace(data=record())
-    client.scripts.retrieve.return_value = SimpleNamespace(data=record())
-    client.scripts.list.return_value = page(record(), record(id=ID1, version=1))
-    client.scripts.source.return_value = ScriptSourceResponse(
-        data=ScriptSource(
-            scriptId=ID2, sha256=DIGEST, sizeBytes=len(SOURCE.encode()), source=SOURCE
+    client.functions.create.return_value = SimpleNamespace(data=record())
+    client.functions.retrieve.return_value = SimpleNamespace(data=record())
+    client.functions.list.return_value = page(record(), record(id=ID1, version=1))
+    client.functions.source.return_value = FunctionSourceResponse(
+        data=FunctionSource(
+            functionId=ID2, sha256=DIGEST, sizeBytes=len(SOURCE.encode()), source=SOURCE
         )
     )
-    return SimpleNamespace(client=client, scripts=client.scripts, factory=factory)
+    return SimpleNamespace(client=client, functions=client.functions, factory=factory)
 
 
 @pytest.fixture
@@ -113,14 +113,14 @@ def file(tmp_path):
 
 
 def invoke(*args, **kwargs):
-    return CliRunner().invoke(cli, ["script", *map(str, args)], **kwargs)
+    return CliRunner().invoke(cli, ["function", *map(str, args)], **kwargs)
 
 
 def test_push_default_name_and_exact_source(sdk, file):
     first = invoke("push", file, "-j")
     second = invoke("push", file, "-j")
     assert first.exit_code == second.exit_code == 0, first.output + second.output
-    calls = sdk.scripts.create.call_args_list
+    calls = sdk.functions.create.call_args_list
     assert all(entry.kwargs["name"] == "hello.py" for entry in calls)
     assert all(entry.kwargs["source"].encode() == file.read_bytes() for entry in calls)
     assert "manifest" not in calls[0].kwargs
@@ -149,7 +149,7 @@ def test_push_manifest_and_explicit_name(sdk, file, tmp_path):
         path,
     )
     assert result.exit_code == 0, result.output
-    params = sdk.scripts.create.call_args.kwargs
+    params = sdk.functions.create.call_args.kwargs
     assert params["name"] == "named"
     assert params["description"] == "description"
     assert params["manifest"] == manifest
@@ -174,32 +174,33 @@ def clock(monkeypatch):
         state.sleeps.append(seconds)
         state.now += seconds
 
-    monkeypatch.setattr(script.time, "monotonic", lambda: state.now)
-    monkeypatch.setattr(script.time, "sleep", sleep)
+    monkeypatch.setattr(function.time, "monotonic", lambda: state.now)
+    monkeypatch.setattr(function.time, "sleep", sleep)
     return state
 
 
 @pytest.mark.parametrize("status,exit_code", [("ready", 0), ("rejected", 1)])
 @pytest.mark.parametrize("json_output", [False, True])
 def test_push_wait_inspection(sdk, file, clock, status, exit_code, json_output):
-    sdk.scripts.create.return_value.data = record(status="pending_inspection")
+    sdk.functions.create.return_value.data = record(status="pending_inspection")
     error = (
         {"code": "invalid_entrypoint", "message": "entrypoint missing"}
         if status == "rejected"
         else None
     )
-    sdk.scripts.retrieve.side_effect = [
+    sdk.functions.retrieve.side_effect = [
         SimpleNamespace(data=record(status="pending_inspection")),
         SimpleNamespace(data=record(status=status, inspectError=error)),
     ]
     result = invoke("push", file, *(["-j"] if json_output else []))
     assert result.exit_code == exit_code, result.output
     assert clock.sleeps == [1, 2]
-    assert sdk.scripts.retrieve.call_count == 2
+    assert sdk.functions.retrieve.call_count == 2
     if json_output:
         document = json.loads(result.stdout)
         assert document["status"] == status
-        assert document["inspectError"] == error
+        # The generated model adds its optional `errors` field.
+        assert document["inspectError"] == (error and {**error, "errors": None})
     else:
         assert result.stdout == f"hello.py\t2\t{ID2}\t{status}\n"
     if error:
@@ -211,16 +212,21 @@ def test_push_wait_inspection(sdk, file, clock, status, exit_code, json_output):
     [
         (
             {
-                "code": "invalid_script",
+                "code": "invalid_function",
                 "message": "Invalid",
                 "errors": [
                     {
+                        "code": "entrypoint_missing",
                         "message": "Entry point missing",
                         "line": 4,
-                        "repair": {"hint": "Define main"},
+                        "repair": {"action": "edit", "hint": "Define main"},
                     },
-                    {"message": "Schema missing"},
-                    {"message": "Add schema", "repair": {"hint": "Use a type"}},
+                    {"code": "schema_missing", "message": "Schema missing"},
+                    {
+                        "code": "schema_add",
+                        "message": "Add schema",
+                        "repair": {"action": "edit", "hint": "Use a type"},
+                    },
                 ],
             },
             "line 4: Entry point missing — Define main\nSchema missing\n"
@@ -228,25 +234,13 @@ def test_push_wait_inspection(sdk, file, clock, status, exit_code, json_output):
         ),
         (None, "Inspection rejected\n"),
         (
-            {
-                "code": "invalid_script",
-                "message": "Invalid",
-                "errors": ["not an issue", {"message": "Invalid", "repair": "bad"}],
-            },
-            "Invalid\n",
-        ),
-        (
-            {"code": "invalid_script", "message": "Invalid", "errors": []},
-            "invalid_script: Invalid\n",
-        ),
-        (
-            {"code": "invalid_script", "message": "Invalid", "errors": "bad"},
-            "invalid_script: Invalid\n",
+            {"code": "invalid_function", "message": "Invalid", "errors": []},
+            "invalid_function: Invalid\n",
         ),
     ],
 )
 def test_push_rejected_diagnostics(sdk, file, error, expected):
-    sdk.scripts.create.return_value.data = record(status="rejected", inspectError=error)
+    sdk.functions.create.return_value.data = record(status="rejected", inspectError=error)
     result = invoke("push", file, "--no-wait", "-j")
     assert result.exit_code == 1, result.output
     assert result.stderr == expected
@@ -254,29 +248,29 @@ def test_push_rejected_diagnostics(sdk, file, error, expected):
 
 def test_push_wait_timeout_is_success(sdk, file, clock):
     pending = record(status="pending_inspection")
-    sdk.scripts.create.return_value.data = pending
-    sdk.scripts.retrieve.return_value.data = pending
+    sdk.functions.create.return_value.data = pending
+    sdk.functions.retrieve.return_value.data = pending
     result = invoke("push", file, "-j")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["status"] == "pending_inspection"
-    assert "mobilerun script show hello.py" in result.stderr
+    assert "mobilerun function show hello.py" in result.stderr
     assert sum(clock.sleeps) == 60
     assert clock.sleeps[:3] == [1, 2, 2]
 
 
 def test_push_no_wait(sdk, file, clock):
-    sdk.scripts.create.return_value.data = record(status="pending_inspection")
+    sdk.functions.create.return_value.data = record(status="pending_inspection")
     result = invoke("push", file, "--no-wait", "-j")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["status"] == "pending_inspection"
     assert clock.sleeps == []
-    sdk.scripts.retrieve.assert_not_called()
+    sdk.functions.retrieve.assert_not_called()
     assert result.stderr == ""
 
 
 @pytest.mark.parametrize("by_name", [False, True])
 def test_list_pages_and_modes(sdk, by_name):
-    sdk.scripts.list.side_effect = [
+    sdk.functions.list.side_effect = [
         page(record(id=ID1, version=1), has_next=True),
         page(record()),
     ]
@@ -287,14 +281,14 @@ def test_list_pages_and_modes(sdk, by_name):
     documents = json.loads(result.stdout)
     assert [item["version"] for item in documents] == ([2, 1] if by_name else [1, 2])
     filters = {"name": "hello.py"} if by_name else {"latest": "true"}
-    assert sdk.scripts.list.call_args_list == [
+    assert sdk.functions.list.call_args_list == [
         call(page=1, search="hello", **filters),
         call(page=2, search="hello", **filters),
     ]
 
 
 def test_list_text_version_count(sdk):
-    sdk.scripts.list.return_value = page(record())
+    sdk.functions.list.return_value = page(record())
     result = invoke("list")
     assert result.exit_code == 0, result.output
     assert result.stdout == "hello.py\t2\t2\tready\t2026-11-13T00:00:00+00:00\n"
@@ -314,14 +308,14 @@ def test_show_resolution_and_metadata(sdk, argument, version, expected):
     assert document["manifest"]["hosts"] == ["example.com"]
     assert document["inputSchema"] == {"type": "object"}
     if argument == ID2:
-        sdk.scripts.retrieve.assert_called_once_with(ID2)
-        sdk.scripts.list.assert_not_called()
+        sdk.functions.retrieve.assert_called_once_with(ID2)
+        sdk.functions.list.assert_not_called()
     else:
-        sdk.scripts.list.assert_called_once_with(page=1, name="hello.py")
+        sdk.functions.list.assert_called_once_with(page=1, name="hello.py")
 
 
 def test_show_latest_even_if_server_order_differs(sdk):
-    sdk.scripts.list.return_value = page(record(version=1), record(version=3))
+    sdk.functions.list.return_value = page(record(version=1), record(version=3))
     result = invoke("show", "hello.py")
     assert result.exit_code == 0, result.output
     assert "version\t3\n" in result.stdout
@@ -335,7 +329,7 @@ def test_show_latest_even_if_server_order_differs(sdk):
 def test_resolution_errors(sdk, command, missing_name, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     if missing_name:
-        sdk.scripts.list.return_value = page()
+        sdk.functions.list.return_value = page()
     result = invoke(
         command,
         "missing",
@@ -345,11 +339,11 @@ def test_resolution_errors(sdk, command, missing_name, tmp_path, monkeypatch):
         "-j",
     )
     assert result.exit_code == 1, result.output
-    message = "No script named missing" if missing_name else "Available versions: 2, 1"
+    message = "No function named missing" if missing_name else "Available versions: 2, 1"
     assert message in json.loads(result.stdout)["error"]
     assert message in result.stderr
-    sdk.scripts.delete.assert_not_called()
-    sdk.scripts.source.assert_not_called()
+    sdk.functions.delete.assert_not_called()
+    sdk.functions.source.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -360,8 +354,8 @@ def test_pull_uses_argument_not_server_name(
     sdk, monkeypatch, tmp_path, argument, expected
 ):
     monkeypatch.chdir(tmp_path)
-    sdk.scripts.retrieve.return_value.data = record(name="../../untrusted.py")
-    sdk.scripts.list.return_value = page(record(name="../../untrusted.py"))
+    sdk.functions.retrieve.return_value.data = record(name="../../untrusted.py")
+    sdk.functions.list.return_value = page(record(name="../../untrusted.py"))
     result = invoke("pull", argument, "-j")
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
@@ -374,7 +368,7 @@ def test_pull_uses_argument_not_server_name(
         "sizeBytes": len(SOURCE.encode()),
     }
     assert (tmp_path / expected).read_bytes() == SOURCE.encode()
-    sdk.scripts.source.assert_called_once_with(ID2)
+    sdk.functions.source.assert_called_once_with(ID2)
 
 
 @pytest.mark.parametrize("force", [False, True])
@@ -393,7 +387,7 @@ def test_pull_overwrite_and_version(sdk, tmp_path, force):
     assert result.exit_code == (0 if force else 1), result.output
     assert output.read_bytes() == (SOURCE.encode() if force else b"original")
     if force:
-        sdk.scripts.source.assert_called_once_with(ID1)
+        sdk.functions.source.assert_called_once_with(ID1)
         assert result.stdout == str(output) + "\n"
     else:
         assert "--force" in result.stderr
@@ -405,7 +399,7 @@ def test_pull_hash_mismatch_never_writes(sdk, tmp_path, exists):
     output = tmp_path / "out.py"
     if exists:
         output.write_bytes(b"keep")
-    sdk.scripts.source.return_value.data.sha256 = "0" * 64
+    sdk.functions.source.return_value.data.sha256 = "0" * 64
     result = invoke("pull", ID2, "-o", output, "--force", "-j")
     assert result.exit_code == 1, result.output
     assert "SHA-256" in json.loads(result.stdout)["error"]
@@ -424,7 +418,7 @@ def test_delete_selected_versions(sdk, all_versions):
     assert result.exit_code == 0, result.output
     deleted = json.loads(result.stdout)["deleted"]
     assert [item["version"] for item in deleted] == ([2, 1] if all_versions else [1])
-    assert sdk.scripts.delete.call_args_list == (
+    assert sdk.functions.delete.call_args_list == (
         [call(ID2), call(ID1)] if all_versions else [call(ID1)]
     )
 
@@ -432,7 +426,7 @@ def test_delete_selected_versions(sdk, all_versions):
 def test_delete_id(sdk):
     result = invoke("delete", ID2, "--yes")
     assert result.exit_code == 0, result.output
-    sdk.scripts.delete.assert_called_once_with(ID2)
+    sdk.functions.delete.assert_called_once_with(ID2)
     assert result.stdout == f"hello.py\t2\t{ID2}\n"
 
 
@@ -446,7 +440,7 @@ def test_delete_usage(sdk, args):
 @pytest.mark.parametrize("no_input", [False, True])
 def test_delete_requires_yes_without_input(sdk, monkeypatch, no_input):
     monkeypatch.setattr(
-        script, "input_allowed", lambda disabled: not disabled and no_input
+        function, "input_allowed", lambda disabled: not disabled and no_input
     )
     result = invoke(
         "delete", "hello.py", "--all", *(["--no-input"] if no_input else []), "-j"
@@ -458,26 +452,26 @@ def test_delete_requires_yes_without_input(sdk, monkeypatch, no_input):
 
 @pytest.mark.parametrize("answer,expected", [("y\n", 0), ("n\n", 1)])
 def test_delete_confirmation_once(sdk, monkeypatch, answer, expected):
-    monkeypatch.setattr(script, "input_allowed", lambda disabled: not disabled)
+    monkeypatch.setattr(function, "input_allowed", lambda disabled: not disabled)
     result = invoke("delete", "hello.py", "--all", "-j", input=answer)
     assert result.exit_code == expected, result.output
     assert result.stderr.count("Delete 2 version(s)") == 1
     if expected == 0:
         assert len(json.loads(result.stdout)["deleted"]) == 2
-        assert sdk.scripts.delete.call_count == 2
+        assert sdk.functions.delete.call_count == 2
     else:
-        sdk.scripts.delete.assert_not_called()
+        sdk.functions.delete.assert_not_called()
 
 
 @pytest.mark.parametrize(
     "status,code",
     [
-        (409, "script_limit_reached"),
-        (409, "script_row_limit_reached"),
-        (409, "script_busy"),
-        (422, "script_name_invalid"),
+        (409, "function_limit_reached"),
+        (409, "function_row_limit_reached"),
+        (409, "function_busy"),
+        (422, "function_name_invalid"),
         (422, "manifest_invalid"),
-        (429, "script_rate_limited"),
+        (429, "function_rate_limited"),
         (429, "inspection_budget_exhausted"),
     ],
 )
@@ -485,16 +479,16 @@ def test_delete_confirmation_once(sdk, monkeypatch, answer, expected):
 def test_api_errors_message_details_retry_after(sdk, status, code, nested):
     request = httpx.Request(
         "GET",
-        "https://example.test/v1/sandbox/scripts",
-        headers={"Authorization": "Bearer unit-cloud-script-key"},
+        "https://example.test/v1/sandbox/functions",
+        headers={"Authorization": "Bearer unit-cloud-function-key"},
     )
     body = {
         "code": code,
         "message": "Server explains failure",
-        "details": {"limit": 200, "reason": ["try later", "unit-cloud-script-key"]},
+        "details": {"limit": 200, "reason": ["try later", "unit-cloud-function-key"]},
     }
     headers = {"Retry-After": "12"} if status == 429 else {}
-    sdk.scripts.list.side_effect = APIStatusError(
+    sdk.functions.list.side_effect = APIStatusError(
         "error",
         response=httpx.Response(status, request=request, headers=headers),
         body={"error": body} if nested else body,
@@ -508,7 +502,7 @@ def test_api_errors_message_details_retry_after(sdk, status, code, nested):
     assert document["details"] == {"limit": 200, "reason": ["try later", "[redacted]"]}
     assert "Server explains failure" in result.stderr
     assert "Details:" in result.stderr
-    assert "unit-cloud-script-key" not in result.output
+    assert "unit-cloud-function-key" not in result.output
     if status == 429:
         assert document["retryAfter"] == "12"
         assert "Retry-After: 12" in result.stderr
@@ -540,28 +534,28 @@ def test_missing_credential_never_builds_client(sdk, monkeypatch):
 
 @pytest.mark.parametrize("expire", [False, True])
 def test_push_poll_timeout_respects_wait_budget(sdk, file, clock, expire):
-    sdk.scripts.create.return_value.data = record(status="pending_inspection")
+    sdk.functions.create.return_value.data = record(status="pending_inspection")
 
     def request_timeout(*args, **kwargs):
         if expire:
             clock.now += kwargs["timeout"].read
         raise APITimeoutError(request=httpx.Request("GET", "https://example.test"))
 
-    sdk.scripts.retrieve.side_effect = request_timeout
+    sdk.functions.retrieve.side_effect = request_timeout
     result = invoke("push", file, "-j")
     assert result.exit_code == 0, result.output
     sdk.client.with_options.assert_called_once_with(max_retries=0)
     assert "still pending" in result.stderr
     assert json.loads(result.stdout)["status"] == "pending_inspection"
-    timeout = sdk.scripts.retrieve.call_args.kwargs["timeout"]
+    timeout = sdk.functions.retrieve.call_args.kwargs["timeout"]
     assert timeout == httpx.Timeout(10)
 
 
 @pytest.mark.parametrize("kind", ["connection", "rate_limit", "server"])
 @pytest.mark.parametrize("json_output", [False, True])
 def test_push_poll_error_keeps_created_version(sdk, file, clock, kind, json_output):
-    sdk.scripts.create.return_value.data = record(status="pending_inspection")
-    request = httpx.Request("GET", "https://example.test/v1/sandbox/scripts/" + ID2)
+    sdk.functions.create.return_value.data = record(status="pending_inspection")
+    request = httpx.Request("GET", "https://example.test/v1/sandbox/functions/" + ID2)
     error = (
         APIConnectionError(request=request)
         if kind == "connection"
@@ -573,10 +567,10 @@ def test_push_poll_error_keeps_created_version(sdk, file, clock, kind, json_outp
             body={"message": "poll failed"},
         )
     )
-    sdk.scripts.retrieve.side_effect = error
+    sdk.functions.retrieve.side_effect = error
     result = invoke("push", file, *(["-j"] if json_output else []))
     assert result.exit_code == 0, result.output
-    assert "mobilerun script show hello.py" in result.stderr
+    assert "mobilerun function show hello.py" in result.stderr
     if json_output:
         document = json.loads(result.stdout)
         assert document["id"] == ID2
@@ -584,21 +578,21 @@ def test_push_poll_error_keeps_created_version(sdk, file, clock, kind, json_outp
         assert document["status"] == "pending_inspection"
     else:
         assert result.stdout == f"hello.py\t2\t{ID2}\tpending_inspection\n"
-    sdk.scripts.retrieve.assert_called_once()
+    sdk.functions.retrieve.assert_called_once()
 
 
 def test_push_poll_uses_remaining_budget(sdk, file, clock):
-    sdk.scripts.create.return_value.data = record(status="pending_inspection")
+    sdk.functions.create.return_value.data = record(status="pending_inspection")
 
     def retrieve(*args, **kwargs):
         assert kwargs["timeout"] == httpx.Timeout(10 if clock.now == 1 else 2)
         clock.now = 56 if clock.now == 1 else 60
         return SimpleNamespace(data=record(status="pending_inspection"))
 
-    sdk.scripts.retrieve.side_effect = retrieve
+    sdk.functions.retrieve.side_effect = retrieve
     result = invoke("push", file, "-j")
     assert result.exit_code == 0, result.output
-    assert sdk.scripts.retrieve.call_count == 2
+    assert sdk.functions.retrieve.call_count == 2
 
 
 @pytest.mark.parametrize("force", [False, True])
@@ -606,7 +600,7 @@ def test_pull_failed_write_is_atomic(sdk, monkeypatch, tmp_path, force):
     output = tmp_path / "out.py"
     if force:
         output.write_bytes(b"original")
-    make_temporary = script.tempfile.NamedTemporaryFile
+    make_temporary = function.tempfile.NamedTemporaryFile
 
     def temporary_file(**kwargs):
         stream = make_temporary(**kwargs)
@@ -619,7 +613,7 @@ def test_pull_failed_write_is_atomic(sdk, monkeypatch, tmp_path, force):
         stream.write = fail
         return stream
 
-    monkeypatch.setattr(script.tempfile, "NamedTemporaryFile", temporary_file)
+    monkeypatch.setattr(function.tempfile, "NamedTemporaryFile", temporary_file)
     result = invoke("pull", ID2, "-o", output, *(["--force"] if force else []), "-j")
     assert result.exit_code == 1, result.output
     assert "disk write failed" in json.loads(result.stdout)["error"]
@@ -645,13 +639,13 @@ def test_pull_force_replaces_symlink(sdk, tmp_path):
 
 def test_pull_destination_race_preserves_existing_file(sdk, monkeypatch, tmp_path):
     output = tmp_path / "out.py"
-    link = script.os.link
+    link = function.os.link
 
     def destination_appears(source, destination):
         output.write_bytes(b"raced")
         link(source, destination)
 
-    monkeypatch.setattr(script.os, "link", destination_appears)
+    monkeypatch.setattr(function.os, "link", destination_appears)
     result = invoke("pull", ID2, "-o", output, "-j")
     assert result.exit_code == 1, result.output
     assert "--force" in json.loads(result.stdout)["error"]
@@ -664,7 +658,7 @@ def test_pull_publish_failure_keeps_original(sdk, monkeypatch, tmp_path, operati
     output = tmp_path / "out.py"
     output.write_bytes(b"original")
     monkeypatch.setattr(
-        script.os, operation, Mock(side_effect=OSError("publish failed"))
+        function.os, operation, Mock(side_effect=OSError("publish failed"))
     )
     result = invoke("pull", ID2, "-o", output, "--force", "-j")
     assert result.exit_code == 1, result.output
@@ -674,7 +668,7 @@ def test_pull_publish_failure_keeps_original(sdk, monkeypatch, tmp_path, operati
 
 
 def not_found():
-    request = httpx.Request("GET", "https://example.test/v1/sandbox/scripts/" + ID1)
+    request = httpx.Request("GET", "https://example.test/v1/sandbox/functions/" + ID1)
     return NotFoundError(
         "missing",
         response=httpx.Response(404, request=request),
@@ -695,16 +689,16 @@ def test_uuid_shaped_name_falls_back_after_not_found(
     sdk, monkeypatch, tmp_path, command, flags
 ):
     monkeypatch.chdir(tmp_path)
-    sdk.scripts.retrieve.side_effect = not_found()
-    sdk.scripts.list.return_value = page(record(name=ID1))
+    sdk.functions.retrieve.side_effect = not_found()
+    sdk.functions.list.return_value = page(record(name=ID1))
     if "--version" in flags:
-        sdk.scripts.list.return_value = page(record(name=ID1, version=1))
+        sdk.functions.list.return_value = page(record(name=ID1, version=1))
     result = invoke(command, ID1, *flags, "-j")
     assert result.exit_code == 0, result.output
-    sdk.scripts.retrieve.assert_called_once_with(ID1)
-    sdk.scripts.list.assert_called_once_with(page=1, name=ID1)
+    sdk.functions.retrieve.assert_called_once_with(ID1)
+    sdk.functions.list.assert_called_once_with(page=1, name=ID1)
     if command == "delete":
-        sdk.scripts.delete.assert_called_once_with(ID2)
+        sdk.functions.delete.assert_called_once_with(ID2)
         assert json.loads(result.stdout)["deleted"][0]["name"] == ID1
     elif command == "pull":
         assert (tmp_path / (ID1 + ".py")).read_bytes() == SOURCE.encode()
@@ -718,29 +712,29 @@ def test_uuid_shaped_name_falls_back_after_not_found(
 def test_noncanonical_uuid_is_a_name(sdk, name):
     result = invoke("show", name, "-j")
     assert result.exit_code == 0, result.output
-    sdk.scripts.retrieve.assert_not_called()
-    sdk.scripts.list.assert_called_once_with(page=1, name=name)
+    sdk.functions.retrieve.assert_not_called()
+    sdk.functions.list.assert_called_once_with(page=1, name=name)
 
 
 def test_delete_all_rejects_resolved_id(sdk):
     result = invoke("delete", ID2, "--all", "--yes")
     assert result.exit_code == 2, result.output
-    assert "--all requires a script name" in result.stderr
-    sdk.scripts.list.assert_not_called()
-    sdk.scripts.delete.assert_not_called()
+    assert "--all requires a function name" in result.stderr
+    sdk.functions.list.assert_not_called()
+    sdk.functions.delete.assert_not_called()
 
 
 def test_delete_uuid_name_still_requires_version_or_all(sdk):
-    sdk.scripts.retrieve.side_effect = not_found()
+    sdk.functions.retrieve.side_effect = not_found()
     result = invoke("delete", ID1, "--yes")
     assert result.exit_code == 2, result.output
     assert "--version N or --all" in result.stderr
-    sdk.scripts.delete.assert_not_called()
+    sdk.functions.delete.assert_not_called()
 
 
 def test_uuid_retrieve_forbidden_does_not_fall_back(sdk):
-    request = httpx.Request("GET", "https://example.test/v1/sandbox/scripts/" + ID1)
-    sdk.scripts.retrieve.side_effect = APIStatusError(
+    request = httpx.Request("GET", "https://example.test/v1/sandbox/functions/" + ID1)
+    sdk.functions.retrieve.side_effect = APIStatusError(
         "forbidden",
         response=httpx.Response(403, request=request),
         body={"message": "forbidden"},
@@ -748,20 +742,20 @@ def test_uuid_retrieve_forbidden_does_not_fall_back(sdk):
     result = invoke("show", ID1, "-j")
     assert result.exit_code == 1, result.output
     assert json.loads(result.stdout)["status"] == 403
-    sdk.scripts.list.assert_not_called()
+    sdk.functions.list.assert_not_called()
 
 
 @pytest.mark.parametrize("json_output", [False, True])
 @pytest.mark.parametrize("completed", [0, 1])
 @pytest.mark.parametrize("kind", ["status", "connection", "other"])
 def test_delete_partial_failure_reports_completed(sdk, json_output, completed, kind):
-    request = httpx.Request("DELETE", "https://example.test/v1/sandbox/scripts/" + ID1)
+    request = httpx.Request("DELETE", "https://example.test/v1/sandbox/functions/" + ID1)
     if kind == "status":
         error = APIStatusError(
             "delete failed",
             response=httpx.Response(409, request=request),
             body={
-                "code": "script_busy",
+                "code": "function_busy",
                 "message": "delete failed",
                 "details": ["in use"],
             },
@@ -770,16 +764,16 @@ def test_delete_partial_failure_reports_completed(sdk, json_output, completed, k
         error = APIConnectionError(request=request)
     else:
         error = RuntimeError("delete failed")
-    sdk.scripts.list.return_value = page(
+    sdk.functions.list.return_value = page(
         record(), record(id=ID1, version=1), record(id="third", version=3)
     )
-    sdk.scripts.delete.side_effect = [None] * completed + [error, None, None]
+    sdk.functions.delete.side_effect = [None] * completed + [error, None, None]
     result = invoke(
         "delete", "hello.py", "--all", "--yes", *(["-j"] if json_output else [])
     )
     assert result.exit_code == 1, result.output
-    assert sdk.scripts.delete.call_count == completed + 1
-    sdk.scripts.delete.assert_has_calls([call("third"), call(ID2)][: completed + 1])
+    assert sdk.functions.delete.call_count == completed + 1
+    sdk.functions.delete.assert_has_calls([call("third"), call(ID2)][: completed + 1])
     if json_output:
         document = json.loads(result.stdout)
         assert document["deleted"] == (
@@ -789,7 +783,7 @@ def test_delete_partial_failure_reports_completed(sdk, json_output, completed, k
             assert document["error"] == {
                 "error": "delete failed",
                 "status": 409,
-                "code": "script_busy",
+                "code": "function_busy",
                 "details": ["in use"],
             }
         elif kind == "connection":
@@ -805,7 +799,7 @@ def test_delete_partial_failure_reports_completed(sdk, json_output, completed, k
 
 
 def test_list_named_versions_uses_count_placeholder(sdk):
-    sdk.scripts.list.return_value = page(record(versionCount=None))
+    sdk.functions.list.return_value = page(record(versionCount=None))
     result = invoke("list", "--name", "hello.py")
     assert result.exit_code == 0, result.output
     assert result.stdout == "hello.py\t2\t-\tready\t2026-11-13T00:00:00+00:00\n"
@@ -823,8 +817,8 @@ def test_error_details_text_is_bounded_json_is_complete(sdk, shape):
             else "x" * 500
         )
     )
-    request = httpx.Request("GET", "https://example.test/v1/sandbox/scripts")
-    sdk.scripts.list.side_effect = APIStatusError(
+    request = httpx.Request("GET", "https://example.test/v1/sandbox/functions")
+    sdk.functions.list.side_effect = APIStatusError(
         "invalid",
         response=httpx.Response(422, request=request),
         body={"message": "invalid", "details": details},
@@ -848,7 +842,7 @@ def check(*args):
 
 
 def test_check_remote_valid_summary(sdk, file):
-    sdk.scripts.validations.create.return_value = SimpleNamespace(data=validation())
+    sdk.functions.validations.create.return_value = SimpleNamespace(data=validation())
     result = check(file)
     assert result.exit_code == 0, result.output
     assert result.stdout == (
@@ -857,14 +851,14 @@ def test_check_remote_valid_summary(sdk, file):
         'Output schema:\n{\n  "type": "string"\n}\n'
     )
     assert result.stderr == ""
-    sdk.scripts.validations.create.assert_called_once_with(source=SOURCE)
+    sdk.functions.validations.create.assert_called_once_with(source=SOURCE)
 
 
 def test_check_remote_polls_until_done(sdk, file, clock):
-    sdk.scripts.validations.create.return_value = SimpleNamespace(
+    sdk.functions.validations.create.return_value = SimpleNamespace(
         data=validation(status="pending", valid=None)
     )
-    sdk.scripts.validations.retrieve.side_effect = [
+    sdk.functions.validations.retrieve.side_effect = [
         SimpleNamespace(data=validation(status="pending", valid=None)),
         SimpleNamespace(data=validation()),
     ]
@@ -872,9 +866,9 @@ def test_check_remote_polls_until_done(sdk, file, clock):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["status"] == "done"
     assert clock.sleeps == [0, 1]
-    assert sdk.scripts.validations.retrieve.call_count == 2
-    assert sdk.scripts.validations.retrieve.call_args.args == (ID1,)
-    assert sdk.scripts.validations.retrieve.call_args.kwargs["wait_s"] == 5
+    assert sdk.functions.validations.retrieve.call_count == 2
+    assert sdk.functions.validations.retrieve.call_args.args == (ID1,)
+    assert sdk.functions.validations.retrieve.call_args.kwargs["wait_s"] == 5
 
 
 ISSUES = [
@@ -890,7 +884,7 @@ WARNINGS = [{"code": "slow", "message": "Slow import", "line": 1}]
 
 
 def test_check_remote_invalid_renders_issues(sdk, file):
-    sdk.scripts.validations.create.return_value = SimpleNamespace(
+    sdk.functions.validations.create.return_value = SimpleNamespace(
         data=validation(valid=False, errors=ISSUES, warnings=WARNINGS)
     )
     result = check(file)
@@ -903,7 +897,7 @@ def test_check_remote_invalid_renders_issues(sdk, file):
 
 
 def test_check_remote_invalid_json_is_server_document(sdk, file):
-    sdk.scripts.validations.create.return_value = SimpleNamespace(
+    sdk.functions.validations.create.return_value = SimpleNamespace(
         data=validation(valid=False, errors=ISSUES)
     )
     result = check(file, "-j")
@@ -915,7 +909,7 @@ def test_check_remote_invalid_json_is_server_document(sdk, file):
 
 
 def test_check_remote_failed_validation(sdk, file):
-    sdk.scripts.validations.create.return_value = SimpleNamespace(
+    sdk.functions.validations.create.return_value = SimpleNamespace(
         data=validation(status="failed", valid=None)
     )
     result = check(file)
@@ -925,28 +919,51 @@ def test_check_remote_failed_validation(sdk, file):
 
 def test_check_remote_pending_after_deadline(sdk, file, clock):
     pending = SimpleNamespace(data=validation(status="pending", valid=None))
-    sdk.scripts.validations.create.return_value = pending
+    sdk.functions.validations.create.return_value = pending
 
     def long_poll(*args, **kwargs):
         clock.now += 5
         return pending
 
-    sdk.scripts.validations.retrieve.side_effect = long_poll
+    sdk.functions.validations.retrieve.side_effect = long_poll
     result = check(file)
     assert result.exit_code == 0, result.output
     assert result.stdout == f"{ID1}\n"
     assert "still pending" in result.stderr
     assert clock.sleeps[:3] == [0, 1, 1]
-    assert sdk.scripts.validations.retrieve.call_count == 10
+    assert sdk.functions.validations.retrieve.call_count == 10
 
 
 def test_check_remote_no_wait(sdk, file, clock):
-    sdk.scripts.validations.create.return_value = SimpleNamespace(
+    sdk.functions.validations.create.return_value = SimpleNamespace(
         data=validation(status="pending", valid=None)
     )
     result = check(file, "--no-wait")
     assert result.exit_code == 0, result.output
     assert result.stdout == f"{ID1}\n"
-    assert f"mobilerun script check {file} --remote" in result.stderr
+    assert f"mobilerun function check {file} --remote" in result.stderr
     assert clock.sleeps == []
-    sdk.scripts.validations.retrieve.assert_not_called()
+    sdk.functions.validations.retrieve.assert_not_called()
+
+
+def test_function_commands_only_call_the_functions_resource(sdk, file):
+    sdk.functions.validations.create.return_value = SimpleNamespace(data=validation())
+    for args in (
+        ("push", file, "-j"),
+        ("list", "-j"),
+        ("show", ID2, "-j"),
+        ("check", file, "--remote", "-j"),
+        ("delete", ID2, "--yes", "-j"),
+    ):
+        result = invoke(*args)
+        assert result.exit_code == 0, result.output
+        assert isinstance(json.loads(result.stdout), (dict, list))
+    assert sdk.functions.mock_calls
+    assert sdk.client.scripts.mock_calls == []
+
+
+def test_script_group_is_an_unknown_command(sdk):
+    result = CliRunner().invoke(cli, ["script", "list", "-j"])
+    assert result.exit_code == 2
+    assert "No such command" in result.output
+    assert not sdk.client.mock_calls

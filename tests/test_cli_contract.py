@@ -76,7 +76,7 @@ def test_tree_and_short_options():
         "doctor",
         "env",
         "completion",
-        "script",
+        "function",
         "routine",
     }
     assert set(cli.commands["device"].commands) == {

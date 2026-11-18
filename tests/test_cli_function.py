@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli import deviceauth, script
+from mobilerun.cli import deviceauth, function
 from mobilerun.cli.main import cli
 from mobilerun.config_manager import ConfigLoader
 
@@ -39,8 +39,8 @@ def isolated_config(monkeypatch, tmp_path):
 
 @pytest.fixture
 def source(tmp_path):
-    path = tmp_path / "script.py"
-    path.write_text("# sandbox script\n")
+    path = tmp_path / "function.py"
+    path.write_text("# sandbox function\n")
     return str(path)
 
 
@@ -56,26 +56,26 @@ def source(tmp_path):
 def test_interpreter_precedence(monkeypatch, explicit, venv, platform, expected):
     if venv:
         monkeypatch.setenv("VIRTUAL_ENV", venv)
-    monkeypatch.setattr(script.sys, "platform", platform)
+    monkeypatch.setattr(function.sys, "platform", platform)
     call = Mock(return_value=subprocess.CompletedProcess([], 0))
-    monkeypatch.setattr(script.subprocess, "run", call)
-    assert script._interpreter(explicit) == expected
-    assert call.call_args.args[0] == [expected, "-c", "import mobilerun_routines"]
+    monkeypatch.setattr(function.subprocess, "run", call)
+    assert function._interpreter(explicit) == expected
+    assert call.call_args.args[0] == [expected, "-c", "import mobilerun_functions"]
 
 
 @pytest.mark.parametrize("command", ["init", "check", "run"])
 def test_missing_package(monkeypatch, source, command):
     call = Mock(return_value=subprocess.CompletedProcess([], 1))
-    monkeypatch.setattr(script.subprocess, "run", call)
-    args = ["script", command, source, "--python", "/custom/python"]
+    monkeypatch.setattr(function.subprocess, "run", call)
+    args = ["function", command, source, "--python", "/custom/python"]
     if command == "run":
         args.extend(["--local", "-t", "cloud", "-d", CLOUD_ID, "--input", "{}"])
     result = CliRunner().invoke(cli, args)
     assert result.exit_code == 1, result.output
     assert result.stdout == ""
     assert result.stderr == (
-        "mobilerun-routines is not installed in /custom/python. "
-        'Install it with: pip install "mobilerun[routines]"\n'
+        "mobilerun-functions is not installed in /custom/python. "
+        'Install it with: pip install "mobilerun[functions]"\n'
     )
     assert call.call_count == 1
 
@@ -88,16 +88,16 @@ def test_init_passthrough(monkeypatch, tmp_path, code):
             subprocess.CompletedProcess([], code, "created\n", "diagnostic\n"),
         ]
     )
-    monkeypatch.setattr(script.subprocess, "run", call)
+    monkeypatch.setattr(function.subprocess, "run", call)
     path = str(tmp_path / "new.py")
-    result = CliRunner().invoke(cli, ["script", "init", path])
+    result = CliRunner().invoke(cli, ["function", "init", path])
     assert result.exit_code == code, result.output
     assert result.stdout == "created\n"
     assert result.stderr == "diagnostic\n"
     assert call.call_args.args[0] == [
         sys.executable,
         "-m",
-        "mobilerun_routines",
+        "mobilerun_functions",
         "new",
         path,
     ]
@@ -124,8 +124,8 @@ def test_check_output(monkeypatch, source, flags):
             subprocess.CompletedProcess([], 0, raw, ""),
         ]
     )
-    monkeypatch.setattr(script.subprocess, "run", call)
-    result = CliRunner().invoke(cli, ["script", "check", source, *flags])
+    monkeypatch.setattr(function.subprocess, "run", call)
+    result = CliRunner().invoke(cli, ["function", "check", source, *flags])
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
     if flags:
@@ -149,14 +149,14 @@ def test_check_failure_diagnostics(monkeypatch, source, flags, expected_stdout):
     raw = '{"ok": false, "errors": [{"message": "Entry point missing"}]}\n'
     stderr = "line 4: Entry point missing — Define main\nSchema missing\n"
     monkeypatch.setattr(
-        script.subprocess,
+        function.subprocess,
         "run",
         Mock(side_effect=[
             subprocess.CompletedProcess([], 0),
             subprocess.CompletedProcess([], 3, raw, stderr),
         ]),
     )
-    result = CliRunner().invoke(cli, ["script", "check", source, *flags])
+    result = CliRunner().invoke(cli, ["function", "check", source, *flags])
     assert result.exit_code == 3, result.output
     assert result.stdout == expected_stdout
     assert result.stderr == stderr
@@ -168,14 +168,14 @@ def test_check_failure_diagnostics(monkeypatch, source, flags, expected_stdout):
 )
 def test_check_error_passthrough(monkeypatch, source, stdout, expected_stdout):
     monkeypatch.setattr(
-        script.subprocess,
+        function.subprocess,
         "run",
         Mock(side_effect=[
             subprocess.CompletedProcess([], 0),
             subprocess.CompletedProcess([], 3, stdout, "invalid entry point\n"),
         ]),
     )
-    result = CliRunner().invoke(cli, ["script", "check", source, "-j"])
+    result = CliRunner().invoke(cli, ["function", "check", source, "-j"])
     assert result.exit_code == 3
     assert result.stdout == expected_stdout
     assert result.stderr == "invalid entry point\n"
@@ -191,8 +191,8 @@ def test_check_error_passthrough(monkeypatch, source, stdout, expected_stdout):
 )
 def test_run_usage_errors(monkeypatch, source, args, message):
     call = Mock(side_effect=AssertionError("must validate before starting Python"))
-    monkeypatch.setattr(script.subprocess, "run", call)
-    result = CliRunner().invoke(cli, ["script", "run", source, *args])
+    monkeypatch.setattr(function.subprocess, "run", call)
+    result = CliRunner().invoke(cli, ["function", "run", source, *args])
     assert result.exit_code == 2, result.output
     assert message in result.stderr
     call.assert_not_called()
@@ -210,7 +210,7 @@ def test_run_result_and_cleanup(monkeypatch, source, tmp_path, code, from_file, 
     def run(command, **kwargs):
         if "-c" in command:
             return subprocess.CompletedProcess(command, 0)
-        assert command[:5] == [sys.executable, "-m", "mobilerun_routines", "run", source]  # fmt: skip
+        assert command[:5] == [sys.executable, "-m", "mobilerun_functions", "run", source]  # fmt: skip
         input_path = Path(command[command.index("--input-file") + 1])
         result_path = Path(command[command.index("--result-file") + 1])
         temporary_paths.append(input_path.parent)
@@ -222,7 +222,7 @@ def test_run_result_and_cleanup(monkeypatch, source, tmp_path, code, from_file, 
         result_path.write_text(raw)
         return subprocess.CompletedProcess(command, code, "")
 
-    monkeypatch.setattr(script.subprocess, "run", run)
+    monkeypatch.setattr(function.subprocess, "run", run)
     input_path = tmp_path / "source-input.json"
     input_path.write_text('{"name": "example"}')
     inputs = (
@@ -232,7 +232,7 @@ def test_run_result_and_cleanup(monkeypatch, source, tmp_path, code, from_file, 
     )
     result = CliRunner().invoke(
         cli,
-        ["script", "run", source, "--local", *inputs, "--state-file", state, *flags],
+        ["function", "run", source, "--local", *inputs, "--state-file", state, *flags],
     )
     assert result.exit_code == code, result.output
     assert json.loads(result.stdout) == envelope
@@ -253,9 +253,9 @@ def test_run_cleanup_without_result(monkeypatch, source, mode):
             raise OSError("cannot launch interpreter")
         return subprocess.CompletedProcess(command, 9, "")
 
-    monkeypatch.setattr(script.subprocess, "run", run)
+    monkeypatch.setattr(function.subprocess, "run", run)
     result = CliRunner().invoke(
-        cli, ["script", "run", source, "--local", "--input", "null"]
+        cli, ["function", "run", source, "--local", "--input", "null"]
     )
     assert result.exit_code == (1 if mode == "exception" else 9), result.output
     assert result.stdout == ""
@@ -264,11 +264,11 @@ def test_run_cleanup_without_result(monkeypatch, source, mode):
 
 def test_run_rejects_both_inputs(monkeypatch, source):
     call = Mock()
-    monkeypatch.setattr(script.subprocess, "run", call)
+    monkeypatch.setattr(function.subprocess, "run", call)
     result = CliRunner().invoke(
         cli,
         [
-            "script",
+            "function",
             "run",
             source,
             "--local",
@@ -344,9 +344,9 @@ def test_run_local_device_mapping(monkeypatch, source, flags, device_args):
         Path(command[command.index("--result-file") + 1]).write_text('{"ok": true}')
         return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr(script.subprocess, "run", run)
+    monkeypatch.setattr(function.subprocess, "run", run)
     result = CliRunner().invoke(
-        cli, ["script", "run", source, "--local", "--input", "{}", *flags]
+        cli, ["function", "run", source, "--local", "--input", "{}", *flags]
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {"ok": True}
@@ -360,25 +360,25 @@ def test_run_cloud_device(monkeypatch, source, flags):
     if not flags:
         monkeypatch.setenv("MOBILERUN_DEVICE", CLOUD_ID)
         monkeypatch.setenv("MOBILERUN_TARGET", "cloud")
-    monkeypatch.setenv("MOBILERUN_API_KEY", "unit-script-env-key")
+    monkeypatch.setenv("MOBILERUN_API_KEY", "unit-function-env-key")
     monkeypatch.setenv("SCRIPT_CUSTOM_VAR", "inherited")
 
     def run(command, **kwargs):
-        assert "unit-script-env-key" not in " ".join(command)
+        assert "unit-function-env-key" not in " ".join(command)
         if "-c" in command:
             return subprocess.CompletedProcess(command, 0)
         assert command[-4:] == ["--device-target", "cloud", "--device-id", CLOUD_ID]
-        assert kwargs["env"]["MOBILERUN_API_KEY"] == "unit-script-env-key"
+        assert kwargs["env"]["MOBILERUN_API_KEY"] == "unit-function-env-key"
         assert kwargs["env"]["MOBILERUN_API_BASE_URL"] == "https://api.example.com/v1"
         assert kwargs["env"]["SCRIPT_CUSTOM_VAR"] == "inherited"
         Path(command[command.index("--result-file") + 1]).write_text('{"ok": true}')
         return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr(script.subprocess, "run", run)
+    monkeypatch.setattr(function.subprocess, "run", run)
     result = CliRunner().invoke(
         cli,
         [
-            "script",
+            "function",
             "run",
             source,
             "--local",
@@ -391,7 +391,7 @@ def test_run_cloud_device(monkeypatch, source, flags):
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {"ok": True}
-    assert "unit-script-env-key" not in result.output
+    assert "unit-function-env-key" not in result.output
 
 
 @pytest.mark.parametrize(
@@ -405,23 +405,23 @@ def test_run_cloud_device(monkeypatch, source, flags):
         ),
     ],
 )
-def test_run_device_error_does_not_start_routines(monkeypatch, source, flags, message):
+def test_run_device_error_does_not_start_functions(monkeypatch, source, flags, message):
     call = Mock(return_value=subprocess.CompletedProcess([], 0))
-    monkeypatch.setattr(script.subprocess, "run", call)
+    monkeypatch.setattr(function.subprocess, "run", call)
     result = CliRunner().invoke(
-        cli, ["script", "run", source, "--local", "--input", "{}", *flags]
+        cli, ["function", "run", source, "--local", "--input", "{}", *flags]
     )
     assert result.exit_code == 1, result.output
     assert message in result.stderr
     if "-d" in flags and CLOUD_ID in flags:
         assert "mobilerun auth login" in result.stderr
     call.assert_called_once()
-    assert call.call_args.args[0] == [sys.executable, "-c", "import mobilerun_routines"]
+    assert call.call_args.args[0] == [sys.executable, "-c", "import mobilerun_functions"]
 
 
 def test_check_remote_rejects_python(source):
     result = CliRunner().invoke(
-        cli, ["script", "check", source, "--remote", "--python", sys.executable]
+        cli, ["function", "check", source, "--remote", "--python", sys.executable]
     )
     assert result.exit_code == 2, result.output
     assert "--remote and --python cannot be combined" in result.stderr

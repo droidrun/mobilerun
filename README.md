@@ -183,7 +183,7 @@ mobilerun
 │   ├── ui
 │   ├── apps
 │   └── start PACKAGE
-├── script
+├── function
 │   ├── init PATH
 │   ├── check PATH
 │   ├── run PATH --local
@@ -342,40 +342,40 @@ stdout empty. The run command emits `success`, `reason`, and `steps` after a
 task, including a failed task; errors before execution use the error document.
 Check the command's exit status as well as its JSON.
 
-### Cloud scripts
+### Serverless Functions
 
-Install the routines extra to create, check, and run scripts locally:
+Install the functions extra to create, check, and run functions locally:
 
 ```bash
-pip install "mobilerun[routines]"
-mobilerun script init hello.py
-mobilerun script check hello.py
-mobilerun script run hello.py --local -d emulator-5554 --input '{}'
-mobilerun script run hello.py --local -P ios -d http://127.0.0.1:6643 --input '{}'
-mobilerun script run hello.py --local -t cloud -d CLOUD_DEVICE_ID --input '{}'
+pip install "mobilerun[functions]"
+mobilerun function init hello.py
+mobilerun function check hello.py
+mobilerun function run hello.py --local -d emulator-5554 --input '{}'
+mobilerun function run hello.py --local -P ios -d http://127.0.0.1:6643 --input '{}'
+mobilerun function run hello.py --local -t cloud -d CLOUD_DEVICE_ID --input '{}'
 ```
 
-`--local` runs the script in your Python environment. Device options select its
+`--local` runs the function in your Python environment. Device options select its
 `ctx.device`: an ADB serial, a Portal URL, or a cloud device id.
 `-P` overrides the platform from your config. `MOBILERUN_DEVICE` and `MOBILERUN_TARGET` also work.
 Cloud devices use `MOBILERUN_API_KEY` or your saved `mobilerun auth login` session;
 `--api-url` or `MOBILERUN_API_BASE_URL` selects the cloud API endpoint.
-A local run against a cloud device passes your real key/session to the script's
-environment; on the platform, the script only sees a placeholder.
-Without a device, the script runs with no device flags (local target only).
+A local run against a cloud device passes your real key/session to the function's
+environment; on the platform, the function only sees a placeholder.
+Without a device, the function runs with no device flags (local target only).
 
-Upload immutable versions of a Python script, inspect them, and download their
+Upload immutable versions of a Python function, inspect them, and download their
 source. Names default to the uploaded file's basename, including `.py`.
 `push` waits up to 60 seconds for inspection by default; use `--no-wait` to
 return immediately. A rejected version exits 1; a pending version exits 0 with
 a hint to check it later. All five commands support `-j` for one JSON document.
 
 ```bash
-mobilerun script push hello.py --manifest manifest.json
-mobilerun script list --name hello.py
-mobilerun script show hello.py
-mobilerun script pull hello.py --version 1 -o out.py
-mobilerun script delete hello.py --version 1 --yes
+mobilerun function push hello.py --manifest manifest.json
+mobilerun function list --name hello.py
+mobilerun function show hello.py
+mobilerun function pull hello.py --version 1 -o out.py
+mobilerun function delete hello.py --version 1 --yes
 ```
 
 Without `--name`, `list` shows one row per name with the latest version and
@@ -385,10 +385,10 @@ active version count; `--name` shows every active version, newest first.
 to overwrite a file. `delete NAME` requires `--version N` or `--all`; an id deletes
 that version directly. Interactive deletion asks once; automation requires `--yes`.
 
-`mobilerun script check hello.py --remote` validates a script in the cloud instead
+`mobilerun function check hello.py --remote` validates a function in the cloud instead
 of locally. It waits up to 60 seconds (`--no-wait` prints the validation id and
 returns), prints the same summary as the local check, and exits 3 with
-`line N: message — hint` issues when the script is invalid. `--remote` cannot be
+`line N: message — hint` issues when the function is invalid. `--remote` cannot be
 combined with `--python`.
 
 Routine documents are checked and stored through the cloud API, which decides
@@ -408,10 +408,10 @@ documents exit 3 with `FIELD: message — hint` issues. `pull` prints to stdout
 without `-o` and requires `--force` to overwrite a file. All routine commands
 support `-j`.
 
-Cloud scripts use `MOBILERUN_API_KEY` or a saved `mobilerun auth login` sign-in
+Serverless Functions use `MOBILERUN_API_KEY` or a saved `mobilerun auth login` sign-in
 (the legacy `MOBILERUN_CLOUD_API_KEY` also works), and `MOBILERUN_API_BASE_URL`
-(or `--api-url`) selects the endpoint. Until the script API is public on production,
-set `MOBILERUN_API_BASE_URL` to the dev API's `/v1` URL for cloud script commands.
+(or `--api-url`) selects the endpoint. Until the functions API is public on production,
+set `MOBILERUN_API_BASE_URL` to the dev API's `/v1` URL for cloud function commands.
 
 ### Non-interactive use and secrets
 

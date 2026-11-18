@@ -12,7 +12,7 @@ from mobilerun_sdk import APIStatusError
 from mobilerun_sdk.types.workflows.flow_validate_document_response import (
     Data as Verdict,
 )
-from test_cli_script_cloud import sdk  # noqa: F401
+from test_cli_function_cloud import sdk  # noqa: F401
 
 from mobilerun.cli.main import cli
 
@@ -186,14 +186,14 @@ def test_push_rejected_document_renders_issues(
 
 
 def test_push_rejected_document_redacts_secrets(sdk, document_file):  # noqa: F811
-    leaky = [{**ERRORS[0], "message": "Bad value unit-cloud-script-key"}]
+    leaky = [{**ERRORS[0], "message": "Bad value unit-cloud-function-key"}]
     body = {"code": "document_invalid", "message": "Invalid", "details": leaky}
     sdk.client.workflows.flows.create_from_document.side_effect = status_error(
         422, body
     )
     result = invoke("push", document_file, "-j")
     assert result.exit_code == 3, result.output
-    assert "unit-cloud-script-key" not in result.output
+    assert "unit-cloud-function-key" not in result.output
     assert "[redacted]" in result.stdout
     assert "[redacted]" in result.stderr
 
