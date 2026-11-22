@@ -1,6 +1,7 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
+
 from .get import clipboard_get
 from .set import clipboard_set
 

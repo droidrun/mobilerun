@@ -5,6 +5,10 @@ from mobilerun_core_local.driver import AndroidDriver, DeviceDriver, RecordingDr
 from mobilerun.core.state import AndroidStateProvider, StateProvider, UIState
 
 __all__ = [
-    "DeviceDriver", "AndroidDriver", "RecordingDriver", "UIState",
-    "StateProvider", "AndroidStateProvider",
+    "DeviceDriver",
+    "AndroidDriver",
+    "RecordingDriver",
+    "UIState",
+    "StateProvider",
+    "AndroidStateProvider",
 ]

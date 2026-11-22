@@ -23,6 +23,7 @@ def legacy_command(name: str, module: str, attr: str, target: str) -> click.Comm
                 from mobilerun_core_local.driver.visual_remote import (
                     VISUAL_REMOTE_DEFAULT_URL,
                 )
+
                 from mobilerun.config.loader import ConfigLoader
 
                 if not (kwargs.get("target") or kwargs.get("device_target")):

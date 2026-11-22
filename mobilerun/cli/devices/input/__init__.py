@@ -1,12 +1,13 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
-from .tap import tap
-from .long_press import long_press
-from .swipe import swipe_cmd
-from .type import type_text
-from .press import press
+
 from .clipboard import clipboard
+from .long_press import long_press
+from .press import press
+from .swipe import swipe_cmd
+from .tap import tap
+from .type import type_text
 
 
 @click.group(cls=MenuGroup)

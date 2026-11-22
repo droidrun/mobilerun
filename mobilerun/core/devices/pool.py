@@ -9,9 +9,9 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, TypeVar, Unpack
 
 from pydantic import BaseModel
-from mobilerun.core.devices.location import Location
 
 from mobilerun.core.devices.base import Device, InstallOptions, _unwrap_device
+from mobilerun.core.devices.location import Location
 from mobilerun.core.extensions import Action, Extension
 from mobilerun.core.extensions.actions import Audience
 from mobilerun.core.state.ui_state import UIState

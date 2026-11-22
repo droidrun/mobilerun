@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, Unpack
 
 from mobilerun_core_local.driver.base import DeviceDriver, PlatformUnsupportedError
 from pydantic import BaseModel
-from mobilerun.core.devices.location import Location
 
 from mobilerun.core.devices.base import Device, InstallOptions
 from mobilerun.core.devices.components.identifiers import _sanitize_identifier
 from mobilerun.core.devices.components.raw import _translate_unsupported
+from mobilerun.core.devices.location import Location
 from mobilerun.core.operator import Operator
 from mobilerun.core.proxy.target import ProxyTarget
 from mobilerun.core.state.base import StateProvider

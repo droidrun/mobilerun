@@ -1,12 +1,13 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
-from .list import apps
+
 from .install import install
-from .uninstall import uninstall
+from .list import apps
+from .open import open_url
 from .start import start
 from .stop import stop
-from .open import open_url
+from .uninstall import uninstall
 
 
 @click.group(cls=MenuGroup)

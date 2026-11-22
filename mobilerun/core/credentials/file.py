@@ -46,7 +46,9 @@ class FileCredentials(DictCredentials):
     def _locked(self):
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         lock_path = self.path.with_name(self.path.name + ".lock")
-        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        fd = os.open(
+            lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
+        )
         try:
             if fcntl is not None:
                 fcntl.flock(fd, fcntl.LOCK_EX)

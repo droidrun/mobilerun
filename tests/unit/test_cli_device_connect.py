@@ -168,9 +168,7 @@ def test_connect_picker_selects_discovered_device(monkeypatch):
         "discover_devices",
         AsyncMock(return_value=[DiscoveredDevice("usb", "local", None, None, None)]),
     )
-    monkeypatch.setattr(
-        connect, "select_prompt", AsyncMock(return_value="usb")
-    )
+    monkeypatch.setattr(connect, "select_prompt", AsyncMock(return_value="usb"))
     monkeypatch.setattr(
         connect.adb,
         "connect",

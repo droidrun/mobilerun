@@ -79,7 +79,9 @@ def test_timed_cancellation_closes_real_prompt_promptly(kind):
                 if kind == "select"
                 else prompts._text("Text", secret=kind == "secret")
             )
-            application = prompt._application if kind == "select" else prompt._session.app
+            application = (
+                prompt._application if kind == "select" else prompt._session.app
+            )
             task = asyncio.create_task(prompts._execute_async(prompt))
             await asyncio.sleep(0.02)
             assert application.is_running
@@ -87,7 +89,11 @@ def test_timed_cancellation_closes_real_prompt_promptly(kind):
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(task, timeout=0.3)
             assert not application.is_running
-            assert not [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+            assert not [
+                t
+                for t in asyncio.all_tasks()
+                if t is not asyncio.current_task() and not t.done()
+            ]
 
     asyncio.run(run())
 
@@ -104,7 +110,10 @@ def test_async_prompt_existing_cancel_keybindings(key, expected):
                 with pytest.raises(KeyboardInterrupt):
                     await select_prompt_async("Select", [SelectChoice("one", "One")])
             else:
-                assert await select_prompt_async("Select", [SelectChoice("one", "One")]) is None
+                assert (
+                    await select_prompt_async("Select", [SelectChoice("one", "One")])
+                    is None
+                )
 
     asyncio.run(run())
 
@@ -124,7 +133,9 @@ def test_async_text_escape_retains_empty_cancel_result(secret):
 
 def test_sync_prompt_rejects_running_loop_before_creating_coroutine():
     async def run():
-        prompt = SimpleNamespace(execute=lambda: pytest.fail("sync execute must not run"))
+        prompt = SimpleNamespace(
+            execute=lambda: pytest.fail("sync execute must not run")
+        )
         with pytest.raises(click.ClickException, match="Interactive prompt failed"):
             prompts._execute(prompt)
 

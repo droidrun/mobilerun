@@ -1,8 +1,9 @@
 from importlib import import_module
 
 from click.testing import CliRunner
-from mobilerun.cli.devices.base import selection
 from test_macro_operator import FakeDevice, write_macro
+
+from mobilerun.cli.devices.base import selection
 
 
 def test_macro_group_exposes_list_and_replay():

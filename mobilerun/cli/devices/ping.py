@@ -1,4 +1,3 @@
-
 import click
 from async_adbutils import adb
 from mobilerun_core_local.driver.android.portal import (

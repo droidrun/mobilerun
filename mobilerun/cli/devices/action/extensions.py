@@ -2,8 +2,8 @@ import json
 from dataclasses import asdict
 
 import click
-from mobilerun.cli.base import render
 
+from mobilerun.cli.base import render
 from mobilerun.cli.base.run import coro
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 
@@ -33,6 +33,20 @@ async def extensions(json_output: bool, target: DeviceTarget) -> None:
                 return
             render.heading(len(entries), "extension")
             for entry in entries:
-                render.table([[entry["name"], render.secondary(entry["kind"]),
-                               render.secondary(f"exclusive: {entry['exclusive']}" if entry["exclusive"] else "")]])
-                render.kv((f"  {item['kind']}", json.dumps(item["data"], ensure_ascii=False)) for item in entry["context"])
+                render.table(
+                    [
+                        [
+                            entry["name"],
+                            render.secondary(entry["kind"]),
+                            render.secondary(
+                                f"exclusive: {entry['exclusive']}"
+                                if entry["exclusive"]
+                                else ""
+                            ),
+                        ]
+                    ]
+                )
+                render.kv(
+                    (f"  {item['kind']}", json.dumps(item["data"], ensure_ascii=False))
+                    for item in entry["context"]
+                )

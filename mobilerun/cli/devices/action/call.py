@@ -7,12 +7,13 @@ from typing import Any
 import click
 
 from mobilerun.cli.base.menu import is_interactive
-from mobilerun.cli.base.prompts import SelectChoice, text_prompt_async as text_prompt
+from mobilerun.cli.base.prompts import SelectChoice
+from mobilerun.cli.base.prompts import text_prompt_async as text_prompt
 from mobilerun.cli.base.run import coro
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.cli.devices.base.pickers import choose_value_async as choose_value
-from mobilerun.errors.base import MobilerunError
 from mobilerun.core.extensions import Action
+from mobilerun.errors.base import MobilerunError
 from mobilerun.models.context import JSONValue
 
 
@@ -40,7 +41,9 @@ async def _arguments(action: Action, supplied: tuple[str, ...]) -> dict[str, JSO
         if name not in values:
             if not is_interactive():
                 raise click.ClickException(f"Missing required argument: {name}")
-            values[name] = await text_prompt(name, secret=name in action.sensitive_parameters)
+            values[name] = await text_prompt(
+                name, secret=name in action.sensitive_parameters
+            )
     return {
         name: _convert(value, properties[name], name) for name, value in values.items()
     }

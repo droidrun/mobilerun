@@ -46,17 +46,25 @@ def test_cloud_close_closes_owned_client(monkeypatch, existing, keep, fail):
 
 def test_failed_termination_can_retry_with_same_owned_sdk_client(monkeypatch):
     import httpx
-    from mobilerun_sdk import AsyncMobilerun
     from mobilerun_core_local.driver import cloud
+    from mobilerun_sdk import AsyncMobilerun
 
     attempts = []
 
     def respond(request):
         attempts.append(request)
-        return httpx.Response(400, json={"error": "failed"}) if len(attempts) == 1 else httpx.Response(204)
+        return (
+            httpx.Response(400, json={"error": "failed"})
+            if len(attempts) == 1
+            else httpx.Response(204)
+        )
 
-    sdk = AsyncMobilerun(api_key="test", base_url="https://example.test", max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    sdk = AsyncMobilerun(
+        api_key="test",
+        base_url="https://example.test",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
     monkeypatch.setattr(cloud, "AsyncMobilerun", lambda **kwargs: sdk)
     device = CloudDevice(api_key="test")
     device.device_id = "created"

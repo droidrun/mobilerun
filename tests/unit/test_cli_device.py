@@ -102,12 +102,12 @@ def test_action_commands_call_expected_driver_methods(monkeypatch, tmp_path):
 
 
 def test_ui_prints_formatted_state(monkeypatch):
+    import importlib
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from mobilerun.cli.devices import device
     from mobilerun.cli.devices.base import selection
-    import importlib
 
     ui = importlib.import_module("mobilerun.cli.devices.screen.ui")
 
@@ -242,8 +242,8 @@ def test_device_validates_saved_serial_against_discovery(monkeypatch):
     from unittest.mock import AsyncMock
 
     from mobilerun.cli.devices import device
-    from mobilerun.cli.devices.base import selection as tap
     from mobilerun.cli.devices.base import options
+    from mobilerun.cli.devices.base import selection as tap
 
     config = options.ConfigLoader.load(None)
     config.device.serial = "saved"

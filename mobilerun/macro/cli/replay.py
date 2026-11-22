@@ -9,13 +9,13 @@ import click
 from mobilerun.cli.base import render
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.config.loader import ConfigLoader
+from mobilerun.config.paths import PathResolver
 from mobilerun.config.settings import get_settings
 from mobilerun.core.credentials import DictCredentials, FileCredentials
 from mobilerun.macro import MacroOperator, MacroPlayer
 from mobilerun.macro.settings import get_macro_settings
 from mobilerun.macro.utils import configure_macro_logging
 from mobilerun.models.results import ExecutionResult
-from mobilerun.config.paths import PathResolver
 
 F = TypeVar("F", bound=Callable[..., Any])
 

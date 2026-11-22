@@ -9,8 +9,8 @@ from mobilerun.cli.devices.base.discovery import DiscoveredDevice, discover_devi
 from mobilerun.clients.local.login_store import resolve_cloud_api_key
 from mobilerun.config.loader import ConfigLoader
 from mobilerun.config.settings import get_settings
-from mobilerun.models.billing import Billing
 from mobilerun.errors.base import MobilerunError
+from mobilerun.models.billing import Billing
 
 
 def _render_cloud(items: list[DiscoveredDevice], default: str | None = None) -> None:

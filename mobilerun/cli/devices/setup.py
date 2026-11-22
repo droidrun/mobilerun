@@ -5,8 +5,8 @@ from async_adbutils import adb
 from mobilerun_core_local.driver.android.portal import PORTAL_PACKAGE_NAME
 from rich.console import Console
 
-from mobilerun.cli.base.run import coro
 from mobilerun.cli.base.errors import render_error
+from mobilerun.cli.base.run import coro
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.clients.portal.install import install_portal
 from mobilerun.errors import DeviceNotFound, PortalApkNotFound, PortalInstallFailed

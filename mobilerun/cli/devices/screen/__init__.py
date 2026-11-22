@@ -1,6 +1,7 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
+
 from .screenshot import screenshot
 from .ui import ui
 

@@ -19,13 +19,14 @@ from typing import (
 )
 
 from pydantic import BaseModel
-from mobilerun.core.devices.location import Location
 
+from mobilerun.config.prompts import PromptLoader, load_prompt_text
 from mobilerun.core.devices.components.identifiers import _redact_secrets, _secret_input
 from mobilerun.core.devices.components.input_lock import (
     InputOperationLock,
     serialize_inputs,
 )
+from mobilerun.core.devices.location import Location
 from mobilerun.core.extensions import Action, ActionSet, Extension
 from mobilerun.core.extensions.actions import Declaration
 from mobilerun.core.extensions.registry import Registry
@@ -48,7 +49,6 @@ from mobilerun.models.results import (
     ExpectationResult,
     ExpectationVerdict,
 )
-from mobilerun.config.prompts import PromptLoader, load_prompt_text
 
 T = TypeVar("T", bound=BaseModel)
 

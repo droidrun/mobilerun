@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from mobilerun.core.devices.android import AndroidDevice
+from mobilerun.core.devices.components.cloud_lifecycle import _CloudLifecycle
 from mobilerun.core.devices.ios import IOSDevice
 from mobilerun.core.devices.remote import RemoteDevice
-from mobilerun.core.devices.components.cloud_lifecycle import _CloudLifecycle
 from mobilerun.core.mailbox.cloud import CloudMailbox
 
 
@@ -101,6 +101,7 @@ def test_apk_inspection_timeout(monkeypatch, tmp_path):
 
 def test_android_apk_inspection_runs_off_event_loop(monkeypatch, tmp_path):
     import threading
+
     from mobilerun.core.devices import android
 
     loop_thread = threading.get_ident()
@@ -179,6 +180,7 @@ def test_extension_error_remains_first_when_cleanup_fails():
 
 def test_cloud_upload_preparation_runs_off_event_loop(monkeypatch, tmp_path):
     import threading
+
     from mobilerun.clients.cloud import apps
 
     path = tmp_path / "app.apk"

@@ -1,9 +1,10 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
+
 from .get import location_get
-from .set import location_set
 from .reset import location_reset
+from .set import location_set
 
 
 @click.group(cls=MenuGroup)

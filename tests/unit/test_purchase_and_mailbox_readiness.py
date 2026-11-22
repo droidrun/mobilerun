@@ -307,12 +307,12 @@ def test_cancelled_resume_does_not_delete(monkeypatch):
 
 
 def test_payment_failure_does_not_disclose_server_text():
-    from mobilerun.errors import CloudError
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
         PaymentSnapshot,
         wait_until_active,
     )
+    from mobilerun.errors import CloudError
 
     async def run():
         adapter = PaymentAdapter(
@@ -350,9 +350,9 @@ def test_cloud_error_allows_support_request_id_but_not_response_body():
 
 
 def test_cloud_error_action_passthrough_does_not_expose_response_body():
+    from mobilerun.clients.cloud.errors import cloud_error
     from mobilerun.core.extensions import Extension, action
     from mobilerun.errors import CloudValidationError
-    from mobilerun.clients.cloud.errors import cloud_error
 
     class Resource(Extension):
         @action

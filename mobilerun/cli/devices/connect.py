@@ -4,12 +4,13 @@ import re
 import uuid
 
 import click
-
-from mobilerun.cli.base import render
 from async_adbutils import adb
 
+from mobilerun.cli.base import render
 from mobilerun.cli.base.menu import is_interactive
-from mobilerun.cli.base.prompts import SelectChoice, select_prompt_async as select_prompt, text_prompt_async as text_prompt
+from mobilerun.cli.base.prompts import SelectChoice
+from mobilerun.cli.base.prompts import select_prompt_async as select_prompt
+from mobilerun.cli.base.prompts import text_prompt_async as text_prompt
 from mobilerun.cli.base.run import coro
 from mobilerun.cli.devices.base.default import save_default_device
 from mobilerun.cli.devices.base.discovery import discover_devices

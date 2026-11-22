@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock
 import pytest
 from click.testing import CliRunner
 
-from mobilerun.cli.app import cli
-import mobilerun.cli.phone_number.group as number_commands
 import mobilerun.cli.mailbox.group as mailbox_commands
+import mobilerun.cli.phone_number.group as number_commands
+from mobilerun.cli.app import cli
 
 
 @pytest.mark.parametrize(
@@ -39,8 +39,8 @@ def test_create_forwards_plan(monkeypatch, group, module, name):
 )
 def test_rent_included_fails_before_api(monkeypatch, group, module):
     resource = module.PhoneNumber if group == "number" else module.Mailbox
-    import mobilerun.clients.cloud.numbers as numbers
     import mobilerun.clients.cloud.mailboxes as mailboxes
+    import mobilerun.clients.cloud.numbers as numbers
 
     sdk = AsyncMock()
     monkeypatch.setattr(

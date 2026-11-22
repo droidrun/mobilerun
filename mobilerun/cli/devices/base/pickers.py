@@ -3,8 +3,13 @@
 import click
 
 from mobilerun.cli.base.menu import is_interactive
-from mobilerun.cli.base.prompts import SelectChoice, select_prompt, text_prompt
-from mobilerun.cli.base.prompts import select_prompt_async, text_prompt_async
+from mobilerun.cli.base.prompts import (
+    SelectChoice,
+    select_prompt,
+    select_prompt_async,
+    text_prompt,
+    text_prompt_async,
+)
 
 
 def choose_value(value: str | None, label: str, choices: list[SelectChoice]) -> str:
@@ -20,7 +25,9 @@ def choose_value(value: str | None, label: str, choices: list[SelectChoice]) -> 
     return text_prompt(label) if selected == "__manual__" else selected
 
 
-async def choose_value_async(value: str | None, label: str, choices: list[SelectChoice]) -> str:
+async def choose_value_async(
+    value: str | None, label: str, choices: list[SelectChoice]
+) -> str:
     if value is not None:
         return value
     if not is_interactive():

@@ -1,6 +1,7 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
+
 from .get import language_get
 from .set import language_set
 

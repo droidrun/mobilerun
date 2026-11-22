@@ -1,8 +1,9 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
-from .location import location
+
 from .language import language
+from .location import location
 from .timezone import timezone
 
 

@@ -111,7 +111,9 @@ def test_menu_connect_prompts_address(monkeypatch: pytest.MonkeyPatch) -> None:
         return "__add_address__"
 
     monkeypatch.setattr(connect_module, "select_prompt", AsyncMock(side_effect=select))
-    monkeypatch.setattr(connect_module, "text_prompt", AsyncMock(return_value="127.0.0.1:5555"))
+    monkeypatch.setattr(
+        connect_module, "text_prompt", AsyncMock(return_value="127.0.0.1:5555")
+    )
     connect = AsyncMock(return_value="connected to 127.0.0.1:5555")
     monkeypatch.setattr(connect_module.adb, "connect", connect)
     saved = []
@@ -191,8 +193,8 @@ def test_direct_tap_prompts_coordinates(monkeypatch: pytest.MonkeyPatch) -> None
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from mobilerun.cli.devices.base import selection as tap_module
     from mobilerun.cli.devices.base import options
+    from mobilerun.cli.devices.base import selection as tap_module
     from mobilerun.cli.devices.group import device
 
     monkeypatch.setattr(menu, "is_interactive", lambda: True)

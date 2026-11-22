@@ -1,11 +1,10 @@
 """Cloud device logout command."""
 
 import click
-from mobilerun.cli.base import render
 
+from mobilerun.cli.base import render
 from mobilerun.clients.local import login_store as credentials
 from mobilerun.config.env import get_secrets, secret_value
-
 
 
 @click.command()

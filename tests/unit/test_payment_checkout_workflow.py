@@ -104,12 +104,12 @@ def test_interactive_checkout_waits_until_active(monkeypatch, capsys):
 
 
 def test_left_payment_without_url_is_error(monkeypatch):
-    from mobilerun.errors import CloudError
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
         PaymentSnapshot,
         wait_for_payment,
     )
+    from mobilerun.errors import CloudError
 
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
     cancel = AsyncMock()
@@ -363,12 +363,12 @@ def test_core_payment_error_resumes_to_resource(monkeypatch, kind):
 
 
 def test_resumed_timeout_does_not_cancel():
-    from mobilerun.models import Checkout
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
         PaymentSnapshot,
         wait_until_active,
     )
+    from mobilerun.models import Checkout
 
     cancel = AsyncMock()
     adapter = PaymentAdapter(
@@ -450,8 +450,8 @@ def test_checkout_mode_and_callback_conflict():
 
 
 def test_browser_checkout_headless_still_prints_expiry(monkeypatch, capsys):
-    from mobilerun.models.checkout import Checkout
     from mobilerun.clients.cloud.checkout import browser_checkout
+    from mobilerun.models.checkout import Checkout
 
     opened = []
     monkeypatch.setattr("sys.platform", "linux")

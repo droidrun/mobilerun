@@ -8,15 +8,15 @@ from click.testing import CliRunner
 from mobilerun_sdk.types.shared.location import Location
 
 from mobilerun.cli.devices.base import selection
-from mobilerun.cli.devices.settings import location as location_command
 from mobilerun.cli.devices.group import device
+from mobilerun.cli.devices.settings import location as location_command
 from mobilerun.clients.cloud import devices
 from mobilerun.core.devices.android import AndroidDevice
 from mobilerun.core.devices.base import Device
 from mobilerun.core.devices.cloud import CloudDevice
 from mobilerun.core.devices.components.wrapper import DeviceWrapper
-from mobilerun.core.devices.pool import DevicePool
 from mobilerun.core.devices.location import Location as DeviceLocation
+from mobilerun.core.devices.pool import DevicePool
 from mobilerun.errors import DeviceOperationNotSupported
 from mobilerun.models.billing import Billing
 

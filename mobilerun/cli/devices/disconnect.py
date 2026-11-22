@@ -3,10 +3,9 @@
 import re
 
 import click
-
-from mobilerun.cli.base import render
 from async_adbutils import adb
 
+from mobilerun.cli.base import render
 from mobilerun.cli.base.run import coro
 from mobilerun.cli.devices.base.default import save_default_device
 from mobilerun.config.loader import ConfigLoader

@@ -1,9 +1,10 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
+
 from .list import list_command
-from .push import push
 from .pull import pull
+from .push import push
 from .rm import rm
 
 

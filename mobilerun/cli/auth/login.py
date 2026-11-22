@@ -7,10 +7,9 @@ from datetime import datetime, timezone
 import click
 from click.core import ParameterSource
 from rich.console import Console
-from mobilerun.cli.base import render
-from mobilerun.errors.base import MobilerunError
 
 from mobilerun.cli.auth.status import mask_key
+from mobilerun.cli.base import render
 from mobilerun.cli.base.billing import billing_option
 from mobilerun.cli.base.run import coro
 from mobilerun.clients.cloud import api_keys as cloud
@@ -18,6 +17,7 @@ from mobilerun.clients.cloud import device_flow as deviceauth
 from mobilerun.clients.local import login_store as credentials
 from mobilerun.config.settings import get_settings
 from mobilerun.errors import CloudAPIError, InvalidAPIKeyError
+from mobilerun.errors.base import MobilerunError
 from mobilerun.models.billing import Billing
 
 console = Console()

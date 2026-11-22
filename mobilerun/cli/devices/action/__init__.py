@@ -1,9 +1,10 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
-from .list import actions
+
 from .call import call
 from .extensions import extensions
+from .list import actions
 
 
 @click.group(cls=MenuGroup)

@@ -9,8 +9,8 @@ from async_adbutils import adb
 
 from mobilerun.clients.cloud.devices import list_devices
 from mobilerun.clients.local.login_store import resolve_cloud_api_key
-from mobilerun.models.billing import Billing
 from mobilerun.errors.base import MobilerunError
+from mobilerun.models.billing import Billing
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,11 @@ async def discover_devices(
                     raise click.ClickException(
                         f"Error listing cloud devices: {exc}"
                     ) from exc
-                reason = str(exc) if isinstance(exc, MobilerunError) else "use --debug for details"
+                reason = (
+                    str(exc)
+                    if isinstance(exc, MobilerunError)
+                    else "use --debug for details"
+                )
                 click.echo(f"Warning: Error listing cloud devices: {reason}", err=True)
                 logger.debug("Cloud discovery failure", exc_info=True)
             else:

@@ -6,8 +6,8 @@ from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime, timezone
 
 from rich.console import Console
-from rich.text import Text
 from rich.table import Table
+from rich.text import Text
 
 stdout = Console()
 stderr = Console(stderr=True)

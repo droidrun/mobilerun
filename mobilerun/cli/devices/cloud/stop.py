@@ -1,7 +1,6 @@
 import click
 
 from mobilerun.cli.base import render
-
 from mobilerun.cli.base.run import coro
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.clients.cloud import devices

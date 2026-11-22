@@ -24,10 +24,10 @@ import sys
 from types import SimpleNamespace
 
 from llama_index.core.base.llms.types import ChatMessage, ImageBlock, TextBlock
-
 from mobilerun.agents.agent.utils.actions import _convert_action_point
 from mobilerun.agents.agent.utils.llm_picker import load_llm
 from mobilerun.agents.agent.utils.vision_sizing import VisionResizePolicy
+
 from mobilerun.core.state.android import AndroidStateProvider
 from mobilerun.core.state.base import _resize_model_screenshot_with_grid
 from mobilerun.core.state.filters import ConciseFilter

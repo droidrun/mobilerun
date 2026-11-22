@@ -1,10 +1,11 @@
 import click
 
 from mobilerun.cli.base.menu import MenuGroup
-from .status import status
-from .resume import resume
-from .stop import stop
+
 from .reboot import reboot
+from .resume import resume
+from .status import status
+from .stop import stop
 from .terminate import terminate
 
 
