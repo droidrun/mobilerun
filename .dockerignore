@@ -2,6 +2,7 @@
 
 !mobilerun
 !pyproject.toml
+!hatch_build.py
 !uv.lock
 !README.md
 
