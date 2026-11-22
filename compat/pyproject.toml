@@ -3,12 +3,12 @@ name = "droidrun"
 version = "0.7.4"
 description = "Compatibility shim — droidrun has been renamed to mobilerun"
 requires-python = ">=3.11,<3.14"
-dependencies = ["mobilerun==0.7.4"]
+dependencies = ["mobilerun==0.7.4", "mobilerun-agents==0.1.0"]
 
 [project.optional-dependencies]
-anthropic = ["mobilerun[anthropic]==0.7.4"]
-deepseek = ["mobilerun[deepseek]==0.7.4"]
-langfuse = ["mobilerun[langfuse]==0.7.4"]
+anthropic = ["mobilerun-agents[anthropic]==0.1.0"]
+deepseek = ["mobilerun-agents[deepseek]==0.1.0"]
+langfuse = ["mobilerun-agents[langfuse]==0.1.0"]
 dev = ["mobilerun[dev]==0.7.4"]
 
 [project.scripts]

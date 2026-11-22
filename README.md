@@ -1,7 +1,7 @@
 <picture align="center">
-  <source media="(prefers-color-scheme: dark)" srcset="./static/mobilerun-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="./static/mobilerun.png">
-  <img src="./static/mobilerun.png"  width="full">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/static-images/mobilerun-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/static-images/mobilerun.png">
+  <img src="./assets/static-images/mobilerun.png"  width="full">
 </picture>
 
 <p align="center">
@@ -46,223 +46,308 @@
 
 
 <p align="center">
-  <img src="./static/mobilerun-demo.gif" alt="Mobilerun automating a phone with natural language" width="320">
+  <img src="./assets/static-images/mobilerun-demo.gif" alt="Mobilerun automating a phone with natural language" width="320">
 </p>
 
-- 🤖 Control Android and iOS devices with natural language commands
-- 🔀 Use OpenAI, Anthropic, Gemini, xAI, Ollama, DeepSeek, OpenRouter, and OpenAI-compatible models
-- 🧠 Run direct tasks or enable reasoning mode for complex multi-step automation
-- 💻 Automate from the CLI, a terminal UI, Docker, or Python code
-- 🐍 Extend agents with custom tools, structured output, app cards, and credentials
-- 📸 Combine accessibility trees with screenshots for visual understanding
-- 🫆 Trace execution with Arize Phoenix or Langfuse
+## What is Mobilerun?
 
-Use the framework when you want to run the agent on your machine. Use [Mobilerun Cloud](https://cloud.mobilerun.ai) when you want a ready-to-go solution for your local phones or cloud-hosted virtual/physical phones, managed infrastructure, and API-driven device workflows without running the agent on your local machine. [Check out our benchmark results](https://mobilerun.ai/benchmark).
+Mobilerun controls Android and iOS devices from Python or a CLI. Use direct device actions, record and replay macros, or delegate a task to an AI agent. Devices can be local or hosted in [Mobilerun Cloud](https://cloud.mobilerun.ai).
 
-## 🎯 Platform Support
+## Install
 
-| Target | Supported | Setup |
-| --- | :---: | --- |
-| Android Real Device | ✅ | `adb` or the [Portal](https://github.com/droidrun/mobilerun-portal) app |
-| Android Emulator | ✅ | Running emulator (`adb`) |
-| iOS Real Device | ✅ | [`mobilerun-ios`](https://docs.mobilerun.ai/framework/guides/device-setup) over USB |
-| iOS Simulator | ✅ | [iOS Portal](https://github.com/droidrun/ios-portal) app |
-| Android on [Mobilerun Cloud](https://mobilerun.ai) | ✅ | Hosted phones or your own |
-| iOS on [Mobilerun Cloud](https://mobilerun.ai) | ✅ | Hosted iPhones or your own |
-
-## 📦 Installation
-
-> **Note:** Python 3.14 is not currently supported. Please use Python `>=3.11,<3.14`.
-
-Install Mobilerun with [`uv`](https://docs.astral.sh/uv/):
+Requires Python 3.11–3.13.
 
 ```bash
-# CLI usage
+pip install mobilerun
+# Or, in a uv project:
+uv add mobilerun
+# Or install the CLI as a tool:
 uv tool install mobilerun
 ```
 
-```bash
-# CLI + Python integration
-uv pip install mobilerun
-```
+For local AI agents, install the separate add-on with `pip install mobilerun-agents`. For Anthropic support, use `pip install "mobilerun-agents[anthropic]"`.
 
-Most LLM providers are included by default. For Anthropic support, install the optional extra:
+## 60-second quickstart
 
-```bash
-uv tool install "mobilerun[anthropic]"
-```
-
-## 🚀 Quickstart
+Connect an Android device or emulator with [ADB](https://developer.android.com/studio/releases/platform-tools) and USB debugging, then set up Portal. The agent commands require `pip install mobilerun-agents`. Configuring and running an LLM agent may incur provider charges.
 
 ```bash
-uv tool install mobilerun
-mobilerun setup
-mobilerun configure
-mobilerun run "Open settings and turn on dark mode"
+mobilerun device setup DEVICE
+mobilerun device ping DEVICE
+mobilerun agent llm configure
+mobilerun agent run "Open Settings" DEVICE
 ```
 
-Before starting, make sure you have [ADB](https://developer.android.com/studio/releases/platform-tools) installed and an Android device with Developer options and USB debugging enabled. For iOS, set up [`mobilerun-ios`](https://docs.mobilerun.ai/framework/guides/device-setup) for an iPhone or the [iOS Portal](https://github.com/droidrun/ios-portal) app for the simulator.
+Or use Python directly (replace the serial):
 
-### 1. Install the Portal on your device
+```python
+import asyncio
+from mobilerun.core.devices import AndroidDevice
+
+async def main():
+    async with AndroidDevice("emulator-5554") as device:
+        await device.start_app("com.android.settings")
+        await device.press_button("home")
+
+asyncio.run(main())
+```
+
+## Features
+
+- **CLI and Python:** Inspect devices, run agent tasks, and build automation workflows.
+- **Android and iOS:** Drive Android with Portal, iPhones via mobilerun-ios, and iOS simulators with iOS Portal.
+- **Portal control:** Inspect UI trees and screenshots; launch apps, tap, swipe and type.
+- **Vision:** Use `--vision` to include screenshots or `--vision-only` for screenshot-only control.
+- **Reasoning:** Use `--reasoning` for manager–executor planning.
+- **Tracing:** Inspect runs with Arize Phoenix, Langfuse, logs and saved trajectories.
+- **Structured output:** Return typed results from tasks.
+- **App cards and custom tools:** Supply app-specific guidance and extend agent actions.
+- **Docker:** The repository's [Dockerfile](Dockerfile) builds a container whose entrypoint is the Mobilerun CLI.
+
+### LLM providers
+
+The configuration wizard supports OpenAI, Anthropic, Gemini, xAI, Ollama, MiniMax, ZAI and OpenAI-compatible endpoints such as OpenRouter, LM Studio and vLLM. The CLI also lists DeepSeek. Provider credentials and usage charges depend on your selection. Anthropic requires the add-on's `anthropic` extra.
+
+## Easy examples
+
+The Python snippets below use an `async def` function. Run it with `asyncio.run(...)`, as above. Device examples require a configured Portal.
+
+### Local Android and iOS
+
+```python
+from mobilerun.core.devices import AndroidDevice, IOSDevice
+
+async def devices():
+    async with AndroidDevice("emulator-5554") as android:
+        await android.press_button("home")
+    async with IOSDevice("http://localhost:8100") as ios:
+        await ios.press_button("home")
+```
+
+Use the actual iOS Portal or mobilerun-ios URL for your setup. See [device setup](https://docs.mobilerun.ai/framework/guides/device-setup).
+
+### Cloud phone and proxy
+
+**Cost:** creating a cloud phone and using its proxy can incur charges. Authenticate with `mobilerun account login` or `MOBILERUN_API_KEY` first.
+
+```python
+from mobilerun.core.devices import CloudDevice
+from mobilerun.core.proxy import CloudRotatingProxy
+
+async def cloud_phone():
+    async with CloudDevice(name="demo", billing="paid", plan="minute",
+                           proxy=CloudRotatingProxy(country="US")) as phone:
+        await phone.press_button("home")
+```
+
+The context manager releases resources it creates; existing IDs are not automatically released. `keep=True` retains created resources. `MOBILERUN_BILLING` sets the default billing mode (`no_commerce` blocks purchases, `included` uses enforced included quotas); an explicit `billing=` argument overrides it, so the paid examples here still permit charges.
+
+### Run an agent task
+
+**Cost:** local agent tasks can consume LLM tokens; cloud tasks consume credits.
+
+```python
+# Install the optional agent add-on first: pip install mobilerun-agents
+from mobilerun.agents import AgentOperator
+from mobilerun.core.devices import AndroidDevice
+
+async def task():
+    async with AndroidDevice("emulator-5554", operator=AgentOperator()) as device:
+        print(await device.do("Open Settings"))
+```
+
+Configure an LLM first with `mobilerun agent llm configure`. `CloudDevice` uses a cloud task operator by default.
+
+### Record and replay a macro
+
+Record actions to `macro.json` using the schema from [macro_demo.py](tests/demos/macro_demo.py):
+
+```python
+import json
+from pathlib import Path
+from mobilerun.core.devices import AndroidDevice, RecordingDevice
+from mobilerun.macro.models import MACRO_SCHEMA_VERSION
+
+async def record():
+    recorded = RecordingDevice(AndroidDevice("emulator-5554"))
+    try:
+        await recorded.press_button("home")
+        Path("macro.json").write_text(json.dumps({
+            "macro_schema_version": MACRO_SCHEMA_VERSION,
+            "actions": list(recorded.recorded_actions),
+        }))
+    finally:
+        await recorded.close()
+```
+
+Replay that file on the device:
+
+```python
+from mobilerun.core.devices import AndroidDevice
+from mobilerun.macro import MacroPlayer
+
+async def replay():
+    async with AndroidDevice("emulator-5554") as device:
+        player = MacroPlayer(device)
+        if not await player.replay_macro(player.load_macro_from_file("macro.json")):
+            raise RuntimeError("Macro replay failed")
+```
+
+### Credentials and vault
+
+Vault access uses your cloud account. Bind a provider to a device rather than putting secrets in a prompt. Cloud tasks require `CloudCredentials`; local credential providers are not sent to cloud tasks.
+
+```python
+from mobilerun.core.credentials import CloudCredentials
+from mobilerun.core.devices import AndroidDevice
+
+async def credentials():
+    async with AndroidDevice("emulator-5554") as device:
+        vault = CloudCredentials()
+        await vault.bind(device)
+        try:
+            print(await vault.list("com.example.demo"))
+        finally:
+            await vault.close()
+```
+
+See [vault_demo.py](tests/demos/vault_demo.py) for save, use and cleanup.
+
+For a local agent, use a private YAML or JSON file with `FileCredentials` instead. The file must not be readable by other users (`chmod 600 secrets.yaml`). LLM use can incur provider charges.
+
+```python
+# Install the optional agent add-on first: pip install mobilerun-agents
+from mobilerun.agents import AgentOperator
+from mobilerun.core.credentials import FileCredentials
+from mobilerun.core.devices import AndroidDevice
+
+async def local_credentials():
+    async with AndroidDevice("emulator-5554", operator=AgentOperator()) as device:
+        provider = FileCredentials("secrets.yaml")
+        await provider.bind(device)
+        try:
+            print(await device.do("Open Settings"))
+        finally:
+            await provider.unbind()
+```
+
+See [credentials](mobilerun/core/credentials/README.md) for file format and provider details. Keep secrets out of prompts and version control.
+
+### Phone numbers and mailboxes
+
+**Cost:** renting a number or creating a mailbox can incur charges. These demos ask for confirmation and release new resources unless `--keep` is used.
 
 ```bash
-mobilerun setup
+python -m tests.demos.phone_demo --country US
+python -m tests.demos.mailbox_demo
 ```
 
-This installs the Mobilerun Portal app, enables its accessibility service, and prepares the device for local control.
+Send an SMS or email containing a code from another account when prompted. `phone_demo --bind` also creates a cloud phone. See [proxy_demo.py](tests/demos/proxy_demo.py) for selecting a proxy on an existing cloud phone; proxy use can cost money and changes that phone's configuration.
 
-### 2. Verify the connection
+### Structured output
+
+**Cost:** the phone, proxy and cloud task can incur charges.
+
+```python
+from pydantic import BaseModel
+from mobilerun.core.devices import CloudDevice
+
+class AndroidVersion(BaseModel):
+    version: str
+
+async def structured():
+    async with CloudDevice(name="version-demo", billing="paid", plan="minute") as phone:
+        result = await phone.do("Find the Android version", output=AndroidVersion)
+        print(result.output)
+```
+
+From a source checkout, run `python -m tests.demos.task_demo` for the complete cloud lifecycle, task and structured-output example. Demos are excluded from the built wheel; see the [demo table](tests/demos/README.md) for prerequisites and costs.
+
+## CLI overview
+
+Run `mobilerun --help` or `mobilerun COMMAND --help`. Command groups include `device`, `agent`, `macro`, `account`, `credentials`, `number`, `mailbox`, `proxy`, `workspace`, `skills`, `mcp`, and `doctor`. `mobilerun device connect <id>` saves a default device; `mobilerun device disconnect` clears it. See the [CLI guide](mobilerun/cli/README.md).
+
+## Skills for coding agents
 
 ```bash
-mobilerun ping
+mobilerun skills list
+mobilerun skills install --all --agent claude-code
 ```
 
-You should see confirmation that the Portal is installed and accessible.
+Use `--project` for project scope or `--dir PATH` for a custom location. See [skills](skills/README.md) and [mobile-harness](https://github.com/droidrun/mobile-harness) for local and cloud device control. Contributors should initialize the skills submodule with `git submodule update --init`.
 
-### 3. Configure your LLM provider
+## Coding-agent MCP
 
-```bash
-mobilerun configure
-```
+Run `mobilerun mcp install --agent codex` to connect the public Mobilerun MCP server. OAuth is the default; `--api-key` uses the `MOBILERUN_API_KEY` environment variable without saving its value. Add `--project` for project scope. See [MCP setup](mobilerun/mcp/README.md).
 
-The wizard walks you through choosing a provider, auth method, and model. You can also use provider environment variables such as `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, or `MINIMAX_API_KEY`.
-
-### 4. Run your first command
-
-```bash
-mobilerun run "Open the settings app and tell me the Android version"
-```
-
-Useful run options:
-
-```bash
-mobilerun run "Open settings and turn on dark mode"
-mobilerun run "What app is currently open?" --vision
-mobilerun run "Find a contact named John and send him an email" --reasoning
-mobilerun run "Take a screenshot" --ios
-mobilerun run "Open Settings" --steps 30 --debug
-```
-
-Read the full [framework documentation](https://docs.mobilerun.ai/framework/quickstart).
-
-## ⚙️ Features
-
-- **CLI:** Run one-off natural language tasks, inspect devices, replay macros, and debug from the terminal.
-- **Python API:** Build custom mobile automation workflows with Python and use custom tools.
-- **Android and iOS support:** Control Android through the Portal app, iPhones through `mobilerun-ios`, or the iOS Simulator through the iOS Portal app.
-- **Portal-based control:** Use UI trees, screenshots, text input, gestures, app launching, and device state from the Portal runtime.
-- **Vision mode:** Send screenshots to the LLM with `--vision`, or use screenshot-only control with `--vision-only` (useful for the apps that do not have a11y tree information).
-- **Reasoning mode:** Use `--reasoning` for manager-executor planning on longer or more complex tasks.
-- **Tracing and telemetry:** Debug execution with Arize Phoenix, Langfuse, saved trajectories, and detailed logs.
-- **Structured output:** Return structured data from mobile workflows.
-- **App cards and custom tools:** Add app-specific guidance to make agent perform better on your use-cases.
-- **Docker:** Run Mobilerun in a container for repeatable local environments.
-
-## ☁️ Framework vs Cloud
+## Framework vs Cloud
 
 | | Mobilerun Framework | Mobilerun Cloud |
 | --- | --- | --- |
-| Best for | Running agents locally on your own machine and devices | Ready-to-go local phone control, hosted real or virtual devices, API workflows, and managed device operations |
-| Runtime | Your machine  | Mobilerun-managed infrastructure |
-| Interface | CLI, Docker, and Python API | Dashboard, REST API, SDKs, and hosted devices |
-
-Use the framework when you want full local control of the agent runtime. Use [Mobilerun Cloud](https://cloud.mobilerun.ai) when you want managed devices, fleet workflows, or cloud APIs without running the agent locally. Learn more in the [framework overview](https://docs.mobilerun.ai/framework/overview) and the [cloud docs](https://docs.mobilerun.ai).
+| Best for | Local agent execution and code-level control | Managed devices, API workflows and hosted execution |
+| Runtime | Your machine | Mobilerun-managed infrastructure |
+| Interface | CLI, Docker and Python API | Dashboard, REST API, SDKs and MCP |
 
 ### Which should I choose?
 
-- Choose **Mobilerun Framework** for local agent execution and code-level control.
-- Choose **Mobilerun Cloud** for managed phones, APIs, and scale without running agents locally.
+Choose the **Framework** to run agents locally with direct control over code. Choose [**Cloud**](https://cloud.mobilerun.ai) for managed phones, fleet workflows and hosted tasks. The framework can also connect to Cloud devices.
 
-### Cloud Device Types
+### Cloud device types
 
-| Device type | What it is | Best for |
+| Type | What it is | Useful for |
 | --- | --- | --- |
-| Personal | Your own hardware connected to Mobilerun Cloud | Quick automation on devices you own |
-| Cloud Phone (Hosted) | Instantly available cloud-hosted phone | Scalable hosted automation |
-| Physical Phone (Hosted) | Real hardware, not emulated | QA and workflows that need real device behavior (sensors, camera, push, payments) |
+| Personal | Your own hardware connected to Cloud | Automation on devices you own |
+| Cloud phone | Hosted virtual phone | Scalable device workflows |
+| Hosted physical phone | Real hardware | QA requiring real device behavior |
 
-### Run an agent on a Cloud Phone
+## Example use cases
 
-Ask an agent to test the onboarding flow in your app: open the app, complete the welcome screens, sign in with a test account, and confirm that the home screen loads. Watch each step live and inspect the results to diagnose failures.
+- Mobile app QA and regression testing, including onboarding and sign-in flows.
+- Test the same flow across devices and OS versions.
+- Diagnose failures with screenshots, UI state and trajectories.
+- Automate repetitive mobile workflows or extract data from native apps.
+- Run scheduled or event-driven workflows through Cloud.
 
-### Generate leads with Google Maps on a Cloud Phone
-
-<a href="https://www.youtube.com/watch?v=CaL71WorysA">
-  <img src="./static/google-maps.gif" alt="Mobilerun generating business leads with Google Maps on a cloud device" width="800">
-</a>
-
-## 🧩 Agent Skill
-
-Give Claude Code, Codex, or another coding agent direct control of Android and iOS devices with the [mobile-harness](https://github.com/droidrun/mobile-harness) skill. Copy paste it into your agent:
-
-```text
-Set up https://github.com/droidrun/mobile-harness for me.
-
-Read `install.md` and follow the steps to install `mobile-harness`.
-```
-
-The skill teaches the agent to drive local devices (ADB, Portal, iPhones, iOS Simulator) and Mobilerun Cloud phones.
-
-## 🎬 Demo Videos
+## Demo videos
 
 ### Book accommodation from a prompt
 
-Shows multi-step navigation, text input, and app-state reasoning while Mobilerun searches for accommodation.
-
-<a href="https://youtu.be/VUpCyq1PSXw">
-  <img src="./static/demo-apartment-search.gif" alt="Mobilerun booking accommodation from a prompt" width="800">
-</a>
+[![Mobilerun booking accommodation](assets/static-images/demo-apartment-search.gif)](https://youtu.be/VUpCyq1PSXw)
 
 ### Find trending content
 
-Shows browsing, app navigation, and result extraction from a natural-language task.
+[![Mobilerun finding trending content](assets/static-images/demo-reddit-trends.gif)](https://youtu.be/7V8S2f8PnkQ)
 
-<a href="https://youtu.be/7V8S2f8PnkQ">
-  <img src="./static/demo-reddit-trends.gif" alt="Mobilerun finding trending content from a prompt" width="800">
-</a>
+## Part of Mobilerun
 
-## 💡 Example Use Cases
+- [Mobilerun Portal](https://github.com/droidrun/mobilerun-portal): Android device control.
+- [mobilerun-ios](https://github.com/droidrun/mobilerun-ios-releases): connect an iPhone over USB.
+- [iOS Portal](https://github.com/droidrun/ios-portal): control an iOS Simulator.
+- [mobile-harness](https://github.com/droidrun/mobile-harness): local and cloud device control for coding agents.
+- [Mobilerun Cloud](https://mobilerun.ai): managed devices and APIs, including [Python](https://github.com/droidrun/mobilerun-sdk-python) and [TypeScript](https://github.com/droidrun/mobilerun-sdk-typescript) SDKs.
 
-- Mobile app QA and regression testing
-- Guided workflows for non-technical users
-- Repetitive task automation on mobile devices
-- Event-driven automation from schedules, notifications, or custom triggers
-- Data extraction from native mobile apps
-- Testing the same flow across many devices and OS versions in parallel
+## Package map
 
-## 🌐 Part of Mobilerun
+See [mobilerun/README.md](mobilerun/README.md) for package responsibilities, source demos and related guides.
 
-Mobilerun is one piece of a toolkit for driving real phones with AI agents:
+## Documentation
 
-- **[Mobilerun Portal](https://github.com/droidrun/mobilerun-portal)**: the Android app that lets you control and automate your phone.
-- **[mobilerun-ios](https://github.com/droidrun/mobilerun-ios-releases)**: connects an iPhone over USB, either to this framework (`--local`) or to Mobilerun Cloud.
-- **[iOS Portal](https://github.com/droidrun/ios-portal)**: the iOS app that lets the framework drive the iOS Simulator.
-- **[mobile-harness](https://github.com/droidrun/mobile-harness)**: an agent skill that lets Claude Code, Codex, and OpenClaw control Android, iOS, and cloud phones. App cards teach the agent how each app works, and shared memory keeps what it learns across tasks. It scores 100% on AndroidWorld and 98.34% on iOSWorld ([benchmark results](https://mobilerun.ai/benchmark/)).
-- **[Mobilerun Cloud](https://mobilerun.ai)**: cloud phones for AI agents. Hosted Android phones and dedicated iPhones for testing and running your agents on real devices, with phone numbers and inboxes so end to end flows like sign in and verification work in your own apps, devices in multiple regions for localized testing, and scheduled and event triggers. Drive it through the REST API, [Python](https://github.com/droidrun/mobilerun-sdk-python) and [TypeScript](https://github.com/droidrun/mobilerun-sdk-typescript) SDKs, or MCP, and watch every step live.
+- [Framework quickstart](https://docs.mobilerun.ai/framework/quickstart) and [Cloud quickstart](https://docs.mobilerun.ai/quickstart)
+- [Device setup](https://docs.mobilerun.ai/framework/guides/device-setup) and [CLI guide](https://docs.mobilerun.ai/framework/guides/cli)
+- [SDK reference](https://docs.mobilerun.ai/framework/sdk/reference) and [custom tools](https://docs.mobilerun.ai/framework/features/custom-tools)
+- [Agent architecture](https://docs.mobilerun.ai/framework/concepts/architecture), [structured output](https://docs.mobilerun.ai/framework/features/structured-output) and [tracing](https://docs.mobilerun.ai/framework/features/tracing)
 
-## 📚 Documentation
+## Contributing
 
-- [Framework quickstart](https://docs.mobilerun.ai/framework/quickstart)
-- [Mobilerun cloud quickstart](https://docs.mobilerun.ai/quickstart)
-- [Device setup](https://docs.mobilerun.ai/framework/guides/device-setup)
-- [CLI guide](https://docs.mobilerun.ai/framework/guides/cli)
-- [SDK reference](https://docs.mobilerun.ai/framework/sdk/reference)
-- [Custom tools](https://docs.mobilerun.ai/framework/features/custom-tools)
-- [Agent architecture](https://docs.mobilerun.ai/framework/concepts/architecture)
-- [Structured output](https://docs.mobilerun.ai/framework/features/structured-output)
-- [Tracing](https://docs.mobilerun.ai/framework/features/tracing)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and tests.
 
-## 👥 Contributing
+## License
 
-Contributions are welcome. Please feel free to submit a pull request or open an issue.
+Mobilerun is licensed under the [MIT License](LICENSE).
 
-## 📄 License
+## Security checks
 
-This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
-
-## Security Checks
-
-To help catch security issues before submitting changes, run:
+With the development dependencies installed, run:
 
 ```bash
 bandit -r mobilerun

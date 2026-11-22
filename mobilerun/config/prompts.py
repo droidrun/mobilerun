@@ -1,0 +1,116 @@
+"""
+Prompt loading utility using Jinja2 templates.
+
+Templates are rendered in an immutable sandboxed environment, so template code
+cannot reach Python internals or mutate the objects passed into it.
+
+Features:
+- Loads from absolute file paths (resolved by AgentConfig + PathResolver)
+- Conditional rendering: {% if variable %}...{% endif %}
+- Loops with slicing: {% for item in items[-5:] %}...{% endfor %}
+- Filters: {{ variable|default("fallback") }}
+- Missing variables: silently ignored (renders as empty string)
+- Extra variables: silently ignored
+"""
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict
+
+import aiofiles
+from jinja2.sandbox import ImmutableSandboxedEnvironment
+
+from mobilerun.config.paths import PathResolver
+
+
+class PromptLoader:
+    """Jinja2 template renderer - loads from absolute file paths using aiofiles."""
+
+    _env = None  # Cached sandboxed Jinja2 environment
+
+    @classmethod
+    def _get_environment(cls) -> ImmutableSandboxedEnvironment:
+        """Get or create cached sandboxed Jinja2 environment."""
+        if cls._env is None:
+            cls._env = ImmutableSandboxedEnvironment(
+                trim_blocks=True,  # Remove first newline after block
+                lstrip_blocks=True,  # Strip leading whitespace before blocks
+                keep_trailing_newline=False,
+            )
+
+        return cls._env
+
+    @staticmethod
+    async def load_prompt(
+        file_path: str, variables: Dict[str, Any] | None = None
+    ) -> str:
+        """
+        Load and render Jinja2 template from absolute file path.
+
+        Path resolution is handled by AgentConfig + PathResolver.
+        This method just loads and renders.
+
+        Args:
+            file_path: ABSOLUTE path to template file (from AgentConfig methods)
+            variables: Dict of variables to pass to template
+                      - Missing variables: silently ignored (render as empty string)
+                      - Extra variables: silently ignored
+
+        Returns:
+            Rendered prompt string
+
+        Raises:
+            FileNotFoundError: If template file doesn't exist
+
+        """
+        path = Path(file_path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Prompt file not found: {file_path}")
+
+        # Read template content
+        async with aiofiles.open(path, mode="r", encoding="utf-8") as f:
+            template_content = await f.read()
+
+        # Use render_template for actual rendering
+        return PromptLoader.render_template(template_content, variables)
+
+    @staticmethod
+    def render_template(
+        template_string: str, variables: Dict[str, Any] | None = None
+    ) -> str:
+        """
+        Render Jinja2 template from string (NOT file path).
+
+        This is used for custom prompts passed at runtime. Rendering happens in
+        a sandbox: unsafe attribute access raises jinja2.exceptions.SecurityError.
+
+        Args:
+            template_string: Jinja2 template as string
+            variables: Dict of variables to pass to template
+                      - Missing variables: silently ignored (render as empty string)
+                      - Extra variables: silently ignored
+
+        Returns:
+            Rendered prompt string
+
+        """
+        # Get cached environment and create template from string
+        env = PromptLoader._get_environment()
+        template = env.from_string(template_string)
+
+        # Render with variables (empty dict if None)
+        # Missing variables render as empty string (default Undefined behavior)
+        # Extra variables are silently ignored
+        return template.render(**(variables or {}))
+
+
+# Load plain-text prompt assets from the working directory or package.
+
+
+@lru_cache(maxsize=None)
+def load_prompt_text(relative_path: str) -> str:
+    """Load a plain-text prompt, preferring a working-directory override."""
+    path = PathResolver.resolve(Path("assets/prompts") / relative_path, must_exist=True)
+    text = path.read_text(encoding="utf-8")
+    return text[:-1] if text.endswith("\n") else text

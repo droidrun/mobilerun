@@ -5,32 +5,26 @@ description = "A framework for controlling mobile devices through LLM agents"
 authors = [{ name = "Niels Schmidt", email = "niels@droidrun.ai" }]
 dependencies = [
     "async_adbutils",
-    "llama-index==0.14.23",
-    "posthog>=6.7.6",
     "pydantic>=2.11.10",
+    "pydantic-settings>=2.16.0,<3",
+    "platformdirs>=4",
+    "Jinja2>=3.1.6",
+    "prompt-toolkit>=3",
+    "typing-extensions>=4",
     "rich>=14.1.0",
     "InquirerPy>=0.3.4",
-    "opentelemetry-exporter-otlp-proto-http>=1.40.0",
-    "opentelemetry-sdk>=1.40.0",
     "httpx>=0.27.0",
-    "filelock>=3.20.0",
-    "PyJWT[crypto]>=2.14.0",
-    "llama-index-callbacks-arize-phoenix>=0.6.1",
-    "llama-index-workflows>=2.16.0,<3.0.0",
+    "click>=8.1",
+    "PyYAML>=6.0",
+    "tomlkit>=0.13,<1",
+    "requests>=2.0",
     "aiofiles>=25.1.0",
-    "mcp>=1.28.1,<2.0.0",
-    "llama-index-llms-openai==0.7.10",
-    "llama-index-llms-openai-like==0.7.2",
-    "llama-index-llms-google-genai>=0.8.5",
-    "llama-index-llms-ollama>=0.7.2",
-    "llama-index-llms-openrouter>=0.4.2",
-    "mobilerun-sdk>=3.2.0",
+    "mobilerun-sdk>=6.2.1,<7",
     "mobilerun-core-local[cloud]>=0.6.3",
+    "mobilerun-routines[device] @ git+https://github.com/droidrun/mobilerun-routines.git@b4444f83fa9c52e680bf09b17635251c818c2ad8",
     # Security floors also protect installations from the published wheel.
-    "aiohttp>=3.14.4",
     "anyio>=4.14.2",
     "certifi>=2026.10.19",
-    "fsspec>=2026.6.0",
     "Pillow>=13.0.0",
     "urllib3>=2.8.0",
 ]
@@ -63,24 +57,14 @@ Homepage = "https://github.com/droidrun/mobilerun"
 Documentation = "https://docs.mobilerun.ai/"
 
 [project.optional-dependencies]
-anthropic = [
-    "anthropic>=0.67.0,<2",
-    "llama-index-llms-anthropic>=0.8.6,<0.9.0",
-]
-deepseek = []
 dev = [
     "black==26.10.1",
+    "hatchling>=1.27",
     "ruff>=0.13.0",
     "mypy>=1.0.0",
     "pytest>=8.0.0",
     "bandit>=1.8.6",
     "safety>=3.2.11",
-    "mobilerun[langfuse]",
-]
-langfuse = [
-    "langfuse==4.15.1",
-    "openinference-instrumentation-llama-index>=3.0.0",
-    "llama-index-instrumentation"
 ]
 
 [build-system]
@@ -90,21 +74,43 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["mobilerun"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/cloud-screenshot.png", "/local-screenshot.png", "/skills/**"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"hatch_build.py" = "hatch_build.py"
 [project.scripts]
-mobilerun = "mobilerun.cli.main:cli"
+mobilerun = "mobilerun.cli.app:cli"
 
 [tool.uv]
 override-dependencies = ["filelock>=4.2.1"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+testpaths = ["tests/unit"]
+markers = [
+    "smoke: opt-in real-world smoke tests",
+    "smoke_device: local emulator, no service cost",
+    "smoke_cloud: cloud device and potentially cloud credits",
+    "smoke_llm: local agent using LLM tokens",
+]
 
 [tool.ruff.lint]
 select = [
@@ -118,10 +124,7 @@ ignore = ["E501"]
 
 [dependency-groups]
 dev = [
-    "anthropic>=0.67.0,<2",
     "bandit>=1.8.6",
-    "llama-index-callbacks-arize-phoenix>=0.6.1",
-    "llama-index-llms-anthropic>=0.8.6,<0.9.0",
     "pytest>=8.0.0",
     "ruff>=0.13.0",
     "safety>=3.2.11",

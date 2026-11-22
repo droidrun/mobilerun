@@ -9,6 +9,7 @@ RUN groupadd -g 1000 mobilerun \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
+    git \
     android-tools-adb \
     && rm -rf /var/lib/apt/lists/*
 
@@ -18,8 +19,8 @@ WORKDIR /mobilerun
 
 COPY --chown=mobilerun:mobilerun . .
 
-RUN uv sync --locked --no-dev --no-editable --extra anthropic --no-cache
+RUN uv sync --locked --no-dev --no-editable --no-cache
 
 ENTRYPOINT [".venv/bin/mobilerun"]
 
-CMD ["setup"]
+CMD ["--help"]

@@ -111,3 +111,18 @@ English is the preferred language for all contributions, including:
 - Pull requests
 - Issue reports
 - Community discussions
+
+## Tests and formatting
+
+Initialize the skills submodule after cloning: `git submodule update --init`.
+The project requires Python 3.11–3.13. With the development environment above:
+
+```bash
+pytest tests/unit
+pytest --smoke tests/unit/smoke/test_00_requirements.py -s
+black --check --diff .
+black .
+ruff check .
+```
+
+The normal unit run skips opt-in smoke tests. The requirements check is read-only; the full `pytest --smoke tests/unit/smoke` suite exercises real devices, cloud tasks and LLMs and can incur charges. Read [smoke setup and cleanup](tests/unit/smoke/README.md) before opting in. CI checks Black 26.10.1 using `--check --diff --verbose`; Ruff is an additional local check, not the Black CI job.

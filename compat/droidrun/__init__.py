@@ -46,6 +46,7 @@ class _DroidrunAliasLoader(importlib.abc.Loader):
     def create_module(self, spec):
         # Import the real module first so sys.modules[real_name] is populated.
         real_mod = importlib.import_module(self._real_name)
+        self._real_spec = real_mod.__spec__
         # Eagerly alias under the droidrun.* name so subsequent recursive
         # imports (during create_module/exec_module) find the same object.
         sys.modules[spec.name] = real_mod
@@ -55,6 +56,7 @@ class _DroidrunAliasLoader(importlib.abc.Loader):
         # The real module is already fully initialized; don't re-execute.
         # But re-assert the alias in case another finder overwrote it.
         sys.modules[module.__name__] = sys.modules.get(module.__name__, module)
+        module.__spec__ = self._real_spec
 
 
 class _DroidrunAliasFinder(importlib.abc.MetaPathFinder):
@@ -83,7 +85,10 @@ class _DroidrunAliasFinder(importlib.abc.MetaPathFinder):
             return None
 
         # Map to mobilerun.* and verify it exists.
-        new_name = "mobilerun" + fullname[len("droidrun") :]
+        from mobilerun._legacy.aliases import legacy_module_name
+
+        relative = fullname[len("droidrun.") :]
+        new_name = legacy_module_name(relative) or "mobilerun." + relative
         self._active = True
         try:
             real_spec = importlib.util.find_spec(new_name)
@@ -94,6 +99,12 @@ class _DroidrunAliasFinder(importlib.abc.MetaPathFinder):
 
         if real_spec is None:
             return None
+
+        warnings.warn(
+            f"{fullname} is deprecated; import {new_name} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         # Build alias spec with correct package metadata. Module identity is
         # preserved because our finder is inserted at the front of
@@ -126,6 +137,10 @@ sys.meta_path.insert(0, _DroidrunAliasFinder())
 # Only `from droidrun import DroidAgent` (or similar) triggers it.
 def __getattr__(name):
     """Forward any attribute access to mobilerun (loaded lazily)."""
+    if name in {"MobileConfig", "DroidConfig"}:
+        from mobilerun.agents.config.user_config import MobileConfig
+
+        return MobileConfig
     import mobilerun as _real
 
     return getattr(_real, name)

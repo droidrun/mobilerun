@@ -4,3 +4,6 @@
 !pyproject.toml
 !uv.lock
 !README.md
+
+!skills
+!skills/**

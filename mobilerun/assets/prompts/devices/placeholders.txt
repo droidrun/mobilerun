@@ -1,0 +1,1 @@
+For secrets and one-time codes, use the normal type action with the exact placeholder text below. Never request or repeat the resolved value. Placeholders are resolved only immediately before typing; recordings and replay retain the placeholder and fetch a fresh code. Add :sender before the closing braces of an SMS/email placeholder to filter its sender.
