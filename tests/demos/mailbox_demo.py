@@ -3,7 +3,7 @@
 The public mailbox API exposes code polling, not sending mail or message
 contents (sender, subject, and body). Send a message containing a code from
 another email account. A mailbox costs money. Run: python -m tests.demos.mailbox_demo.
-Authenticate with MOBILERUN_API_KEY or mobilerun auth login.
+Authenticate with MOBILERUN_API_KEY or mobilerun account login.
 """
 
 import argparse

@@ -10,6 +10,78 @@ from pathlib import Path
 import pytest
 
 
+def test_fake_agent_entry_point_is_discovered(monkeypatch):
+    import types
+    from importlib import metadata
+
+    import click
+    from click.testing import CliRunner
+
+    from mobilerun.addons import plugins
+    from mobilerun.cli.app import cli
+    from mobilerun.cli.base import menu
+
+    @click.group()
+    def agent():
+        pass
+
+    @agent.command()
+    @click.argument("task")
+    def run(task):
+        click.echo(f"run:{task}")
+
+    @agent.group()
+    def llm():
+        pass
+
+    @llm.command()
+    def configure():
+        click.echo("configured")
+
+    @llm.group()
+    def login():
+        pass
+
+    module = types.ModuleType("fake_agent_plugin")
+    module.agent = agent
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    entry = metadata.EntryPoint(
+        name="agent", value="fake_agent_plugin:agent", group="mobilerun.cli"
+    )
+    original = plugins.metadata.entry_points
+
+    def entries(*args, **kwargs):
+        found = list(original(*args, **kwargs))
+        if kwargs.get("group") == "mobilerun.cli":
+            return [item for item in found if item.name != "agent"] + [entry]
+        return found
+
+    monkeypatch.setattr(plugins.metadata, "entry_points", entries)
+    runner = CliRunner()
+    help_result = runner.invoke(cli, ["--help"])
+    assert help_result.exit_code == 0, help_result.output
+    assert "  agent " in help_result.output
+    assert 'mobilerun agent run "open settings"' in help_result.output
+
+    choices = []
+    monkeypatch.setattr(menu, "is_interactive", lambda: True)
+    monkeypatch.setattr(
+        menu,
+        "select_prompt",
+        lambda message, items: choices.extend(items) or "__back__",
+    )
+    result = runner.invoke(cli, [])
+    assert result.exit_code == 0, result.output
+    assert "agent" in [item.value for item in choices]
+    for args, expected in (
+        (["agent", "run", "task"], "run:task"),
+        (["agent", "llm", "configure"], "configured"),
+    ):
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        assert expected in result.output
+
+
 @pytest.mark.parametrize("mode", ["present", "blocked", "absent"])
 def test_interactive_menu_uses_available_agent_epilog(mode):
     if mode == "present" and find_spec("mobilerun.agents") is None:
@@ -18,9 +90,12 @@ def test_interactive_menu_uses_available_agent_epilog(mode):
 import importlib.abc, sys
 import mobilerun
 from click.testing import CliRunner
+from mobilerun.addons import plugins
 from mobilerun.cli.base import menu
 from mobilerun.cli.app import cli
 mode = sys.argv[1]
+if mode != "present":
+    plugins.discover = lambda group: {}
 if mode == "absent":
     mobilerun.__path__ = []
 elif mode == "blocked":
@@ -46,16 +121,6 @@ assert ('mobilerun agent run "open settings"' in result.output) == (mode == "pre
     assert result.returncode == 0, result.stderr
 
 
-def test_unrelated_missing_module_is_not_rewritten():
-    from mobilerun.addons.agents import require_agents
-
-    error = ModuleNotFoundError("missing dependency", name="unrelated_dependency")
-    with pytest.raises(ModuleNotFoundError) as caught:
-        with require_agents():
-            raise error
-    assert caught.value is error
-
-
 @pytest.mark.parametrize("absent", [True, False])
 def test_root_visibility_epilog_and_completion_follow_addon(absent):
     if not absent and find_spec("mobilerun.agents") is None:
@@ -71,6 +136,9 @@ if sys.argv[1] == "True":
     sys.meta_path.insert(0, BlockAgents())
 import click
 from click.testing import CliRunner
+from mobilerun.addons import plugins
+if sys.argv[1] == "True":
+    plugins.discover = lambda group: {}
 from mobilerun.cli.app import cli
 result = CliRunner().invoke(cli, ["--help"])
 assert result.exit_code == 0, result.output
@@ -96,13 +164,7 @@ assert "run" not in completions and "configure" not in completions
     "operation",
     [
         "cli:agent,--help",
-        "cli:run,--help",
-        "cli:configure,--help",
         "macro",
-        "import:mobilerun._legacy.config",
-        "import:mobilerun._legacy.config_manager",
-        "import:mobilerun.agent",
-        "export",
     ],
 )
 def test_missing_agents_is_actionable_in_a_fresh_process(operation):
@@ -117,6 +179,8 @@ class BlockAgents(importlib.abc.MetaPathFinder):
             raise ModuleNotFoundError("blocked", name=fullname)
 
 sys.meta_path.insert(0, BlockAgents())
+from mobilerun.addons import plugins
+plugins.discover = lambda group: {}
 operation = sys.argv[1]
 try:
     if operation.startswith("cli:"):
@@ -135,7 +199,8 @@ try:
         importlib.import_module(operation[7:])
 except ModuleNotFoundError as error:
     message = str(error)
-assert "pip install mobilerun-agents" in message, message
+assert "Install the mobilerun-agents add-on (see README: Agent add-on)." in message, message
+assert "pip install" not in message, message
 """
     result = subprocess.run(
         [sys.executable, "-c", script, operation],
@@ -146,7 +211,7 @@ assert "pip install mobilerun-agents" in message, message
     assert result.returncode == 0, result.stderr
 
 
-def test_agents_from_another_path_preserve_legacy_identity(tmp_path):
+def test_agents_from_another_path_are_discoverable(tmp_path):
     root = Path(__file__).resolve().parents[2]
     base = tmp_path / "base"
     addon = tmp_path / "addon"
@@ -164,10 +229,7 @@ def test_agents_from_another_path_preserve_legacy_identity(tmp_path):
         [
             sys.executable,
             "-c",
-            "import mobilerun.agents; "
-            "assert mobilerun.agents.MARKER == 42; "
-            "import mobilerun.tools, mobilerun._legacy.tools; "
-            "assert mobilerun.tools is mobilerun._legacy.tools",
+            "import mobilerun.agents; " "assert mobilerun.agents.MARKER == 42",
         ],
         cwd=tmp_path,
         env=env,

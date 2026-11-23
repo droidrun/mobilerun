@@ -3,7 +3,7 @@
 import inspect
 from typing import Any, Callable
 
-from mobilerun import __version__
+from mobilerun.version import __version__
 
 
 def portal_version_kwargs(

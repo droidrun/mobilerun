@@ -33,8 +33,8 @@ from mobilerun.clients.cloud.billing import (
 )
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.clients.cloud.errors import cloud_error
-from mobilerun.core.devices.components.identifiers import secret_scope
 from mobilerun.models.billing import Billing, Plan
+from mobilerun.utils.redaction import secret_scope
 
 DeviceCreateOptions = TypedDict(
     "DeviceCreateOptions",

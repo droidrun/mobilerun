@@ -122,7 +122,7 @@ def choose_device(
     if not devices:
         raise click.ClickException(
             "No devices found. Plug in a phone, run `mobilerun device setup`, "
-            "or `mobilerun auth login` for cloud devices."
+            "or `mobilerun account login` for cloud devices."
         )
     if len(devices) == 1:
         device = devices[0]
@@ -205,9 +205,7 @@ def device_options(
         path = kwargs.get("config_path", kwargs.get("config"))
         config = ConfigLoader.load(path)
         ctx.meta["device_config"] = config
-        explicit = (
-            target or kwargs.get("device_target") or kwargs.get("legacy_device_id")
-        )
+        explicit = target or kwargs.get("device_target")
         if target and kwargs.get("device_target") and target != kwargs["device_target"]:
             raise click.UsageError(
                 "DEVICE and --device refer to different devices; choose one."

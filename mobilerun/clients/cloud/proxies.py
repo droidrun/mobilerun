@@ -17,13 +17,13 @@ from mobilerun.clients.cloud.errors import cloud_error
 from mobilerun.clients.cloud.payments import (
     CheckoutCallback,
     PaymentAdapter,
-    PaymentSnapshot,
     wait_for_payment,
     wait_until_active,
 )
-from mobilerun.core.devices.components.identifiers import secret_scope
 from mobilerun.errors.cloud import CloudConflict
 from mobilerun.models.billing import Billing
+from mobilerun.models.checkout import PaymentSnapshot
+from mobilerun.utils.redaction import secret_scope
 
 BuyParams = TypedDict("BuyParams", {"name": str}, total=False)
 

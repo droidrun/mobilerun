@@ -3,20 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mobilerun.clients.cloud.proxies import ProxyConnectParams
 
 from mobilerun.errors import DeviceOperationNotSupported
-
-
-@dataclass(frozen=True)
-class ProxyStatus:
-    connected: bool
-    name: str | None = None
-    protocol: str | None = None
+from mobilerun.models.proxy import ProxyStatus
 
 
 class ProxyTarget:

@@ -65,7 +65,9 @@ uv add mobilerun
 uv tool install mobilerun
 ```
 
-For local AI agents, install the separate add-on with `pip install mobilerun-agents`. For Anthropic support, use `pip install "mobilerun-agents[anthropic]"`.
+Sandbox APIs require `pip install 'mobilerun[sandbox]'`.
+
+For local AI agents, install the separate add-on with `pip install mobilerun-agents`. Anthropic and DeepSeek support are included in the add-on; no provider extra is needed.
 
 ## 60-second quickstart
 
@@ -101,12 +103,12 @@ asyncio.run(main())
 - **Reasoning:** Use `--reasoning` for manager–executor planning.
 - **Tracing:** Inspect runs with Arize Phoenix, Langfuse, logs and saved trajectories.
 - **Structured output:** Return typed results from tasks.
-- **App cards and custom tools:** Supply app-specific guidance and extend agent actions.
+- **App cards and custom tools:** The `mobilerun-agents` add-on supports app-specific guidance and custom agent actions; app guidance is also available in the skills repository.
 - **Docker:** The repository's [Dockerfile](Dockerfile) builds a container whose entrypoint is the Mobilerun CLI.
 
 ### LLM providers
 
-The configuration wizard supports OpenAI, Anthropic, Gemini, xAI, Ollama, MiniMax, ZAI and OpenAI-compatible endpoints such as OpenRouter, LM Studio and vLLM. The CLI also lists DeepSeek. Provider credentials and usage charges depend on your selection. Anthropic requires the add-on's `anthropic` extra.
+The configuration wizard supports OpenAI, Anthropic, Gemini, xAI, Ollama, MiniMax, ZAI and OpenAI-compatible endpoints such as OpenRouter, LM Studio and vLLM. The CLI also lists DeepSeek. Provider credentials and usage charges depend on your selection. Anthropic and DeepSeek support are provided by the required `mobilerun-agents` add-on; no provider extra is needed.
 
 ## Easy examples
 
@@ -265,7 +267,7 @@ From a source checkout, run `python -m tests.demos.task_demo` for the complete c
 
 ## CLI overview
 
-Run `mobilerun --help` or `mobilerun COMMAND --help`. Command groups include `device`, `agent`, `macro`, `account`, `credentials`, `number`, `mailbox`, `proxy`, `workspace`, `skills`, `mcp`, and `doctor`. `mobilerun device connect <id>` saves a default device; `mobilerun device disconnect` clears it. See the [CLI guide](mobilerun/cli/README.md).
+Run `mobilerun --help` or `mobilerun COMMAND --help`. Command groups include `device`, `agent`, `macro`, `account`, `credentials`, `number`, `mailbox`, `proxy`, `workspace`, `skills`, `mcp`, and `doctor`. `mobilerun device connect <id>` saves a default device; `mobilerun device disconnect` clears it. Old command aliases are unavailable; use `mobilerun account login`, `mobilerun device list`, and `mobilerun agent run`. See the [CLI guide](mobilerun/cli/README.md).
 
 ## Skills for coding agents
 

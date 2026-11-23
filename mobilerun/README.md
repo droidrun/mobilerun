@@ -26,7 +26,7 @@ See the [demos](../tests/demos/README.md) for source-checkout examples and costs
 | [clients/](clients/README.md) | Shared service clients. |
 | [clients/cloud/](clients/cloud/README.md) | Cloud account access. |
 | [clients/portal/](clients/portal/README.md) | Portal client support. |
-| [clients/local/](clients/local/README.md) | Functional local adapters, APK inspection and code polling. |
+| [clients/local/](clients/local/README.md) | Functional local adapters and APK inspection. |
 | [config/](config/README.md) | Shared configuration. |
 | [core/credentials/](core/credentials/README.md) | Device-owned credential providers. |
 | [utils/](utils/README.md) | Shared helpers. |
@@ -39,6 +39,22 @@ See the [demos](../tests/demos/README.md) for source-checkout examples and costs
 | [sandbox/](sandbox/README.md) | Sandbox apps and tasks. |
 | [skills/](skills/README.md) | Bundled coding-agent skills. |
 | `mobilerun-agents` (separate package) | Optional LLM agents, integrations and agent commands (`pip install mobilerun-agents`). |
+
+## Where code goes
+
+Shared `errors/`, `models/`, `utils/`, `cli/`, `config/`, and `logs/` serve
+core and clients. Features (`macro/`, `mcp/`, `skills/`, `sandbox/`) keep their
+own `cli/`, `errors.py`, `models.py`, `settings.py`, and `utils.py` inside
+their folders, not in shared packages. Features may import shared code, core,
+and clients; core may import clients; clients never import core or the root
+package; shared code never imports features.
+
+| New code | Location |
+| --- | --- |
+| Device error | `errors/device.py` |
+| Macro error | `macro/errors.py` |
+| Proxy CLI command | `cli/proxy/` |
+| Skills CLI | `skills/cli/` |
 
 ## Dependency direction
 
@@ -78,10 +94,10 @@ shared base: models, core, clients, config, utils, errors, logs
     \             |              /
      +------> mobilerun-agents <-----+
 
-cli/app.py registers feature CLIs.
+Feature CLIs register through `mobilerun.cli` distribution entry points.
 ```
 
-Arrows show permitted use, not a requirement to import every package. Shared base packages do not import features. Features do not import each other or the optional agent add-on. Feature CLI code may import the shared `cli/base/`; `cli/app.py` is a boundary-test exception.
+Arrows show permitted use, not a requirement to import every package. Shared base packages do not import features. Features do not import each other or the optional agent add-on. Feature CLI code may import the shared `cli/base/`; the root CLI discovers features without importing them.
 
 ## Operators
 
@@ -137,3 +153,6 @@ to use local credentials.
 ## CLI device selection
 
 DEVICE is optional: run `mobilerun device connect <id>` to save a default, or choose from discovered devices. An explicit DEVICE takes precedence, followed by the saved `device.serial` and discovery. Run `mobilerun device disconnect` to clear the default. Python device APIs remain explicit.
+
+There is no legacy import compatibility layer. Install `mobilerun-agents` and
+import agent code from `mobilerun.agents` directly.

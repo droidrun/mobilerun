@@ -6,11 +6,11 @@ import sys
 from importlib.util import resolve_name
 from pathlib import Path
 
+from tests.feature_packages import FEATURES
+
 ROOT = Path(__file__).resolve().parents[2] / "mobilerun"
 EXCEPTIONS = {
-    "_legacy/aliases.py",  # Lazy deprecated root exports; runtime isolation is checked below.
-    "_legacy/config.py",  # Optional legacy typed-config facade.
-    "_legacy/config_manager/__init__.py",  # Optional legacy config facade.
+    "config/migrations/v008_bundled_assets.py",  # Discovers optional add-on assets without importing them.
     "cli/app.py",  # CLI root registers the agent command groups until agents becomes its own package (DRO-3973).
 }
 
@@ -62,6 +62,20 @@ def test_clients_and_utils_do_not_import_core():
         for path in (ROOT / folder).rglob("*.py"):
             for line, target in _references(path):
                 assert not target.startswith("mobilerun.core"), f"{path}:{line}"
+
+
+def test_clients_do_not_import_root_package():
+    for path in (ROOT / "clients").rglob("*.py"):
+        for line, target in _agent_import_references(path):
+            assert target != "mobilerun", f"{path}:{line}"
+
+
+def test_root_import_scanner_detects_both_import_forms(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("import mobilerun\nfrom mobilerun import __version__\n")
+    assert [target for _, target in _agent_import_references(path)].count(
+        "mobilerun"
+    ) == 2
 
 
 def test_utils_import_only_utils_from_mobilerun():
@@ -178,13 +192,6 @@ def test_base_does_not_import_agents():
         if relative.parts[0] == "agents" or str(relative) in EXCEPTIONS:
             continue
         for line, target in _agent_import_references(path):
-            if (
-                relative.as_posix() == "addons/agents.py"
-                and target == "mobilerun.agents"
-                and 'find_spec("mobilerun.agents")'
-                in path.read_text().splitlines()[line - 1]
-            ):
-                continue  # Discovery is intentional and does not import the add-on.
             if "mobilerun.agents" in target:
                 violations.append(f"{relative}:{line}")
     assert not violations, violations
@@ -192,12 +199,22 @@ def test_base_does_not_import_agents():
 
 def test_shared_packages_do_not_import_features():
     violations = []
-    for folder in ("core", "clients", "config", "utils", "errors", "logs"):
+    for folder in (
+        "core",
+        "clients",
+        "config",
+        "utils",
+        "errors",
+        "logs",
+        "models",
+        "cli",
+    ):
         for path in (ROOT / folder).rglob("*.py"):
-            for line, target in _references(path):
+            for line, target in _agent_import_references(path):
                 if any(
-                    "mobilerun." + feature in target
-                    for feature in ("macro", "sandbox", "skills", "agents")
+                    target == f"mobilerun.{name}"
+                    or target.startswith(f"mobilerun.{name}.")
+                    for name in FEATURES
                 ):
                     violations.append(f"{path.relative_to(ROOT)}:{line}: {target}")
     assert not violations, violations
@@ -205,8 +222,8 @@ def test_shared_packages_do_not_import_features():
 
 def test_independent_features_do_not_import_each_other_or_agents():
     violations = []
-    for feature in ("macro", "sandbox", "skills"):
-        forbidden = {"macro", "sandbox", "skills", "agents"} - {feature}
+    for feature in FEATURES:
+        forbidden = (set(FEATURES) | {"agents"}) - {feature}
         for path in (ROOT / feature).rglob("*.py"):
             for line, target in _references(path):
                 if any("mobilerun." + other in target for other in forbidden):
@@ -238,7 +255,7 @@ def test_macro_dependencies_are_shared_or_internal():
 
 
 def test_features_only_import_shared_cli_base():
-    for feature in ("macro", "agents", "skills", "sandbox"):
+    for feature in FEATURES:
         for path in (ROOT / feature).rglob("*.py"):
             for line, target in _references(path):
                 if target == "mobilerun.cli" or target.startswith("mobilerun.cli."):
@@ -282,29 +299,17 @@ def test_import_mobilerun_is_agent_free():
     )
 
 
-def test_compat_resolver_does_not_eagerly_import_agents():
-    """Only the explicit deprecated export seam may reference agent targets."""
-    tree = ast.parse((ROOT / "_legacy/aliases.py").read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            names = (
-                [alias.name for alias in node.names]
-                if isinstance(node, ast.Import)
-                else [node.module or ""]
-            )
-            assert all(not name.startswith("mobilerun.agents") for name in names)
-
-
 def test_root_cli_help_does_not_load_agents():
     script = """
 from click.testing import CliRunner
-from mobilerun.addons.agents import agents_available
+from mobilerun.addons.plugins import discover
+from mobilerun.addons.settings import CLI_ENTRY_POINT_GROUP
 from mobilerun.cli.app import cli
 import sys
 result = CliRunner().invoke(cli, ["--help"])
 assert result.exit_code == 0, result.output
 names = {"account", "device", "doctor", "macro", "skills"}
-if agents_available():
+if ("agent" in discover(CLI_ENTRY_POINT_GROUP)):
     names.add("agent")
 rows = [line.strip().split(maxsplit=1) for line in result.output.splitlines()
         if line.startswith("  ") and line.strip().split()[0] in names | {"agent"}]

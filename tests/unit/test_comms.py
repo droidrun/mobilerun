@@ -27,6 +27,15 @@ def run(coro):
     return asyncio.run(execute())
 
 
+def test_shared_code_poller_returns_code_for_sender():
+    from mobilerun.utils import codes
+
+    async def fetch(sender):
+        return "123456" if sender == "example" else None
+
+    assert run(codes.wait_for_code(fetch, sender="example")) == "123456"
+
+
 def page(items, has_next=False):
     return NS(items=items, pagination=NS(has_next=has_next))
 

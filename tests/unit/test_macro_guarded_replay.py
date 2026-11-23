@@ -232,7 +232,7 @@ def test_type_secret_replay_fails_without_typing_when_secret_missing():
         ],
     }
 
-    from mobilerun.errors import MacroError
+    from mobilerun.macro.errors import MacroError
 
     with pytest.raises(MacroError, match="Bind one vault"):
         asyncio.run(player.replay_macro(macro_data))
@@ -254,7 +254,7 @@ def test_type_secret_replay_does_not_load_environment_config(tmp_path, monkeypat
     monkeypatch.setenv("MOBILERUN_USER_CONFIG_DIR", str(tmp_path / "missing"))
     device = FakeDriver([_raw_state()])
     player = MacroPlayer(device)
-    from mobilerun.errors import MacroError
+    from mobilerun.macro.errors import MacroError
 
     with pytest.raises(MacroError, match="Bind one vault"):
         asyncio.run(

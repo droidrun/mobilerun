@@ -324,47 +324,6 @@ def test_language_timezone_getters_and_wrappers():
     asyncio.run(run())
 
 
-@pytest.mark.parametrize(
-    "name,path",
-    [
-        ("screenshot", ["screen", "screenshot"]),
-        ("ui", ["screen", "ui"]),
-        ("tap", ["input", "tap"]),
-        ("swipe", ["input", "swipe"]),
-        ("long-press", ["input", "long-press"]),
-        ("type", ["input", "type"]),
-        ("press", ["input", "press"]),
-        ("apps", ["app", "list"]),
-        ("start", ["app", "start"]),
-    ],
-)
-def test_legacy_aliases_hidden_and_hint_once(monkeypatch, name, path):
-    # Patching the leaf callback tests the alias wiring without opening a phone.
-    leaf = device.commands[path[0]].commands[path[1]]
-    received = []
-    monkeypatch.setattr(leaf, "callback", lambda **kwargs: received.append(kwargs))
-    # Alias wrappers refer to the original leaf command, not a copied callback.
-    alias = device.commands[name]
-    assert alias.hidden
-    assert not leaf.hidden
-    required = {
-        "tap": ["1", "2"],
-        "swipe": ["1", "2", "3", "4"],
-        "long-press": ["1", "2"],
-        "type": ["hello"],
-        "press": ["home"],
-        "start": ["org.example"],
-    }.get(name, [])
-    result = CliRunner().invoke(device, [name, *required, "--device-id", CLOUD_ID])
-    assert result.exit_code == 0, (result.output, result.exception)
-    assert result.stderr.splitlines() == [
-        f"Deprecated: device {name}; use device {' '.join(path)}."
-    ]
-    assert len(received) == 1
-    assert received[0]["device_target"] == CLOUD_ID
-    assert received[0]["cloud"] is True
-
-
 def test_cloud_picker_only_fetches_cloud_choices(monkeypatch):
     from mobilerun.cli.base import choices
     from mobilerun.cli.base.prompts import SelectChoice

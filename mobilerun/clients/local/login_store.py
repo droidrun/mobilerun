@@ -58,7 +58,7 @@ def load_credentials() -> Optional[dict]:
         return None
     except UnicodeError as exc:
         raise CredentialFormatError(
-            "Cloud credentials must be UTF-8 JSON; run `mobilerun auth login` again."
+            "Cloud credentials must be UTF-8 JSON; run `mobilerun account login` again."
         ) from exc
     except OSError as exc:
         raise CredentialReadError(
@@ -74,7 +74,7 @@ def load_credentials() -> Optional[dict]:
         return data
     except (ValueError, UnicodeError) as exc:
         raise CredentialFormatError(
-            "Invalid cloud credentials; run `mobilerun auth login` again."
+            "Invalid cloud credentials; run `mobilerun account login` again."
         ) from exc
 
 
@@ -103,7 +103,7 @@ def resolve_cloud_api_key() -> Optional[str]:
     """Resolve the Mobilerun cloud API key for ``--cloud`` commands.
 
     Order: the ``MOBILERUN_API_KEY`` env var, then the credential persisted by
-    ``mobilerun auth login`` (``<config dir>/credentials/mobilerun-cloud.json``).
+    ``mobilerun account login`` (``<config dir>/credentials/mobilerun-cloud.json``).
     """
     env_key = secret_value(get_secrets().MOBILERUN_API_KEY)
     if env_key:

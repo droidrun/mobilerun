@@ -10,3 +10,10 @@ class Checkout:
     expires_at: datetime | None
     resource: str
     resource_id: str
+
+
+@dataclass(frozen=True)
+class PaymentSnapshot:
+    status: str
+    url: str | None = None
+    expires_at: datetime | None = None

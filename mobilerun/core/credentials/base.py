@@ -6,8 +6,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
-from typing_extensions import TypedDict
-
 from mobilerun.core.extensions import Extension, action, device_action
 from mobilerun.errors import (
     CredentialFieldNotFound,
@@ -15,16 +13,10 @@ from mobilerun.errors import (
 )
 from mobilerun.errors.credentials import CredentialFormatError
 from mobilerun.models.context import ContextItem, JSONValue
-from mobilerun.models.credentials import Credential
+from mobilerun.models.credentials import Credential, CredentialMetadata
 
 if TYPE_CHECKING:
     from mobilerun.core.devices.base import Device
-
-
-class CredentialMetadata(TypedDict):
-    package: str | None
-    name: str
-    fields: list[str]
 
 
 class CredentialProvider(Extension, ABC):

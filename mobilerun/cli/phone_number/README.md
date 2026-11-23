@@ -19,8 +19,7 @@ Plans: `auto` uses included quota first; `included` never rents; `rent` requires
 `number status NUMBER` shows the number, lifecycle state and bound device.
 `number messages NUMBER` lists SMS history; `number countries` lists supported
 countries. `number send NUMBER TO TEXT --billing paid` requires confirmation and
-may incur charges. `number code NUMBER` waits for a verification code; `sms` is
-a hidden compatibility alias. Create, status, release, messages and countries
+may incur charges. `number code NUMBER` waits for a verification code. Create, status, release, messages and countries
 support `--json`.
 
 ## Files

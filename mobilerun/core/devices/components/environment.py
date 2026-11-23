@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mobilerun.clients.cloud import devices as cloud_devices
-from mobilerun.core.devices.location import Location
 from mobilerun.errors import DeviceOperationNotSupported
+from mobilerun.models.location import Location
 
 if TYPE_CHECKING:
     from mobilerun.core.devices.android import AndroidDevice

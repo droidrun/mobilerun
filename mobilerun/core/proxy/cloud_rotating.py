@@ -4,7 +4,8 @@ from typing import Self
 
 from mobilerun.config.settings import get_settings
 from mobilerun.core.proxy.base import CloudProxy
-from mobilerun.core.proxy.target import ProxyStatus, ProxyTarget
+from mobilerun.core.proxy.target import ProxyTarget
+from mobilerun.models.proxy import ProxyStatus
 
 
 class CloudRotatingProxy(CloudProxy):

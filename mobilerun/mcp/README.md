@@ -22,3 +22,5 @@ name when checking or removing an existing installation.
 | `settings.py` | Environment-backed MCP URL and server name. |
 | `utils.py` | Read and atomically write files, preserving JSONC comments and formatting. |
 | `cli/` | MCP commands. |
+
+Agent MCP format defaults and OAuth instructions live in `settings.py`. The shared `MOBILERUN_AGENTS` JSON registry can replace these using each agent’s `mcp_format` object; the replacement registry must supply a format for every MCP-enabled agent.

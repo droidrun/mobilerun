@@ -6,7 +6,7 @@ and reports the results. Keep these short — the agent works out the details.
 
 ## How to use
 Point an agent at this folder and ask for a **smoke** pass (quick, ~10–15 min) or a **full** pass
-(thorough, can take hours). The agent plans the tasks, picks models, runs them via `mobilerun run …`
+(thorough, can take hours). The agent plans the tasks, picks models, runs them via `mobilerun agent run …`
 (and `mobilerun device` / `mobilerun macro` / `mobilerun agent llm configure` as needed), and writes a
 comparison table with screenshots. Smoke = one cheap model + a few core checks; full = sweep the
 areas below.

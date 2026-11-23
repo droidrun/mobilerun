@@ -129,11 +129,11 @@ def test_device_action_success_output(monkeypatch, tmp_path):
     apk = tmp_path / "app.apk"
     apk.write_bytes(b"apk")
     cases = [
-        ("tap", ["tap", "1", "2"]),
-        ("swipe", ["swipe", "1", "2", "3", "4"]),
-        ("long_press", ["long-press", "1", "2"]),
-        ("type", ["type", "hello"]),
-        ("start", ["start", "app.id"]),
+        ("tap", ["input", "tap", "1", "2"]),
+        ("swipe", ["input", "swipe", "1", "2", "3", "4"]),
+        ("long_press", ["input", "long-press", "1", "2"]),
+        ("type", ["input", "type", "hello"]),
+        ("start", ["app", "start", "app.id"]),
         ("install", ["app", "install", str(apk)]),
         ("uninstall", ["app", "uninstall", "app.id", "--yes"]),
     ]

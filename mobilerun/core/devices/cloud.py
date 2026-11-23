@@ -18,7 +18,6 @@ from mobilerun.core.devices.components import files as device_files
 from mobilerun.core.devices.components.cloud_apps import _CloudApps
 from mobilerun.core.devices.components.cloud_lifecycle import _create_params
 from mobilerun.core.devices.components.raw import _BackendIO
-from mobilerun.core.devices.location import Location
 from mobilerun.core.operator.cloud import CloudTaskOperator
 from mobilerun.core.proxy import CloudRotatingProxy, ProxyStatus
 from mobilerun.core.proxy.base import CloudProxy
@@ -33,6 +32,7 @@ from mobilerun.errors import CloudAuthRequired, ExtensionConflict, ProxyNotActiv
 from mobilerun.errors.cloud import CloudAPIError
 from mobilerun.models.billing import Billing, Plan
 from mobilerun.models.files import DeviceFile
+from mobilerun.models.location import Location
 
 _UNSET = object()
 _DEFAULT_PROXY = cast(CloudProxy, _UNSET)

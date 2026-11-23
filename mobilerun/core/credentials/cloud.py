@@ -11,12 +11,12 @@ from mobilerun.clients.cloud import secrets
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.config.settings import get_settings
 from mobilerun.core.credentials.dict import DictCredentials
-from mobilerun.core.devices.components.identifiers import _redact_secrets, _secret_input
 from mobilerun.core.extensions import action
 from mobilerun.errors.cloud import CloudConflict, CloudResourceNotFound
 from mobilerun.models.billing import Billing
 from mobilerun.models.cloud_task import CloudCredentialReference, CloudTaskInputs
 from mobilerun.models.credentials import Credential
+from mobilerun.utils.redaction import _redact_secrets, secret_scope
 
 FIELD_ORDER = get_args(secrets.FieldType)
 FIELD_TYPES = frozenset(FIELD_ORDER)
@@ -27,7 +27,7 @@ async def _write_secret_values(
 ) -> None:
     with ExitStack() as stack:
         for value in values:
-            stack.enter_context(_secret_input(value))
+            stack.enter_context(secret_scope(value))
         try:
             await operation
             return

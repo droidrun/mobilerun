@@ -5,7 +5,6 @@ import traceback
 
 import click
 
-from mobilerun.addons.agents import is_missing_agents
 from mobilerun.cli.base import render
 from mobilerun.errors.base import MobilerunError
 from mobilerun.errors.cloud import CloudAuthRequired
@@ -24,11 +23,6 @@ def render_error(error: BaseException, debug: bool = False) -> None:
     ):
         click.echo(
             "Error: Not logged in. Run `mobilerun account login` or set MOBILERUN_API_KEY.",
-            err=True,
-        )
-    elif is_missing_agents(error):
-        click.echo(
-            "Error: Agent commands need the mobilerun-agents add-on: pip install mobilerun-agents",
             err=True,
         )
     elif (

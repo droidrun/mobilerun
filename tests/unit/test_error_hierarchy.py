@@ -34,11 +34,6 @@ from mobilerun.errors.base import MobilerunError
         ("mobilerun.config.loader", "OutdatedConfigError"),
         ("mobilerun.agents.clients.oauth.profiles", "AuthProfileFormatError"),
         ("mobilerun.agents.clients.oauth.grok", "GrokOAuthError"),
-        ("mobilerun.agents.agent.manager.prompts", "ManagerResponseValidationError"),
-        (
-            "mobilerun.agents.agent.utils.oauth.anthropic_oauth_llm",
-            "AnthropicOAuthStreamError",
-        ),
     ],
 )
 def test_errors_share_root(module, name):

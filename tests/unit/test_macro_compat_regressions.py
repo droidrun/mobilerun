@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from mobilerun.cli.devices.base import selection
 from mobilerun.cli.devices.base.options import device_options
-from mobilerun.errors.base import MacroError
+from mobilerun.macro.errors import MacroError
 from mobilerun.macro.models import normalize_ui_state
 from mobilerun.macro.player import MacroPlayer
 from mobilerun.macro.recorder import MacroRecorder

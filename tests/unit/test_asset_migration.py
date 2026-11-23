@@ -57,10 +57,16 @@ def test_v8_migrates_only_bundled_paths_and_is_idempotent(
         (addon / "assets/prompts/fast_agent").mkdir(parents=True)
         (addon / "assets/prompts/fast_agent/system.jinja2").write_text("prompt")
         (addon / "assets/app_cards").mkdir(parents=True)
+    from types import SimpleNamespace
+
     monkeypatch.setattr(
         v008_bundled_assets,
-        "agents_locations",
-        lambda: (str(addon),) if addon_present else (),
+        "find_spec",
+        lambda name: (
+            SimpleNamespace(submodule_search_locations=[str(addon)])
+            if addon_present
+            else None
+        ),
     )
     config = {
         "_version": 7,

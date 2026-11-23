@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from jinja2 import Environment
 
-from mobilerun.config.prompts import PromptLoader
+from mobilerun.utils.prompts import PromptLoader
 
 AGENTS_SPEC = find_spec("mobilerun.agents")
 PROMPTS_DIR = (

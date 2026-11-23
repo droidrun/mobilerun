@@ -283,7 +283,7 @@ async def check_portal_version(
                     "Portal Version",
                     Status.WARN,
                     msg,
-                    detail="pip install --upgrade mobilerun, then mobilerun setup",
+                    detail="pip install --upgrade mobilerun, then mobilerun device setup",
                 ),
                 installed,
                 expected,

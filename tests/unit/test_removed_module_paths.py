@@ -1,21 +1,12 @@
-"""The old module paths are intentionally unsupported."""
+"""Previously removed module paths remain unavailable."""
 
 import importlib.util
 
 import pytest
 
 
-@pytest.mark.parametrize(
-    "suffix",
-    [
-        "agent",
-        "telemetry",
-        "config_manager",
-        "credential_manager",
-        "tools",
-    ],
-)
-def test_old_module_path_is_absent(suffix):
+@pytest.mark.parametrize("suffix", ["telemetry", "credential_manager"])
+def test_unadvertised_module_path_is_absent(suffix):
     assert importlib.util.find_spec("mobilerun." + suffix) is None
 
 

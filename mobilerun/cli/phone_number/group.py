@@ -1,6 +1,5 @@
 """Explicit communications commands; only these commands display codes."""
 
-import copy
 import json
 import sys
 from contextlib import redirect_stdout
@@ -392,9 +391,3 @@ async def number_sms(
             f"Timed out waiting for SMS on {address} after {timeout:g}s (sender: {sender or 'any'}). Retry with a longer --timeout."
         ) from exc
     click.echo(code)
-
-
-_sms = copy.copy(number_sms)
-_sms.name = "sms"
-_sms.hidden = True
-number.add_command(_sms)

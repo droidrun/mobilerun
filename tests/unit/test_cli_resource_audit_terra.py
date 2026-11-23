@@ -45,7 +45,7 @@ def test_proxy_release_confirmation_and_json(monkeypatch):
     cancel.assert_awaited_once()
 
 
-def test_code_timeout_validation_and_alias():
+def test_code_timeout_validation():
     runner = CliRunner()
     for command, args in (
         (number.number, ["code", "n1"]),
@@ -55,7 +55,6 @@ def test_code_timeout_validation_and_alias():
         assert result.exit_code == 2, result.output
     text = runner.invoke(number.number, ["--help"]).output
     assert "code " in text and "sms " not in text
-    assert runner.invoke(number.number, ["sms", "--help"]).exit_code == 0
 
 
 def test_status_commands_show_resource(monkeypatch):

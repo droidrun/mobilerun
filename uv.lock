@@ -636,7 +636,6 @@ dependencies = [
     { name = "inquirerpy" },
     { name = "jinja2" },
     { name = "mobilerun-core-local", extra = ["cloud"] },
-    { name = "mobilerun-routines", extra = ["device"] },
     { name = "mobilerun-sdk" },
     { name = "pillow" },
     { name = "platformdirs" },
@@ -661,6 +660,9 @@ dev = [
     { name = "ruff" },
     { name = "safety" },
 ]
+sandbox = [
+    { name = "mobilerun-routines", extra = ["device"] },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -684,7 +686,7 @@ requires-dist = [
     { name = "inquirerpy", specifier = ">=0.3.4" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.6.3" },
-    { name = "mobilerun-routines", extras = ["device"], git = "https://github.com/droidrun/mobilerun-routines.git?rev=b4444f83fa9c52e680bf09b17635251c818c2ad8" },
+    { name = "mobilerun-routines", extras = ["device"], marker = "extra == 'sandbox'", git = "https://github.com/droidrun/mobilerun-routines.git?rev=b4444f83fa9c52e680bf09b17635251c818c2ad8" },
     { name = "mobilerun-sdk", specifier = ">=6.2.1,<7" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pillow", specifier = ">=13.0.0" },
@@ -702,7 +704,7 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4" },
     { name = "urllib3", specifier = ">=2.8.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["sandbox", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

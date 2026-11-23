@@ -15,10 +15,10 @@ from mobilerun.core.devices.android import AndroidDevice
 from mobilerun.core.devices.base import Device
 from mobilerun.core.devices.cloud import CloudDevice
 from mobilerun.core.devices.components.wrapper import DeviceWrapper
-from mobilerun.core.devices.location import Location as DeviceLocation
 from mobilerun.core.devices.pool import DevicePool
 from mobilerun.errors import DeviceOperationNotSupported
 from mobilerun.models.billing import Billing
+from mobilerun.models.location import Location as DeviceLocation
 
 
 def test_cloud_location_helper_and_device():

@@ -1,7 +1,8 @@
 """Select an existing purchased Mobilerun Connect proxy."""
 
 from mobilerun.core.proxy.base import CloudProxy
-from mobilerun.core.proxy.target import ProxyStatus, ProxyTarget
+from mobilerun.core.proxy.target import ProxyTarget
+from mobilerun.models.proxy import ProxyStatus
 
 
 class CloudFixedProxy(CloudProxy):

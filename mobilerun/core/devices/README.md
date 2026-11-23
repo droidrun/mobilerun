@@ -53,7 +53,7 @@ explicit provider instance is reused as supplied.
 ```python
 from mobilerun import AndroidDevice
 # Install the optional add-on first: pip install mobilerun-agents
-from mobilerun.agents.operator import AgentOperator
+from mobilerun.agents import AgentOperator
 
 device = AndroidDevice("emulator-5554", operator=AgentOperator())
 await device.connect()
@@ -147,6 +147,10 @@ scan; other files default to `/sdcard/Download`. Cloud uploads do not expose
 media scanning. Local iOS and remote devices may not support files.
 
 ## Environment, credentials, and proxies
+
+| Value | Definition |
+| --- | --- |
+| `Location` | `mobilerun.models.location` — device latitude and longitude. |
 
 Location, timezone, URL, language, and clipboard operations are declared on
 `Device` and delegated by wrappers and pools. Cloud implements these through its

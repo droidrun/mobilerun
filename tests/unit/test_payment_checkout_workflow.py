@@ -10,6 +10,7 @@ from mobilerun.clients.cloud import mailboxes
 from mobilerun.clients.cloud.client import AsyncMobilerun
 from mobilerun.errors import PaymentRequired
 from mobilerun.models.billing import Billing
+from mobilerun.models.checkout import PaymentSnapshot
 
 
 def test_delayed_checkout_is_reported_without_cancel(monkeypatch):
@@ -106,7 +107,6 @@ def test_interactive_checkout_waits_until_active(monkeypatch, capsys):
 def test_left_payment_without_url_is_error(monkeypatch):
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
-        PaymentSnapshot,
         wait_for_payment,
     )
     from mobilerun.errors import CloudError
@@ -128,7 +128,6 @@ def test_left_payment_without_url_is_error(monkeypatch):
 def test_checkout_budget_and_interactive_timeout_cancel(monkeypatch):
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
-        PaymentSnapshot,
         wait_for_payment,
     )
 
@@ -161,7 +160,6 @@ def test_checkout_budget_and_interactive_timeout_cancel(monkeypatch):
 def test_interactive_cancellation_cancels_pending(monkeypatch):
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
-        PaymentSnapshot,
         wait_for_payment,
     )
 
@@ -365,7 +363,6 @@ def test_core_payment_error_resumes_to_resource(monkeypatch, kind):
 def test_resumed_timeout_does_not_cancel():
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
-        PaymentSnapshot,
         wait_until_active,
     )
     from mobilerun.models import Checkout
@@ -392,7 +389,6 @@ def test_resumed_timeout_does_not_cancel():
 def test_slow_async_callback_is_timed_out_and_cancelled():
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
-        PaymentSnapshot,
         wait_for_payment,
     )
 
@@ -420,7 +416,6 @@ def test_checkout_modes_print_and_wait(mode, monkeypatch, capsys):
     from mobilerun.clients.cloud.checkout import checkout_callback
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
-        PaymentSnapshot,
         wait_for_payment,
     )
 

@@ -239,11 +239,12 @@ def test_root_help_contains_examples() -> None:
 
     result = CliRunner().invoke(cli, ["--help"])
     assert result.exit_code == 0
-    from mobilerun.addons.agents import agents_available
+    from mobilerun.addons.plugins import discover
+    from mobilerun.addons.settings import CLI_ENTRY_POINT_GROUP
 
     for example in ("mobilerun device list", "mobilerun skills install"):
         assert example in result.output
-    if agents_available():
+    if "agent" in discover(CLI_ENTRY_POINT_GROUP):
         assert "mobilerun agent run" in result.output
     else:
         assert "mobilerun agent run" not in result.output

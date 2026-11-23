@@ -4,6 +4,12 @@ Mobilerun is a Python framework for controlling local and cloud mobile devices.
 It provides a CLI, deterministic macros and coding-agent skills. LLM agent
 execution is provided by the separate `mobilerun-agents` add-on.
 
+## Agent skills
+
+For the framework design and usage guide, see
+[`skills/mobilerun-framework/SKILL.md`](skills/mobilerun-framework/SKILL.md).
+Agent skills live in the `skills/` submodule (`droidrun/skills`).
+
 ## Repository map
 
 See [mobilerun/README.md](mobilerun/README.md) for the detailed package map,
@@ -18,13 +24,28 @@ examples, and dependency diagram.
 - `mobilerun-agents` (separate package): agent execution, integrations and agent commands.
 - `tests/unit/`: unit tests and opt-in real-world smoke tests.
 - `skills/`: git submodule; `hatch_build.py` bundles its files in the wheel.
-- `compat/droidrun/` and `mobilerun/_legacy/aliases.py`: legacy import compatibility.
 
 Shared core must not import agents or feature packages. The intended boundaries
 are checked in `tests/unit/test_import_boundaries.py`. The agent-required
 dependency test (`tests/unit/test_agent_required_dependencies.py`) lives in the
-separate `mobilerun-agents` repository. The CLI entry point and legacy
-compatibility modules have special roles; see the boundary tests for exceptions.
+separate `mobilerun-agents` repository. The CLI entry point has a special role; see the boundary tests for exceptions.
+The sole `mobilerun.agents` base-code exception is the v008 migration's read-only asset lookup for old configs; it does not import the add-on.
+
+## Where code goes
+
+Shared `errors/`, `models/`, `utils/`, `cli/`, `config/`, and `logs/` serve
+core and clients. Features (`macro/`, `mcp/`, `skills/`, `sandbox/`) keep their
+own CLI, errors, models, settings, and utilities inside their folders. Features
+may import shared code, core, and clients; core may import clients; clients
+never import core or the root package; shared code never imports features.
+Register feature CLI groups via `mobilerun.cli` entry points in `pyproject.toml`.
+
+| New code | Location |
+| --- | --- |
+| Device error | `errors/device.py` |
+| Macro error | `macro/errors.py` |
+| Proxy CLI command | `cli/proxy/` |
+| Skills CLI | `skills/cli/` |
 
 ## Setup
 
@@ -34,11 +55,11 @@ Use Python 3.11–3.13. From the repository root:
 git submodule update --init
 python -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e '.[sandbox,dev]'
 ```
 
 The equivalent uv-based setup is `uv venv` followed by
-`uv pip install -e '.[dev]'`. Activate the environment before using the commands
+`uv pip install -e '.[sandbox,dev]'`. Activate the environment before using the commands
 below, or invoke tools directly from `.venv/bin/`.
 
 ## Tests and checks
@@ -103,7 +124,7 @@ security checks (`bandit -r mobilerun`, `safety scan`) and external docs updates
   use vault references from `CloudCredentials`, not local credential values.
 - CLI commands should prompt for missing values when interactive, confirm paid
   or destructive actions, and support `--yes` and non-interactive operation.
-- Preserve old `droidrun` and legacy import paths through the compatibility layer.
+- No compatibility layer: use the current public API and CLI command paths; agent code comes from the `mobilerun-agents` add-on.
 
 ## Documentation
 

@@ -20,13 +20,10 @@ from typing import (
 
 from pydantic import BaseModel
 
-from mobilerun.config.prompts import PromptLoader, load_prompt_text
-from mobilerun.core.devices.components.identifiers import _redact_secrets, _secret_input
 from mobilerun.core.devices.components.input_lock import (
     InputOperationLock,
     serialize_inputs,
 )
-from mobilerun.core.devices.location import Location
 from mobilerun.core.extensions import Action, ActionSet, Extension
 from mobilerun.core.extensions.actions import Declaration
 from mobilerun.core.extensions.registry import Registry
@@ -44,11 +41,14 @@ from mobilerun.errors import (
 from mobilerun.models.apps import App
 from mobilerun.models.context import ContextItem
 from mobilerun.models.files import DeviceFile
+from mobilerun.models.location import Location
 from mobilerun.models.results import (
     ExecutionResult,
     ExpectationResult,
     ExpectationVerdict,
 )
+from mobilerun.utils.prompts import PromptLoader, load_prompt_text
+from mobilerun.utils.redaction import _redact_secrets, secret_scope
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -387,7 +387,7 @@ class Device:
         )
 
     async def _input_secret(self, value: str) -> bool:
-        with _secret_input(value):
+        with secret_scope(value):
             try:
                 phone_state = (await self.state.refresh()).phone_state
                 if (

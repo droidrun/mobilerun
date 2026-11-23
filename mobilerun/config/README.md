@@ -11,7 +11,6 @@ Runtime settings, user configuration loading, migrations, and secrets access.
 | `__init__.py` | Package marker |
 | `env.py` | Environment-backed secrets access |
 | `loader.py` | User config loading and migration |
-| `paths.py`, `prompts.py` | Package asset resolution and prompt loading |
 | [migrations/](migrations/README.md) | Versioned configuration migrations |
 | `settings.py` | Runtime settings |
 | `user_config.py` | Shared user configuration models |
@@ -53,7 +52,7 @@ case-sensitive environment names.
 | UI state | `MOBILERUN_STATE_RETRY_DELAYS`, `MOBILERUN_STATE_MAX_RETRIES`, `MOBILERUN_STATE_RECOVERY_AFTER_ATTEMPT`, `MOBILERUN_STATE_MAX_TIMEOUT_ATTEMPTS`, `MOBILERUN_STATE_SLOW_FETCH_NOTICE_S` |
 | Screenshots | `MOBILERUN_MODEL_SCREENSHOT_MAX_SIDE` |
 
-`MOBILERUN_AGENTS` overrides the agent registry as a JSON object. Each agent has `skills` and `mcp` user/project path pairs and an `mcp_format` describing its server key, transport, API-key reference, and optional `oauth_sign_in` hint. Hints can use `{server_name}`. Set an unsupported integration to `null`. MCP-specific environment settings are documented in [mcp/](../mcp/README.md).
+`MOBILERUN_AGENTS` overrides the agent registry as a JSON object. Each agent has `skills` and `mcp` user/project path pairs and can supply an `mcp_format` override. Hints can use `{server_name}`. Set an unsupported integration to `null`. MCP-specific environment settings are documented in [mcp/](../mcp/README.md).
 
 Additional non-prefixed settings: `ANDROID_HOME` and `ANDROID_SDK_ROOT` select
 Android SDK installations. `MOBILERUN_SMOKE_APK` selects the demo APK.

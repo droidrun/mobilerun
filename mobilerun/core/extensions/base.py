@@ -368,8 +368,8 @@ class Extension:
                 )
             return device
 
-        from mobilerun.core.devices.components.identifiers import _secret_input
         from mobilerun.core.extensions.actions import _sensitive_values
+        from mobilerun.utils.redaction import secret_scope
 
         async with nullcontext() if nested else self._action_lock:
             device = device_for_call()
@@ -387,7 +387,7 @@ class Extension:
                 with ExitStack() as secrets:
                     for key in entry.sensitive_parameters:
                         for value in _sensitive_values(validated[key]):
-                            secrets.enter_context(_secret_input(value))
+                            secrets.enter_context(secret_scope(value))
                     result = entry.validate_result(
                         await fn(self, device, **validated)
                         if entry.requires_device

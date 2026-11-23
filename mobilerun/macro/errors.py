@@ -2,7 +2,11 @@
 
 from typing import Any
 
-from mobilerun.errors.base import MacroError
+from mobilerun.errors.base import MobilerunError
+
+
+class MacroError(MobilerunError):
+    """Base error for macro operations."""
 
 
 class MacroMismatch(MacroError, RuntimeError):

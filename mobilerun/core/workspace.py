@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from mobilerun.clients.cloud import apps as cloud_apps
-from mobilerun.clients.cloud import files as cloud_files
-from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.models import App, Billing, DeviceFile, WorkspaceFile
 
 if TYPE_CHECKING:
     from mobilerun.core.devices.base import Device
+
+
+def __getattr__(name: str) -> Any:
+    if name == "cloud_client":
+        return import_module("mobilerun.clients.cloud.client").cloud_client
+    if name in ("cloud_apps", "cloud_files"):
+        return import_module(f"mobilerun.clients.cloud.{name[6:]}")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class Workspace:
@@ -31,6 +37,8 @@ class Workspace:
         base_url: str | None = None,
         billing: Billing = Billing.NO_COMMERCE,
     ) -> WorkspaceFile:
+        from mobilerun.core.workspace import cloud_client, cloud_files
+
         async with cloud_client(api_key, base_url, billing=billing) as client:
             return await cloud_files.upload_file(client, path, billing=billing)
 
@@ -42,6 +50,8 @@ class Workspace:
         base_url: str | None = None,
         billing: Billing = Billing.NO_COMMERCE,
     ) -> list[WorkspaceFile]:
+        from mobilerun.core.workspace import cloud_client, cloud_files
+
         async with cloud_client(api_key, base_url, billing=billing) as client:
             return await cloud_files.list_files(client, billing=billing)
 
@@ -55,6 +65,8 @@ class Workspace:
         base_url: str | None = None,
         billing: Billing = Billing.NO_COMMERCE,
     ) -> Path:
+        from mobilerun.core.workspace import cloud_client, cloud_files
+
         async with cloud_client(api_key, base_url, billing=billing) as client:
             items = await cloud_files.list_files(client, billing=billing)
             item = next((item for item in items if item.id == file_id), None)
@@ -77,6 +89,8 @@ class Workspace:
         base_url: str | None = None,
         billing: Billing = Billing.NO_COMMERCE,
     ) -> None:
+        from mobilerun.core.workspace import cloud_client, cloud_files
+
         async with cloud_client(api_key, base_url, billing=billing) as client:
             await cloud_files.delete_file(client, file_id, billing=billing)
 
@@ -91,6 +105,8 @@ class Workspace:
         base_url: str | None = None,
         billing: Billing = Billing.NO_COMMERCE,
     ) -> DeviceFile:
+        from mobilerun.core.workspace import cloud_client, cloud_files
+
         async with cloud_client(api_key, base_url, billing=billing) as client:
             data = await cloud_files.download_file(client, file.id, billing=billing)
         with TemporaryDirectory() as directory:
@@ -107,6 +123,8 @@ class Workspace:
         base_url: str | None = None,
         billing: Billing = Billing.NO_COMMERCE,
     ) -> App:
+        from mobilerun.core.workspace import cloud_apps
+
         return await cloud_apps.upload_app(
             path, api_key=api_key, base_url=base_url, billing=billing
         )
@@ -119,6 +137,8 @@ class Workspace:
         base_url: str | None = None,
         billing: Billing = Billing.NO_COMMERCE,
     ) -> list[App]:
+        from mobilerun.core.workspace import cloud_apps, cloud_client
+
         async with cloud_client(api_key, base_url, billing=billing) as client:
             return await cloud_apps.list_apps(client, billing=billing)
 
@@ -131,6 +151,8 @@ class Workspace:
         base_url: str | None = None,
         billing: Billing = Billing.NO_COMMERCE,
     ) -> App:
+        from mobilerun.core.workspace import cloud_apps, cloud_client
+
         async with cloud_client(api_key, base_url, billing=billing) as client:
             result = await cloud_apps.get_app(client, app_id, billing=billing)
             return App(result.data.bundle_id, "", result.data.display_name, id=app_id)
@@ -145,5 +167,7 @@ class Workspace:
         billing: Billing = Billing.NO_COMMERCE,
     ) -> None:
         """Delete an uploaded app and its files/metadata, not a phone install."""
+        from mobilerun.core.workspace import cloud_apps, cloud_client
+
         async with cloud_client(api_key, base_url, billing=billing) as client:
             await cloud_apps.delete_app(client, app_id, billing=billing)

@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING
 
 from mobilerun.core.extensions import Extension
 from mobilerun.core.proxy.base import Proxy
-from mobilerun.core.proxy.target import ProxyStatus, ProxyTarget
+from mobilerun.core.proxy.target import ProxyTarget
 from mobilerun.errors import DeviceOperationNotSupported, ExtensionNotSupported
+from mobilerun.models.proxy import ProxyStatus
 
 if TYPE_CHECKING:
     from mobilerun.core.devices.base import Device

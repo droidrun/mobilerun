@@ -1,5 +1,7 @@
 # utils/
 
+Core's utilities. Feature packages keep their own utilities inside their folder.
+
 Standalone helpers for coordinates, images, verification codes and timestamps.
 
 **What belongs here / what doesn't:** Helpers must not depend on Mobilerun domain packages, settings, devices or CLI behavior.
@@ -10,8 +12,9 @@ Standalone helpers for coordinates, images, verification codes and timestamps.
 | --- | --- |
 | `__init__.py` | Package marker |
 | `coordinates.py`, `geometry.py`, `images.py` | Coordinates, bounds and image helpers |
-| `codes.py` | Verification code extraction |
+| `codes.py` | Verification code extraction and polling |
 | `timestamps.py` | API timestamp formatting |
+| `paths.py`, `prompts.py` | Package asset resolution and prompt loading |
 
 Device-facing helpers live in `clients/local/`.
 
@@ -24,6 +27,6 @@ x, y = to_absolute(500, 500, 1080, 1920)
 print(x, y)  # 540 960
 ```
 
-Package paths and prompt loading live in [config](../config/README.md); cloud helpers live in [clients/cloud](../clients/cloud/README.md).
+Cloud helpers live in [clients/cloud](../clients/cloud/README.md).
 
 **Depends on / used by:** Uses standard and third-party libraries; used across the framework.

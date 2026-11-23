@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from mobilerun.core.extensions.registry import Binding
 from mobilerun.core.proxy.cloud_fixed import CloudFixedProxy
 from mobilerun.core.proxy.existing import ExistingCloudProxy
-from mobilerun.core.proxy.target import ProxyStatus
+from mobilerun.models.proxy import ProxyStatus
 
 if TYPE_CHECKING:
     from mobilerun.core.devices.base import Device

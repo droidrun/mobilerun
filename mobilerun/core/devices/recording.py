@@ -1,37 +1,16 @@
 """Record framework actions without recording expanded credential values."""
 
 from collections.abc import Sequence
-from typing import Any, NotRequired, Protocol, TypedDict, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from mobilerun.core.devices.base import Device
 from mobilerun.core.devices.components.wrapper import DeviceWrapper
 from mobilerun.core.operator import Operator
 from mobilerun.core.state.base import StateProvider
 from mobilerun.core.state.options import StateProviderFactory, StateProviderOptions
+from mobilerun.models.recording import RecordedAction
 
 D = TypeVar("D", bound=Device)
-
-
-class RecordedAction(TypedDict):
-    action_type: str
-    x: NotRequired[int]
-    y: NotRequired[int]
-    start_x: NotRequired[int]
-    start_y: NotRequired[int]
-    end_x: NotRequired[int]
-    end_y: NotRequired[int]
-    duration_ms: NotRequired[float]
-    text: NotRequired[str]
-    clear: NotRequired[bool]
-    button: NotRequired[str]
-    package: NotRequired[str | None]
-    activity: NotRequired[str | None]
-    duration: NotRequired[float]
-    field: NotRequired[str]
-    name: NotRequired[str | None]
-    arguments: NotRequired[dict[str, Any]]
-    url: NotRequired[str]
-    key_code: NotRequired[int]
 
 
 class ActionRecording(Protocol):

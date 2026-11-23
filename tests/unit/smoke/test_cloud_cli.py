@@ -12,7 +12,7 @@ pytestmark = pytest.mark.smoke_cloud
 
 @pytest.mark.parametrize(
     "args",
-    [["device", "list", "--cloud"], ["auth", "status"]],
+    [["device", "list", "--cloud"], ["account", "status"]],
 )
 def test_cloud_cli(cloud_ready, args):
     result = subprocess.run(

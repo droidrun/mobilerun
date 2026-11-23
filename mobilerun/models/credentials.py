@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from typing_extensions import TypedDict
+
 
 @dataclass
 class Credential:
@@ -25,3 +27,9 @@ class CredentialLookup(Protocol):
         field: str = "password",
         name: str | None = None,
     ) -> Credential | None: ...
+
+
+class CredentialMetadata(TypedDict):
+    package: str | None
+    name: str
+    fields: list[str]

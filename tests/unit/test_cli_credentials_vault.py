@@ -12,12 +12,13 @@ def test_root_menu_matches_help_without_loading_agent():
 import sys
 import click
 from mobilerun.cli.app import cli
-from mobilerun.addons.agents import agents_available
+from mobilerun.addons.plugins import discover
+from mobilerun.addons.settings import CLI_ENTRY_POINT_GROUP
 ctx = click.Context(cli)
 names = [choice.value for choice in cli.menu_choices(ctx)]
 assert names == cli.list_commands(ctx)
 assert {"account", "credentials"} <= set(names)
-assert ("agent" in names) == agents_available()
+assert ("agent" in names) == ("agent" in discover(CLI_ENTRY_POINT_GROUP))
 assert not any(x.startswith("mobilerun.agents") for x in sys.modules)
 """
     result = subprocess.run(

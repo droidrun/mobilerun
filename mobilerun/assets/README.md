@@ -13,7 +13,7 @@ Bundled prompt templates and state guidance used by the framework.
 ## Quick example
 
 ```python
-from mobilerun.config.prompts import load_prompt_text
+from mobilerun.utils.prompts import load_prompt_text
 
 guidance = load_prompt_text("state/screenshot_only_guidance.md")
 ```

@@ -1,4 +1,4 @@
-from mobilerun.config.prompts import load_prompt_text
+from mobilerun.utils.prompts import load_prompt_text
 
 
 def test_load_prompt_text_reads_bundled_file_and_matches_previous_guidance():

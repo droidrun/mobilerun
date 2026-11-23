@@ -2,7 +2,6 @@
 
 import uuid
 
-import click
 from async_adbutils import adb
 from mobilerun_core_local.driver.android.portal import ensure_portal_ready
 
@@ -52,6 +51,7 @@ async def connect_target(
         raise ValueError("--tcp/--no-tcp may only be used with Android.")
     if base_url is not None and kind != "cloud":
         raise ValueError("--base-url may only be used with cloud.")
+    device: Device
     if kind == "android":
         if is_portal_http_url(target):
             token = (config or ConfigLoader.load(None)).device.resolve_auth_token()
@@ -86,26 +86,10 @@ async def connect_target(
 
         device = CloudDevice(device_id=target, base_url=base_url)
     else:
-        ctx = click.get_current_context(silent=True)
-        legacy_device_id = ctx.meta.get("legacy_remote_device_id") if ctx else None
         if config is None:
-            device = RemoteDevice(
-                url=target,
-                **(
-                    {"device_id": legacy_device_id}
-                    if legacy_device_id is not None
-                    else {}
-                ),
-            )
+            device = RemoteDevice(url=target)
         else:
-            device = RemoteDevice(
-                url=target,
-                device_id=(
-                    legacy_device_id
-                    if legacy_device_id is not None
-                    else config.device.device_id
-                ),
-            )
+            device = RemoteDevice(url=target, device_id=config.device.device_id)
     try:
         await device.connect()
     except BaseException as exc:

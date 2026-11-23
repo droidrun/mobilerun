@@ -30,13 +30,12 @@ from mobilerun.clients.cloud.errors import cloud_error
 from mobilerun.clients.cloud.payments import (
     CheckoutCallback,
     PaymentAdapter,
-    PaymentSnapshot,
     wait_for_payment,
     wait_until_active,
 )
 from mobilerun.errors import IncludedCapacityUnavailable, PurchaseInProgress
 from mobilerun.models.billing import Billing, ResourcePlan
-from mobilerun.models.checkout import Checkout
+from mobilerun.models.checkout import Checkout, PaymentSnapshot
 from mobilerun.utils.timestamps import to_api_timestamp
 
 NumberCreateOptions = TypedDict(

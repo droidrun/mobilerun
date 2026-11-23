@@ -265,12 +265,12 @@ class CloudError(MobilerunError):
                 break
         hints = {
             "request_failed": hint,
-            "missing_token": "Token response missing access_token; run `mobilerun auth login` again.",
-            "auth_failed": "Run `mobilerun auth login` again.",
+            "missing_token": "Token response missing access_token; run `mobilerun account login` again.",
+            "auth_failed": "Run `mobilerun account login` again.",
             "billing_override": "Billing and proxy fields cannot be overridden through extra parameters.",
             "payment_failed": "Cloud resource payment failed.",
             "checkout_missing": "Cloud resource left payment state without a checkout URL.",
-            "credentials_required": "No Mobilerun Cloud credentials. Run `mobilerun auth login`, set MOBILERUN_API_KEY, or pass api_key=.",
+            "credentials_required": "No Mobilerun Cloud credentials. Run `mobilerun account login`, set MOBILERUN_API_KEY, or pass api_key=.",
             "purchase_in_progress": "A phone-number purchase is already in progress. Complete checkout or cancel it with await CloudPhoneNumber(error.resource_id).release().",
             "payment_required": "Payment required. Complete checkout using error.checkout.url. Then call await error.wait_until_paid().",
             "number_unready": "Number cannot become ready; check its status in the dashboard.",
@@ -377,14 +377,6 @@ class CredentialError(MobilerunError):
 
 
 class OperatorError(MobilerunError):
-    pass
-
-
-class MacroError(MobilerunError):
-    pass
-
-
-class SandboxError(MobilerunError):
     pass
 
 

@@ -162,24 +162,14 @@ def test_device_has_no_public_plumbing():
     } <= set(dir(Device))
 
 
-def test_legacy_root_exports_are_lazy_and_deprecated():
+def test_legacy_agent_root_export_is_absent():
     import pytest
 
     import mobilerun
-    from mobilerun.addons.agents import agents_available
 
-    assert "MobileAgentState" not in vars(mobilerun)
     assert "MobileAgentState" not in mobilerun.__all__
-    with pytest.warns(DeprecationWarning, match="mobilerun.MobileAgentState"):
-        if agents_available():
-            from mobilerun.agents import MobileAgentState
-
-            assert mobilerun.MobileAgentState is MobileAgentState
-        else:
-            with pytest.raises(
-                ModuleNotFoundError, match="pip install mobilerun-agents"
-            ):
-                _ = mobilerun.MobileAgentState
+    with pytest.raises(AttributeError):
+        _ = mobilerun.MobileAgentState
 
 
 def test_workspace_methods_are_classmethods():

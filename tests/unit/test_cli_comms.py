@@ -81,7 +81,7 @@ def test_cli_list_and_release(monkeypatch, group, resource):
 
 @pytest.mark.parametrize(
     "group,command,resource",
-    [("number", "sms", PhoneNumber), ("mailbox", "code", Mailbox)],
+    [("number", "code", PhoneNumber), ("mailbox", "code", Mailbox)],
 )
 def test_codes_are_only_explicit_cli_output(monkeypatch, group, command, resource):
     wait = AsyncMock(return_value="012345")

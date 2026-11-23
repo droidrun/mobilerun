@@ -1,6 +1,8 @@
 # cli/
 
-Command-line entry point and command groups. Run `mobilerun COMMAND --help` for flags and arguments.
+Core's CLI. Feature packages keep their own CLI inside their folder.
+
+Command-line entry point and command groups. Run `mobilerun COMMAND --help` for flags and arguments. Old top-level aliases are unavailable; use `account login`, `device list`, or `agent run` instead.
 
 ## Quick example
 

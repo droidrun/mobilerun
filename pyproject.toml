@@ -21,7 +21,6 @@ dependencies = [
     "aiofiles>=25.1.0",
     "mobilerun-sdk>=6.2.1,<7",
     "mobilerun-core-local[cloud]>=0.6.3",
-    "mobilerun-routines[device] @ git+https://github.com/droidrun/mobilerun-routines.git@b4444f83fa9c52e680bf09b17635251c818c2ad8",
     # Security floors also protect installations from the published wheel.
     "anyio>=4.14.2",
     "certifi>=2026.10.19",
@@ -57,6 +56,9 @@ Homepage = "https://github.com/droidrun/mobilerun"
 Documentation = "https://docs.mobilerun.ai/"
 
 [project.optional-dependencies]
+sandbox = [
+    "mobilerun-routines[device] @ git+https://github.com/droidrun/mobilerun-routines.git@b4444f83fa9c52e680bf09b17635251c818c2ad8",
+]
 dev = [
     "black==26.10.1",
     "hatchling>=1.27",
@@ -85,6 +87,11 @@ exclude = ["/cloud-screenshot.png", "/local-screenshot.png", "/skills/**"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "hatch_build.py" = "hatch_build.py"
+[project.entry-points."mobilerun.cli"]
+macro = "mobilerun.macro.cli.group:macro"
+mcp = "mobilerun.mcp.cli.group:mcp"
+skills = "mobilerun.skills.cli.group:skills"
+
 [project.scripts]
 mobilerun = "mobilerun.cli.app:cli"
 

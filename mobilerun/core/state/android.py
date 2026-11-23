@@ -11,7 +11,6 @@ from copy import copy, deepcopy
 from typing import TYPE_CHECKING, Optional
 
 from mobilerun.clients.portal.state_fetch import fetch_state_with_retry
-from mobilerun.config.prompts import load_prompt_text
 from mobilerun.config.settings import get_settings
 from mobilerun.core.state.base import StateProvider
 from mobilerun.core.state.stealth import StealthUIState
@@ -19,6 +18,7 @@ from mobilerun.core.state.ui_state import UIState
 from mobilerun.utils.images import (
     fit_dimensions_to_max_side,
 )
+from mobilerun.utils.prompts import load_prompt_text
 
 NORMALIZED_STATE_NOTE = load_prompt_text("state/normalized_state_note.md")
 

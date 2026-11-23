@@ -35,7 +35,7 @@ def focused_state(monkeypatch):
 
 
 def test_sensitive_extra_fields_and_to_thread_are_redacted():
-    from mobilerun.core.devices.components.identifiers import secret_scope
+    from mobilerun.utils.redaction import secret_scope
 
     secret = "extra-thread-canary"
     stream = io.StringIO()
@@ -67,7 +67,7 @@ def test_sensitive_extra_fields_and_to_thread_are_redacted():
 
 
 def test_secret_record_factory_chains_and_is_idempotent():
-    from mobilerun.core.devices.components.identifiers import _secret_input
+    from mobilerun.utils.redaction import secret_scope
 
     original = logging.getLogRecordFactory()
     calls = []
@@ -78,9 +78,9 @@ def test_secret_record_factory_chains_and_is_idempotent():
 
     logging.setLogRecordFactory(previous)
     try:
-        with _secret_input("factory-canary"):
+        with secret_scope("factory-canary"):
             installed = logging.getLogRecordFactory()
-            with _secret_input("nested"):
+            with secret_scope("nested"):
                 assert logging.getLogRecordFactory() is installed
                 record = logging.getLogger("factory-test").makeRecord(
                     "factory-test",

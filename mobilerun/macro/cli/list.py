@@ -5,9 +5,9 @@ import json
 import click
 
 from mobilerun.cli.base import render
-from mobilerun.config.paths import PathResolver
 from mobilerun.macro import MacroPlayer
 from mobilerun.macro.settings import get_macro_settings
+from mobilerun.utils.paths import PathResolver
 
 
 @click.command("list")

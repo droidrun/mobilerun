@@ -8,7 +8,6 @@ from pydantic import BaseModel
 import mobilerun.core.operator.cloud as cloud_module
 from mobilerun.clients.cloud import tasks as cloud_tasks
 from mobilerun.clients.cloud.tasks import run_task
-from mobilerun.config.prompts import PromptLoader, load_prompt_text
 from mobilerun.core.devices import (
     AndroidDevice,
     CloudDevice,
@@ -26,6 +25,7 @@ from mobilerun.models.results import (
     ExpectationResult,
     ExpectationVerdict,
 )
+from mobilerun.utils.prompts import PromptLoader, load_prompt_text
 
 
 class ExampleOutput(BaseModel):

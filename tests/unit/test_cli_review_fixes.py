@@ -114,7 +114,7 @@ def test_saved_url_uses_configured_transport_without_discovery(
     discover.assert_not_awaited()
 
 
-def test_legacy_run_ios_without_serial_discovers_portal(monkeypatch):
+def test_agent_run_ios_without_serial_discovers_portal(monkeypatch):
     pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
     from mobilerun_core_local.driver import ios
 
@@ -132,7 +132,7 @@ def test_legacy_run_ios_without_serial_discovers_portal(monkeypatch):
     monkeypatch.setattr(selection, "connect_target", connect)
     run = AsyncMock(return_value=NS(error=None, success=True, cloud_result=None))
     monkeypatch.setattr(module, "run_agent", run)
-    result = CliRunner().invoke(cli, ["run", "hello", "--ios"])
+    result = CliRunner().invoke(cli, ["agent", "run", "hello", "--ios"])
     assert result.exit_code == 0, result.output
     discovered.assert_awaited_once_with()
     assert connect.await_args.kwargs["kind"] == "ios"
@@ -205,15 +205,16 @@ def test_agent_management_help_does_not_load_runtime(args):
     script = f"""
 import sys
 from click.testing import CliRunner
-from mobilerun.addons.agents import agents_available
+from mobilerun.addons.plugins import discover
+from mobilerun.addons.settings import CLI_ENTRY_POINT_GROUP
 from mobilerun.cli.app import cli
 r = CliRunner().invoke(cli, {args!r})
-if agents_available():
+if ("agent" in discover(CLI_ENTRY_POINT_GROUP)):
     assert r.exit_code == 0, r.output
     assert 'Commands' in r.output or 'Options' in r.output
 else:
     assert r.exit_code != 0
-    assert 'Agent commands need the mobilerun-agents add-on: pip install mobilerun-agents' in r.output
+    assert 'Install the mobilerun-agents add-on (see README: Agent add-on).' in r.output
 assert 'mobilerun.agents.runner' not in sys.modules
 assert not any(m == 'llama_index' or m.startswith('llama_index.') for m in sys.modules)
 """

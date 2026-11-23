@@ -56,7 +56,7 @@ def install_command(
             click.echo("Next: set MOBILERUN_API_KEY in the agent's environment")
         else:
             name = get_mcp_settings().MOBILERUN_MCP_SERVER_NAME
-            fmt = get_settings().MOBILERUN_AGENTS[agent].mcp_format
+            fmt = installer._agent_format(agent)
             hint = fmt.oauth_sign_in if fmt else None
             click.echo(
                 hint.replace("{server_name}", name)

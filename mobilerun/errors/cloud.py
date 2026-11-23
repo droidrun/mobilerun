@@ -16,7 +16,7 @@ class CloudAPIError(CloudError):
 class CloudAuthenticationError(CloudAPIError):
     """The cloud rejected the supplied authentication."""
 
-    _hint: ClassVar[str] = "Run `mobilerun auth login` again."
+    _hint: ClassVar[str] = "Run `mobilerun account login` again."
 
 
 class CloudPermissionDenied(CloudAPIError):

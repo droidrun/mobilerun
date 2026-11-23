@@ -309,10 +309,10 @@ def test_cancelled_resume_does_not_delete(monkeypatch):
 def test_payment_failure_does_not_disclose_server_text():
     from mobilerun.clients.cloud.payments import (
         PaymentAdapter,
-        PaymentSnapshot,
         wait_until_active,
     )
     from mobilerun.errors import CloudError
+    from mobilerun.models.checkout import PaymentSnapshot
 
     async def run():
         adapter = PaymentAdapter(

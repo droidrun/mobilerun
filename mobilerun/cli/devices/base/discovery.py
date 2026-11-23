@@ -41,7 +41,7 @@ async def discover_devices(
     if local:
         try:
             local_devices = await adb.list()
-        except Exception as exc:
+        except Exception:
             logger.warning("Local device discovery failed; use --debug for details.")
             logger.debug("Local discovery failure", exc_info=True)
         else:
@@ -53,7 +53,7 @@ async def discover_devices(
         api_key = resolve_cloud_api_key()
         if not api_key and strict:
             raise click.ClickException(
-                "No cloud API key found. Set MOBILERUN_API_KEY or run `mobilerun auth login`."
+                "No cloud API key found. Set MOBILERUN_API_KEY or run `mobilerun account login`."
             )
         if api_key:
             try:

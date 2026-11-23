@@ -217,25 +217,3 @@ def test_macro_uses_device_credentials(reference, caplog):
     )
     device.input_text.assert_awaited_once_with("private-value")
     assert "private-value" not in caplog.text
-
-
-def test_action_context_does_not_use_device_credentials():
-    pytest.importorskip(
-        "mobilerun.agents", reason="requires the optional mobilerun-agents add-on"
-    )
-    from mobilerun.agents.agent.action_context import ActionContext
-
-    ctx = ActionContext(
-        driver=object(), ui=None, shared_state=None, state_provider=None
-    )
-    assert not hasattr(ctx, "credentials")
-
-
-def test_agent_rejects_credentials_keyword_before_loading_any_llm():
-    pytest.importorskip(
-        "mobilerun.agents", reason="requires the optional mobilerun-agents add-on"
-    )
-    from mobilerun.agents.agent.droid.droid_agent import MobileAgent
-
-    with pytest.raises(TypeError, match="Attach credentials to the device"):
-        MobileAgent("login", credentials={"login": "private-value"})

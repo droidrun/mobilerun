@@ -14,8 +14,8 @@ from typing import Any, Dict, Optional
 
 from mobilerun.core.devices import Device
 from mobilerun.core.state.base import StateProvider
-from mobilerun.errors.base import DeviceError, MacroError, MobilerunError
-from mobilerun.macro.errors import MacroMismatch
+from mobilerun.errors.base import DeviceError, MobilerunError
+from mobilerun.macro.errors import MacroError, MacroMismatch
 from mobilerun.macro.models import (
     MACRO_SCHEMA_VERSION,
     UNSUPPORTED_SCHEMA_MESSAGE,

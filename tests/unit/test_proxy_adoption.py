@@ -10,8 +10,8 @@ from test_proxy_extensions import ProxyMemory
 
 from mobilerun.core.devices import CloudDevice
 from mobilerun.core.proxy import CloudFixedProxy, CloudProxy
-from mobilerun.core.proxy.target import ProxyStatus
 from mobilerun.errors import ExtensionConflict, ExtensionNotBound
+from mobilerun.models.proxy import ProxyStatus
 
 
 @pytest.fixture(autouse=True)

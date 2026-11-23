@@ -6,9 +6,10 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from mobilerun.core.proxy.base import CloudProxy
-from mobilerun.core.proxy.target import ProxyStatus, ProxyTarget
+from mobilerun.core.proxy.target import ProxyTarget
 from mobilerun.errors import ExtensionConflict
 from mobilerun.models.context import ContextItem
+from mobilerun.models.proxy import ProxyStatus
 
 if TYPE_CHECKING:
     from mobilerun.core.devices.base import Device

@@ -1,10 +1,32 @@
 import os
+from pathlib import Path
 
 import pytest
 import yaml
 
 from mobilerun.config.loader import ConfigLoader, OutdatedConfigError
 from mobilerun.config.migrations import CURRENT_VERSION
+
+
+def test_example_omits_obsolete_bundled_app_card_directory():
+    example = (
+        Path(__file__).resolve().parents[2] / "assets/examples/config_example.yaml"
+    )
+    data = yaml.safe_load(example.read_text())
+    assert "app_cards" not in data.get("agent", {})
+
+
+def test_existing_app_card_settings_are_preserved(tmp_path):
+    path = tmp_path / "config.yaml"
+    cards = {"enabled": True, "app_cards_dir": "my-cards"}
+    path.write_text(
+        yaml.safe_dump({"_version": CURRENT_VERSION, "agent": {"app_cards": cards}})
+    )
+
+    config = ConfigLoader.load(str(path))
+
+    assert config.to_dict()["agent"]["app_cards"] == cards
+    assert yaml.safe_load(path.read_text())["agent"]["app_cards"] == cards
 
 
 def test_unversioned_config_migrates_and_preserves_original(tmp_path):

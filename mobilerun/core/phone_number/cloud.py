@@ -17,11 +17,9 @@ from mobilerun.clients.cloud.client import AsyncMobilerun
 from mobilerun.clients.cloud.payments import (
     CheckoutCallback,
     PaymentAdapter,
-    PaymentSnapshot,
     wait_for_payment,
     wait_until_active,
 )
-from mobilerun.clients.local.codes import wait_for_code
 from mobilerun.config.settings import get_settings
 from mobilerun.core.devices.base import Device
 from mobilerun.core.extensions import Extension, action
@@ -33,8 +31,9 @@ from mobilerun.errors import (
     PurchaseInProgress,
 )
 from mobilerun.models.billing import Billing, ResourcePlan
+from mobilerun.models.checkout import PaymentSnapshot
 from mobilerun.models.context import ContextItem
-from mobilerun.utils.codes import extract_code
+from mobilerun.utils.codes import extract_code, wait_for_code
 from mobilerun.utils.timestamps import to_api_timestamp
 
 logger = logging.getLogger(__name__)

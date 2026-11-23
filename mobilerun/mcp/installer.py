@@ -4,8 +4,8 @@ from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 
-from mobilerun.config.settings import MCPFormat, get_settings
-from mobilerun.mcp.settings import get_mcp_settings
+from mobilerun.config.settings import get_settings
+from mobilerun.mcp.settings import DEFAULT_MCP_FORMATS, MCPFormat, get_mcp_settings
 from mobilerun.mcp.utils import check_path, edit, jsonc_source, read_file, write_file
 
 
@@ -19,7 +19,11 @@ def config_path(agent: str, scope: str) -> Path:
     if relative is None:
         raise ValueError(f"{agent} does not support {scope} scope")
     path = (Path.home() if scope == "user" else Path.cwd()) / relative
-    if paths.mcp_format and paths.mcp_format.jsonc_alternative:
+    try:
+        fmt = _agent_format(agent)
+    except ValueError:
+        fmt = None
+    if fmt and fmt.jsonc_alternative:
         alternative = path.with_suffix(".jsonc")
         if alternative.exists() or alternative.is_symlink():
             return alternative
@@ -27,10 +31,16 @@ def config_path(agent: str, scope: str) -> Path:
 
 
 def _agent_format(agent: str) -> MCPFormat:
-    paths = get_settings().MOBILERUN_AGENTS.get(agent)
-    if paths is None or paths.mcp_format is None:
-        raise ValueError(f"No MCP format configured for agent: {agent}")
-    return paths.mcp_format
+    settings = get_settings()
+    paths = settings.MOBILERUN_AGENTS.get(agent)
+    if paths is not None:
+        if paths.mcp_format is not None:
+            return MCPFormat.model_validate(paths.mcp_format)
+        if "MOBILERUN_AGENTS" not in settings.model_fields_set:
+            fmt = DEFAULT_MCP_FORMATS.get(agent)
+            if fmt is not None:
+                return fmt
+    raise ValueError(f"No MCP format configured for agent: {agent}")
 
 
 def _server_entries(

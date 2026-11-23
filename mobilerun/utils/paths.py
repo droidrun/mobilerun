@@ -25,7 +25,7 @@ class PathResolver:
         Get the package root directory (where assets/ bundled resources live).
 
         This is 2 parents up from this file's location:
-        mobilerun/config/paths.py -> mobilerun/ (package root)
+        mobilerun/utils/paths.py -> mobilerun/ (package root)
         """
         return Path(__file__).resolve().parents[1]
 

@@ -16,26 +16,13 @@ def _user_config_dir() -> Path:
     return Path(platformdirs.user_config_dir(_APP_NAME))
 
 
-class MCPFormat(BaseModel):
-    """Agent-specific MCP config format and authentication."""
-
-    servers_key: str
-    entry_type: str | None = None
-    api_key_ref: str | None = None
-    bearer_token_env_var: bool = False
-    user_api_key: bool = True
-    nested_servers: bool = False
-    disable_oauth_with_api_key: bool = False
-    jsonc_alternative: bool = False
-    oauth_sign_in: str | None = None
-
-
 class AgentPaths(BaseModel):
     """User and project paths for each agent integration."""
 
     skills: tuple[str, str | None] | None
     mcp: tuple[str, str | None] | None
-    mcp_format: MCPFormat | None = None
+    # Kept as untyped feature data so shared settings never import MCP.
+    mcp_format: dict[str, object] | None = None
 
 
 def _agents() -> dict[str, AgentPaths]:
@@ -43,44 +30,18 @@ def _agents() -> dict[str, AgentPaths]:
         "claude-code": AgentPaths(
             skills=(".claude/skills", ".claude/skills"),
             mcp=(".claude.json", ".mcp.json"),
-            mcp_format=MCPFormat(
-                servers_key="mcpServers",
-                entry_type="http",
-                api_key_ref="${MOBILERUN_API_KEY}",
-                user_api_key=False,
-                oauth_sign_in="Next: sign in from Claude Code: run /mcp, select {server_name}, then Authenticate",
-            ),
         ),
         "codex": AgentPaths(
             skills=(".agents/skills", ".agents/skills"),
             mcp=(".codex/config.toml", ".codex/config.toml"),
-            mcp_format=MCPFormat(
-                servers_key="mcp_servers",
-                bearer_token_env_var=True,
-                oauth_sign_in="Next: sign in with `codex mcp login {server_name}`",
-            ),
         ),
         "opencode": AgentPaths(
             skills=(".config/opencode/skills", ".opencode/skills"),
             mcp=(".config/opencode/opencode.json", "opencode.json"),
-            mcp_format=MCPFormat(
-                servers_key="mcp",
-                entry_type="remote",
-                api_key_ref="{env:MOBILERUN_API_KEY}",
-                nested_servers=True,
-                disable_oauth_with_api_key=True,
-                jsonc_alternative=True,
-                oauth_sign_in="Next: sign in with `opencode mcp auth {server_name}`",
-            ),
         ),
         "cursor": AgentPaths(
             skills=(".cursor/skills", ".cursor/skills"),
             mcp=(".cursor/mcp.json", ".cursor/mcp.json"),
-            mcp_format=MCPFormat(
-                servers_key="mcpServers",
-                api_key_ref="${env:MOBILERUN_API_KEY}",
-                oauth_sign_in="Next: sign in from Cursor: open its MCP server settings, select {server_name}, then sign in",
-            ),
         ),
     }
 

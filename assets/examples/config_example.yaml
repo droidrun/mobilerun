@@ -54,21 +54,6 @@ agent:
     # System prompt path (relative or absolute)
     system_prompt: assets/prompts/executor/system.jinja2
 
-  # App Cards Configuration
-  app_cards:
-    # Enable app-specific instruction cards
-    enabled: true
-    # Mode: local (file-based), server (HTTP API), or composite (server with local fallback)
-    mode: local
-    # Directory with android/ and ios/ app card folders (for local/composite modes)
-    app_cards_dir: assets/app_cards
-    # Server URL for remote app cards (for server/composite modes)
-    server_url: null
-    # Server request timeout in seconds
-    server_timeout: 10.0
-    # Number of server retry attempts
-    server_max_retries: 2
-
 # === LLM Profiles ===
 # Define LLM configurations for each agent type
 llm_profiles:
@@ -252,7 +237,7 @@ mcp:
 
 # === External Agent Settings ===
 # External agents coming soon. See docs for how to add custom agents.
-# Use: mobilerun run "task" --agent <name>
+# Use: mobilerun agent run "task" --agent <name>
 #
 # external_agents:
 #   my_agent:

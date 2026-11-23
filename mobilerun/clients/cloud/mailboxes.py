@@ -24,12 +24,12 @@ from mobilerun.clients.cloud.errors import cloud_error
 from mobilerun.clients.cloud.payments import (
     CheckoutCallback,
     PaymentAdapter,
-    PaymentSnapshot,
     wait_for_payment,
     wait_until_active,
 )
 from mobilerun.errors import IncludedCapacityUnavailable
 from mobilerun.models.billing import Billing, ResourcePlan
+from mobilerun.models.checkout import PaymentSnapshot
 
 
 @requires(Billing.INCLUDED)

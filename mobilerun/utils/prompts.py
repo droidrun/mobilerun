@@ -17,10 +17,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
 
-import aiofiles
+import aiofiles  # type: ignore[import-untyped]
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-from mobilerun.config.paths import PathResolver
+from mobilerun.utils.paths import PathResolver
 
 
 class PromptLoader:

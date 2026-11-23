@@ -1,5 +1,7 @@
 # errors/
 
+Core's errors. Feature packages keep their own errors inside their folder.
+
 Shared exception types for device, cloud, credentials, and other framework failures.
 
 **What belongs here / what doesn't:** Put reusable error definitions here, not recovery workflows or CLI output.

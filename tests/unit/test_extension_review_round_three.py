@@ -14,8 +14,8 @@ from mobilerun.core.devices.recording import RecordingDevice
 from mobilerun.core.extensions import Extension, action, device_action
 from mobilerun.core.phone_number import CloudPhoneNumber
 from mobilerun.core.proxy import CloudFixedProxy, ExistingCloudProxy
-from mobilerun.core.proxy.target import ProxyStatus
 from mobilerun.errors import ExtensionClosed, ExtensionConflict
+from mobilerun.models.proxy import ProxyStatus
 from tests.support.devices import MemoryDevice
 
 

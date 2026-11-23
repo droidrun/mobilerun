@@ -13,16 +13,16 @@ from mobilerun.clients.cloud.checkout import CheckoutMode, checkout_callback
 from mobilerun.clients.cloud.payments import (
     CheckoutCallback,
     PaymentAdapter,
-    PaymentSnapshot,
     wait_for_payment,
 )
-from mobilerun.clients.local.codes import wait_for_code
 from mobilerun.config.settings import get_settings
 from mobilerun.core.extensions import action
 from mobilerun.core.mailbox.base import Mailbox
 from mobilerun.errors import PaymentRequired
 from mobilerun.models.billing import Billing, ResourcePlan
+from mobilerun.models.checkout import PaymentSnapshot
 from mobilerun.models.context import ContextItem
+from mobilerun.utils.codes import wait_for_code
 from mobilerun.utils.timestamps import to_api_timestamp
 
 

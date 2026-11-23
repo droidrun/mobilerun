@@ -218,7 +218,7 @@ def test_direct_tap_prompts_coordinates(monkeypatch: pytest.MonkeyPatch) -> None
             ]
         ),
     )
-    result = CliRunner().invoke(device, ["tap"])
+    result = CliRunner().invoke(device, ["input", "tap"])
     assert result.exit_code == 0, result.output
     assert labels == ["X coordinate", "Y coordinate"]
     phone.tap.assert_awaited_once_with(12, 34)

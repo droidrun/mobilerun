@@ -6,10 +6,8 @@ from .base import (
     ConfigError,
     CredentialError,
     DeviceError,
-    MacroError,
     MobilerunError,
     OperatorError,
-    SandboxError,
 )
 from .cloud import (
     BillingError,
@@ -78,9 +76,7 @@ __all__ = [
     "ConfigError",
     "CredentialError",
     "DeviceError",
-    "MacroError",
     "OperatorError",
-    "SandboxError",
     "BillingError",
     "IncludedCapacityUnavailable",
     "PaymentRequired",

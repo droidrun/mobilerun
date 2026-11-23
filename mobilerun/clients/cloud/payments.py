@@ -4,21 +4,13 @@ import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TypeVar
 
 from mobilerun.errors import CloudAPIError, PaymentRequired
-from mobilerun.models.checkout import Checkout
+from mobilerun.models.checkout import Checkout, PaymentSnapshot
 
 T = TypeVar("T")
 CheckoutCallback = Callable[[Checkout], Awaitable[None] | None]
-
-
-@dataclass(frozen=True)
-class PaymentSnapshot:
-    status: str
-    url: str | None = None
-    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True)

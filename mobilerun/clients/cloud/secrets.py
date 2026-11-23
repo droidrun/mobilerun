@@ -26,8 +26,8 @@ from mobilerun_sdk.types.credentials.packages.credentials.field_update_response 
 
 from mobilerun.clients.cloud.billing import requires
 from mobilerun.clients.cloud.errors import cloud_error
-from mobilerun.core.devices.components.identifiers import secret_scope
 from mobilerun.models.billing import Billing
+from mobilerun.utils.redaction import secret_scope
 
 FieldType = Literal[
     "email",

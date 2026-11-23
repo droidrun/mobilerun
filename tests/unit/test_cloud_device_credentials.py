@@ -69,7 +69,7 @@ def test_missing_credentials_raises_safe_auth_error(monkeypatch, tmp_path):
 
     with pytest.raises(CloudAuthRequired) as error:
         CloudDevice("device-1")
-    assert "mobilerun auth login" in str(error.value)
+    assert "mobilerun account login" in str(error.value)
     assert "secret" not in str(error.value)
 
 

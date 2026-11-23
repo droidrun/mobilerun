@@ -39,7 +39,7 @@ def test_device_picker_precedes_coordinates(monkeypatch):
     monkeypatch.setattr(menu, "text_prompt", text)
     monkeypatch.setattr(options, "confirm_prompt", lambda *args, **kwargs: False)
     monkeypatch.setattr(tap, "connect_target", AsyncMock(return_value=AsyncMock()))
-    result = CliRunner().invoke(device, ["tap"])
+    result = CliRunner().invoke(device, ["input", "tap"])
     assert result.exit_code == 0, result.output
     assert order == ["device", "X coordinate", "Y coordinate"]
 
@@ -179,6 +179,6 @@ def test_explicit_device_option_precedes_prompt_without_discovery(monkeypatch):
     driver = AsyncMock()
     connect = AsyncMock(return_value=driver)
     monkeypatch.setattr(tap, "connect_target", connect)
-    result = CliRunner().invoke(device, ["tap", "--device", "chosen"])
+    result = CliRunner().invoke(device, ["input", "tap", "--device", "chosen"])
     assert result.exit_code == 0, result.output
     assert connect.await_args.args[0] == "chosen"

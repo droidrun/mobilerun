@@ -11,8 +11,9 @@ from mobilerun.core.proxy import (
     CloudSocks5Proxy,
     LocalProxy,
 )
-from mobilerun.core.proxy.target import ProxyStatus, ProxyTarget
+from mobilerun.core.proxy.target import ProxyTarget
 from mobilerun.errors import ExtensionConflict
+from mobilerun.models.proxy import ProxyStatus
 from tests.support.devices import MemoryDevice
 from tests.support.extensions import check_extension_contract
 

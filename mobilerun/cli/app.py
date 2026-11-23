@@ -2,12 +2,17 @@
 
 import logging
 from importlib import import_module, metadata
-from typing import cast
+from typing import Any, cast
 
 import click
 
 from mobilerun import __version__
-from mobilerun.addons.agents import agents_available
+from mobilerun.addons import plugins
+from mobilerun.addons.settings import (
+    CLI_ENTRY_POINT_GROUP,
+    CLI_PLUGIN_HELP,
+    OPERATOR_ENTRY_POINT_GROUP,
+)
 from mobilerun.cli.base.logging import cli_handler
 from mobilerun.cli.base.menu import MenuGroup
 from mobilerun.cli.base.prompts import SelectChoice
@@ -39,83 +44,73 @@ _COMMANDS = {
         "mailbox",
         "Manage cloud email mailboxes.",
     ),
-    "mcp": ("mobilerun.mcp.cli.group", "mcp", "Manage coding-agent MCP connections."),
-    "skills": ("mobilerun.skills.cli.group", "skills", "Manage reusable skills."),
     "account": ("mobilerun.cli.auth.group", "auth", "Manage cloud authentication."),
     "device": (
         "mobilerun.cli.devices.group",
         "device",
         "Interact with mobile devices.",
     ),
-    "agent": (
-        "mobilerun.agents.cli.agent.group",
-        "agent",
-        "Run an agent on a mobile device.",
-    ),
-    "macro": ("mobilerun.macro.cli.group", "macro", "Record and replay device macros."),
     "doctor": ("mobilerun.cli.doctor", "doctor", "Diagnose device connectivity."),
+    "plugins": ("mobilerun.cli.plugins.group", "plugins", "Inspect installed plugins."),
 }
 
 # Keep hidden commands addressable without importing command modules at startup.
-_HIDDEN_COMMANDS = frozenset()
-
-_ALIASES = {
-    "run": ("mobilerun.agents.cli.agent.run", "run", "agent run"),
-    "devices": ("mobilerun.cli.devices.list", "devices", "device list"),
-    "login": ("mobilerun.cli.auth.login", "login", "account login"),
-    "logout": ("mobilerun.cli.auth.logout", "logout", "account logout"),
-    "whoami": ("mobilerun.cli.auth.status", "whoami", "account status"),
-    "connect": ("mobilerun.cli.devices.connect", "connect", "device connect"),
-    "disconnect": (
-        "mobilerun.cli.devices.disconnect",
-        "disconnect",
-        "device disconnect",
-    ),
-    "setup": ("mobilerun.cli.devices.setup", "setup", "device setup"),
-    "ping": ("mobilerun.cli.devices.ping", "ping", "device ping"),
-    "configure": (
-        "mobilerun.agents.cli.agent.llm.configure",
-        "configure",
-        "agent llm configure",
-    ),
-}
+_HIDDEN_COMMANDS: frozenset[str] = frozenset()
 
 
-def _run_agent_macro(provider: str | None, model: str | None, **options) -> None:
-    from mobilerun.addons.agents import require_agents
+def _run_agent_macro(provider: str | None, model: str | None, **options: Any) -> None:
+    handoff = plugins.load(OPERATOR_ENTRY_POINT_GROUP, "agent_macro")
+    if not callable(handoff):
+        raise click.ClickException(
+            "Invalid agent macro plugin; reinstall the mobilerun-agents add-on."
+        )
+    handoff(provider=provider, model=model, **options)
 
-    with require_agents():
-        from mobilerun.agents.agent_macro import AgentMacroOperator
-        from mobilerun.agents.config.loader import ConfigLoader
-        from mobilerun.agents.config.user_config import LLMProfile
-    from mobilerun.macro.cli.replay import run_replay
 
-    config = ConfigLoader.load(options["config_path"])
-    if provider and model:
-        config.llm_profiles = {
-            name: LLMProfile(provider=provider, model=model)
-            for name in config.llm_profiles
-        }
-    run_replay(AgentMacroOperator, config=config, **options)
+def reserved_command_names() -> set[str]:
+    """Names owned by core commands."""
+    return set(_COMMANDS)
 
 
 class LazyGroup(MenuGroup):
+    def _plugin_commands(self, ctx: click.Context) -> dict:
+        if "cli_plugin_commands" in ctx.meta:
+            return ctx.meta["cli_plugin_commands"]
+        entries = plugins.discover(CLI_ENTRY_POINT_GROUP)
+        reserved = reserved_command_names()
+        for name in sorted(entries.keys() & reserved):
+            logging.getLogger(__name__).warning(
+                "Skipping plugin command %s: built-in wins", name
+            )
+            del entries[name]
+        ctx.meta["cli_plugin_commands"] = entries
+        return entries
+
     def menu_choices(self, ctx: click.Context) -> list[SelectChoice]:
         return [
-            SelectChoice(name, name, _COMMANDS[name][2])
+            SelectChoice(
+                name,
+                name,
+                _COMMANDS.get(
+                    name,
+                    (
+                        None,
+                        None,
+                        CLI_PLUGIN_HELP.get(name, "Installed plugin command."),
+                    ),
+                )[2],
+            )
             for name in self.list_commands(ctx)
         ]
 
     def list_commands(self, ctx: click.Context) -> list[str]:
         return sorted(
-            name
-            for name in _COMMANDS
-            if name not in _HIDDEN_COMMANDS and (name != "agent" or agents_available())
+            (set(_COMMANDS) - _HIDDEN_COMMANDS) | self._plugin_commands(ctx).keys()
         )
 
     def get_epilog(self, ctx: click.Context) -> str | None:
         epilog = super().get_epilog(ctx)
-        if not epilog or agents_available():
+        if not epilog or "agent" in self._plugin_commands(ctx):
             return epilog
         return "; ".join(
             part
@@ -126,24 +121,38 @@ class LazyGroup(MenuGroup):
     def format_commands(
         self, ctx: click.Context, formatter: click.HelpFormatter
     ) -> None:
-        # Root help must not import optional command implementations.
-        rows = [(name, _COMMANDS[name][2]) for name in self.list_commands(ctx)]
+        rows = [
+            (
+                name,
+                _COMMANDS.get(
+                    name,
+                    (
+                        None,
+                        None,
+                        CLI_PLUGIN_HELP.get(name, "Installed plugin command."),
+                    ),
+                )[2],
+            )
+            for name in self.list_commands(ctx)
+        ]
         with formatter.section("Commands"):
             formatter.write_dl(rows)
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
-        from mobilerun.cli.compat import legacy_command
-
-        if cmd_name in _ALIASES:
-            return legacy_command(cmd_name, *_ALIASES[cmd_name])
-        if cmd_name == "auth":
-            cmd_name = "account"
         target = _COMMANDS.get(cmd_name)
         if target is None:
-            return None
-        module, attribute, _short_help = target
-        if cmd_name == "macro":
+            if cmd_name not in self._plugin_commands(ctx):
+                if cmd_name == "agent":
+                    return cast(
+                        click.Command, plugins.load(CLI_ENTRY_POINT_GROUP, cmd_name)
+                    )
+                return None
             ctx.meta["macro_agent_handoff"] = _run_agent_macro
+            command = plugins.load(CLI_ENTRY_POINT_GROUP, cmd_name)
+            if not isinstance(command, click.Command):
+                raise click.ClickException("Invalid CLI plugin; reinstall the add-on.")
+            return command
+        module, attribute, _short_help = target
         # Commands are deliberately imported lazily from a static registry.
         return cast(click.Command, getattr(import_module(module), attribute))
 

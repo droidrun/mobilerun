@@ -1,7 +1,8 @@
 """SOCKS5 parameters; repr never exposes the password."""
 
 from mobilerun.core.proxy.base import CloudProxy
-from mobilerun.core.proxy.target import ProxyStatus, ProxyTarget
+from mobilerun.core.proxy.target import ProxyTarget
+from mobilerun.models.proxy import ProxyStatus
 
 
 class CloudSocks5Proxy(CloudProxy):

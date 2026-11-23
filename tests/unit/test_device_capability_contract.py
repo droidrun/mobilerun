@@ -149,21 +149,6 @@ def test_provider_flags_defaults_and_resize_or_contract():
     assert _should_resize_model_screenshot(provider)
 
 
-def test_optional_action_state_fails_with_a_clear_error():
-    pytest.importorskip(
-        "mobilerun.agents", reason="requires the optional mobilerun-agents add-on"
-    )
-    from types import SimpleNamespace
-
-    from mobilerun.agents.agent.action_context import ActionContext
-    from mobilerun.agents.agent.utils.actions import click
-
-    ctx = SimpleNamespace(ui=None, macro_recorder=None)
-    result = asyncio.run(click(0, ctx=cast(ActionContext, ctx)))
-    assert not result.success
-    assert "UI state is unavailable" in result.summary
-
-
 def test_android_connection_failure_cleans_up_started_avd(monkeypatch):
     from mobilerun.core.devices import AndroidDevice
 
@@ -306,35 +291,6 @@ def test_cloud_empty_vault_has_empty_reference_tuple(monkeypatch):
     provider = CloudCredentials(api_key="test")
     provider._list_credentials = AsyncMock(return_value=[])
     assert asyncio.run(provider.cloud_task_inputs()).credential_references == ()
-
-
-def test_agent_diagnostics_are_verbose_not_normal(caplog, monkeypatch):
-    pytest.importorskip(
-        "mobilerun.agents", reason="requires the optional mobilerun-agents add-on"
-    )
-    import logging
-    from types import SimpleNamespace
-
-    from mobilerun.agents.agent.droid.droid_agent import MobileAgent
-
-    from mobilerun.logs.handlers import VERBOSE
-
-    agent = object.__new__(MobileAgent)
-    queued = SimpleNamespace(id="test")
-    monkeypatch.setattr(
-        agent,
-        "shared_state",
-        SimpleNamespace(queue_user_message=lambda _: queued, pending_user_messages=[]),
-        raising=False,
-    )
-    logger = logging.getLogger("mobilerun")
-    monkeypatch.setattr(logger, "propagate", True)
-    with caplog.at_level(logging.INFO, logger="mobilerun"):
-        assert agent.send_user_message("test") is queued
-    assert "External user message queued" not in caplog.text
-    with caplog.at_level(VERBOSE, logger="mobilerun"):
-        agent.send_user_message("test")
-    assert "External user message queued" in caplog.text
 
 
 @pytest.mark.parametrize("mixed", [False, True])

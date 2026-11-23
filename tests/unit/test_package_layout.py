@@ -3,6 +3,15 @@
 import ast
 from pathlib import Path
 
+# The root establishes the shared namespace; selected initializers expose
+# lazily imported public names without importing optional dependencies.
+INITIALIZER_EXCEPTIONS = {
+    "__init__.py": "Namespace setup and lazy public exports",
+    "core/__init__.py": "Lazy public core exports",
+    "core/devices/__init__.py": "Lazy public device exports",
+    "sandbox/__init__.py": "Actionable error when the optional routines dependency is missing",
+}
+
 
 def test_initializers_only_export_names():
     root = Path(__file__).resolve().parents[2] / "mobilerun"
@@ -29,6 +38,30 @@ def test_initializers_only_export_names():
             continue
         tree = ast.parse(path.read_text(), filename=str(path))
         for index, node in enumerate(tree.body):
+            relative = path.relative_to(root).as_posix()
+            if relative in INITIALIZER_EXCEPTIONS and (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id
+                in {
+                    "__init__.py": {
+                        "__path__",
+                        "__all__",
+                        "_EAGER_EXPORTS",
+                        "_CORE_EXPORTS",
+                    },
+                    "core/__init__.py": {"_EXPORT_MODULES"},
+                    "core/devices/__init__.py": {"_EXPORT_MODULES"},
+                    "sandbox/__init__.py": set(),
+                }[relative]
+                or isinstance(node, ast.FunctionDef)
+                and relative != "sandbox/__init__.py"
+                and node.name in {"__getattr__", "__dir__"}
+                or relative == "sandbox/__init__.py"
+                and isinstance(node, ast.Try)
+            ):
+                continue
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
             if (
