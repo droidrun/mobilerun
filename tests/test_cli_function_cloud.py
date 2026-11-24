@@ -595,7 +595,7 @@ def test_cloud_run_wait_and_input(sdk):
     assert json.loads(result.stdout)["result"] == {"value": 7}
     assert json.loads(result.stdout)["logs"] == "available"
     sdk.functions.runs.create.assert_called_once_with(
-        ID2, input={"name": "Ada"}, version=2
+        ID2, input={"name": "Ada"}, wait_s=0, version=2
     )
     assert sdk.client.compute.runs.retrieve.call_count == 2
     sdk.client.compute.runs.logs.assert_called_once()
@@ -666,7 +666,7 @@ def test_cloud_run_deadline_preserves_identity(sdk, clock):
     sdk.functions.runs.create.return_value.data = run_record("running")
     sdk.client.compute.runs.retrieve.return_value.data = run_record("running")
     result = invoke("run", ID2, "--input", "{}", "--wait", "-j")
-    assert result.exit_code == 1
+    assert result.exit_code == 124
     assert json.loads(result.stdout)["id"] == ID1
     assert "still running" in result.stderr
     assert sum(clock.sleeps) == 60
@@ -726,7 +726,7 @@ def test_cloud_run_ignores_inherited_device_settings(sdk, monkeypatch):
     result = invoke("run", ID2, "--input", "{}", "-j")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["id"] == ID1
-    sdk.functions.runs.create.assert_called_once_with(ID2, input={})
+    sdk.functions.runs.create.assert_called_once_with(ID2, input={}, wait_s=0)
 
 
 @pytest.mark.parametrize(
@@ -799,7 +799,7 @@ def test_cloud_run_custom_timeout_spans_deadline(sdk, clock):
     sdk.functions.runs.create.return_value.data = run_record("running")
     sdk.client.compute.runs.retrieve.return_value.data = run_record("running")
     result = invoke("run", ID2, "--input", "{}", "--wait", "--timeout", "3", "-j")
-    assert result.exit_code == 1
+    assert result.exit_code == 124
     assert json.loads(result.stdout)["id"] == ID1
     assert "still running" in result.stderr
     assert sum(clock.sleeps) == 3
@@ -855,3 +855,18 @@ def test_best_effort_log_warning_redacts_api_credentials(sdk, monkeypatch):
     assert "unit-cloud-function-key" not in result.output
     assert "warning: Could not retrieve logs" in result.stderr
     assert "[redacted]" in result.stderr
+
+
+def test_cloud_run_execution_timeout_returns_124(sdk):
+    sdk.functions.runs.create.return_value.data = run_record(
+        "failed", errorCode="timeout"
+    )
+    result = invoke("run", ID2, "--input", "{}", "-j")
+    assert result.exit_code == 124
+    assert json.loads(result.stdout)["errorCode"] == "timeout"
+
+
+def test_function_run_help_documents_timeout_exit():
+    result = invoke("run", "--help")
+    assert result.exit_code == 0
+    assert "124" in result.stdout

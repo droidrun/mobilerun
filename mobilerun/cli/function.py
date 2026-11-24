@@ -255,7 +255,7 @@ def _device_flags(
     "timeout_s",
     type=click.IntRange(min=1),
     default=60,
-    help="Cloud run wait timeout in seconds (requires --wait).",
+    help="Cloud run wait timeout in seconds (requires --wait); exits 124 on timeout.",
 )
 @click.option("--input", "input_json", help="Function input as JSON.")
 @click.option(
@@ -326,7 +326,8 @@ def run_function(
             raise click.BadParameter("Expected a JSON object.", param_hint="--input")
         with cloud_client(api_url) as client:
             item = _resolve_function(client, path)
-            params = {"input": data}
+            # Creation must not consume the completion wait budget on the server.
+            params = {"input": data, "wait_s": 0}
             if version is not None:
                 params["version"] = version
             run = client.compute.functions.runs.create(item.id, **params).data
@@ -341,9 +342,11 @@ def run_function(
                     run = exc.response.data
                 except WaitTimeoutError:
                     _emit_run(run, json_output)
-                    raise click.ClickException(
-                        f"Run {run.id} is still running; check `mobilerun function logs {run.id}` later."
-                    ) from None
+                    click.echo(
+                        f"Run {run.id} is still running; the wait timed out. Check `mobilerun function logs {run.id}` later.",
+                        err=True,
+                    )
+                    raise click.exceptions.Exit(124) from None
                 try:
                     run, log_download = _run_logs(client, run.id)
                 except Exception as exc:
@@ -356,6 +359,8 @@ def run_function(
                         err=True,
                     )
         _emit_run(run, json_output, log_download=log_download)
+        if run.error_code == "timeout":
+            raise click.exceptions.Exit(124)
         if run.status == "failed" or run.outcome == "failed":
             raise click.exceptions.Exit(1)
         return

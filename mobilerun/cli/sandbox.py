@@ -1,6 +1,7 @@
 """Manage cloud sandboxes through the public compute SDK."""
 
 import time
+from copy import copy
 from pathlib import Path
 
 import click
@@ -136,7 +137,7 @@ def show_sandbox(sandbox_id, api_url, json_output, verbose):
     "timeout_s",
     type=click.IntRange(min=1),
     default=60,
-    help="Command deadline in seconds.",
+    help="Command deadline in seconds; exits 124 if execution or its wait times out.",
 )
 @api_url_option
 @json_option
@@ -164,11 +165,14 @@ def exec_sandbox(
         if result.stderr:
             click.echo(result.stderr, err=True, nl=False)
     if result.status == "running":
-        raise click.ClickException(
-            f"Command {result.command_id} is still running and may still finish in the sandbox; its exit code is not available."
+        click.echo(
+            f"Command {result.command_id} is still running and may still finish in the sandbox; the wait timed out and its exit code is not available.",
+            err=True,
         )
+        raise click.exceptions.Exit(124)
     if result.timed_out:
         click.echo("Command timed out.", err=True)
+        raise click.exceptions.Exit(124)
     if result.truncated:
         click.echo("Command output was truncated by the API.", err=True)
     raise click.exceptions.Exit(result.exit_code if result.exit_code is not None else 1)
@@ -248,18 +252,6 @@ def _stop(sandbox_id, yes, no_input, api_url, json_output):
         )
 
 
-@sandbox_cli.command("stop", epilog=examples("mobilerun sandbox stop ID --yes"))
-@click.argument("sandbox_id", metavar="ID")
-@click.option("--yes", is_flag=True, help="Confirm stopping the sandbox.")
-@no_input_option
-@api_url_option
-@json_option
-@verbose_option
-def stop_sandbox(sandbox_id, yes, no_input, api_url, json_output, verbose):
-    """Stop a sandbox using the API's delete operation."""
-    _stop(sandbox_id, yes, no_input, api_url, json_output)
-
-
 @sandbox_cli.command("delete", epilog=examples("mobilerun sandbox delete ID --yes"))
 @click.argument("sandbox_id", metavar="ID")
 @click.option("--yes", is_flag=True, help="Confirm stopping the sandbox.")
@@ -270,3 +262,10 @@ def stop_sandbox(sandbox_id, yes, no_input, api_url, json_output, verbose):
 def delete_sandbox(sandbox_id, yes, no_input, api_url, json_output, verbose):
     """Delete (stop) a sandbox."""
     _stop(sandbox_id, yes, no_input, api_url, json_output)
+
+
+# Keep the old spelling callable without adding a second advertised operation.
+stop_sandbox = copy(delete_sandbox)
+stop_sandbox.name = "stop"
+stop_sandbox.hidden = True
+sandbox_cli.add_command(stop_sandbox)

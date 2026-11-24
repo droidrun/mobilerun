@@ -202,7 +202,7 @@ mobilerun
 │   ├── create / list / show ID
 │   ├── exec ID COMMAND
 │   ├── files upload ID FILE PATH / download ID PATH -o FILE
-│   └── stop ID / delete ID
+│   └── delete ID
 ├── configure
 ├── auth
 │   ├── login [SERVICE]
@@ -410,7 +410,7 @@ includes `logDownload`; human output prints the result and logs URL.
 `logs RUN_ID` also waits for logs to settle. Unavailable or expired logs give an
 actionable error. Log retrieval after a finished run is best-effort: unavailable
 or slow logs warn on stderr and preserve the run result and exit code. Failed
-runs and run waits exit nonzero.
+runs exit 1; execution or completion-wait timeouts exit 124.
 
 `check --remote` validates in the cloud instead of locally. It waits up to 60
 seconds (`--no-wait` returns the validation id). Invalid functions exit 3 with
@@ -478,7 +478,6 @@ mobilerun sandbox exec SANDBOX_ID "python -c 'print(1)'"
 mobilerun sandbox exec SANDBOX_ID "exit 7"  # CLI exits 7
 mobilerun sandbox files upload SANDBOX_ID local.txt remote.txt
 mobilerun sandbox files download SANDBOX_ID remote.txt -o downloaded.txt
-mobilerun sandbox stop SANDBOX_ID --yes
 mobilerun sandbox delete SANDBOX_ID --yes
 ```
 
@@ -486,13 +485,16 @@ mobilerun sandbox delete SANDBOX_ID --yes
 Repeat `--env NAME=VALUE` for environment variables. `exec` accepts one shell
 command string, prints stdout and stderr separately, and returns the remote exit
 code. It waits for completion; `--timeout` limits command execution (default 60
-seconds), `--cwd` selects a directory, and `--env` adds command variables.
+seconds), `--cwd` selects a directory, and `--env` adds command variables. Execution
+or completion-wait timeouts exit 124; ordinary command failures retain their
+remote exit code.
 File transfer paths must stay inside the sandbox's `/work` directory; relative
 paths work. Downloads require `--force` to overwrite a local file. The API has no
-file listing endpoint. Both `stop` and `delete` use the API's delete operation;
-deleted sandboxes may still be listed as stopped.
+file listing endpoint. `delete` uses the API's delete operation; deleted sandboxes
+may still be listed as stopped.
 
-All three groups use the published SDK 6.3.1 and support `--json` (`-j`) on their
+The CLI requires `mobilerun-sdk>=6.3.2,<7` and is tested against SDK 6.3.2.
+All three groups support `--json` (`-j`) on their
 commands. The singular group names are `function`, `routine`, and `sandbox`.
 `--api-url` overrides the API endpoint; `MOBILERUN_BASE_URL` and the existing
 `MOBILERUN_API_BASE_URL` are also accepted, in that order. The default is the public

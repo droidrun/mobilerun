@@ -1542,7 +1542,7 @@ requires-dist = [
     { name = "mobilerun-core", extras = ["local"], specifier = ">=1.12.0" },
     { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
     { name = "mobilerun-functions", extras = ["device", "local"], marker = "extra == 'functions'", specifier = ">=0.1.0" },
-    { name = "mobilerun-sdk", specifier = "==6.3.1" },
+    { name = "mobilerun-sdk", specifier = ">=6.3.2,<7" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.40.0" },
@@ -1631,7 +1631,7 @@ local = [
 
 [[package]]
 name = "mobilerun-sdk"
-version = "6.3.1"
+version = "6.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1641,9 +1641,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/0f/45a52877823c883189ba0f6187404185474551e3b75a2706c4b4a7c49b1d/mobilerun_sdk-6.3.1.tar.gz", hash = "sha256:9df3c347ed012946c595c3db89a49f4d86f698f96d8d69552c8e5ca310935dbe", size = 537621, upload-time = "2026-11-24T10:59:00.929Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/a1/d57c0f12715a4deaa64a949a9fea7abc97ced9f16f6dc7640f1f91048b1b/mobilerun_sdk-6.3.2.tar.gz", hash = "sha256:26ed63019e5ece54ba3fc4dbe5eae586e5417ac574abbdcec1bf3ec58404ce33", size = 541217, upload-time = "2026-11-24T13:43:25.839Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/10/4711579475e86aa5f7e496cea880cb890e181a51a1d3ed0e40a97e33f799/mobilerun_sdk-6.3.1-py3-none-any.whl", hash = "sha256:1ff40f4afb752c6758c6d39bc2e8e323dc8da39dce592e727e48c23dba5ed372", size = 804847, upload-time = "2026-11-24T10:58:59.394Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/63/aa83a232ea5847eee5d39ef6deed71f1900e37afa8fef8a2e5d7af97a891/mobilerun_sdk-6.3.2-py3-none-any.whl", hash = "sha256:f88c25281d25f58cff0ccb67ee806fe37151dee3fae6dd6216f4f72a20260707", size = 809581, upload-time = "2026-11-24T13:43:24.306Z" },
 ]
 
 [[package]]

@@ -164,13 +164,15 @@ def test_exec_waits_and_emits_one_json_document(sdk):  # noqa: F811
     )
 
 
-def test_exec_timeout_without_exit_code_fails(sdk):  # noqa: F811
+@pytest.mark.parametrize("remote_exit", [None, 0, 137])
+@pytest.mark.parametrize("flags", [[], ["-j"]])
+def test_exec_timeout_returns_124(sdk, remote_exit, flags):  # noqa: F811
     sdk.client.compute.sandboxes.exec.return_value = command(
-        exitCode=None, timedOut=True
+        exitCode=remote_exit, timedOut=True
     )
-    result = invoke("exec", ID, "sleep 999")
-    assert result.exit_code == 1
-    assert "timed out" in result.stderr
+    result = invoke("exec", ID, "sleep 999", *flags)
+    assert result.exit_code == 124
+    assert "Command timed out." in result.stderr
 
 
 def test_files_upload_download_exact_bytes(sdk, tmp_path):  # noqa: F811
@@ -311,7 +313,7 @@ def test_exec_still_running_identifies_background_command(
     )
     monkeypatch.setattr(module.time, "monotonic", Mock(side_effect=[0, 0, 32]))
     result = invoke("exec", ID, "long-running-command", "--timeout", "1", "-j")
-    assert result.exit_code == 1
+    assert result.exit_code == 124
     assert json.loads(result.stdout)["commandId"] == "cmd-1"
     assert "Command cmd-1 is still running and may still finish" in result.stderr
 
@@ -321,3 +323,23 @@ def test_sandbox_tsv_uses_iso_timestamp(sdk):  # noqa: F811
     result = invoke("show", ID)
     assert result.exit_code == 0, result.output
     assert result.stdout == f"{ID}\tdemo\trunning\t2026-11-24T11:00:00+00:00\n"
+
+
+def test_stop_is_hidden_alias_of_delete():
+    from mobilerun.cli.sandbox import sandbox_cli
+
+    assert sandbox_cli.commands["stop"].hidden is True
+    assert sandbox_cli.commands["delete"].hidden is False
+    assert (
+        sandbox_cli.commands["stop"].callback is sandbox_cli.commands["delete"].callback
+    )
+    result = invoke("--help")
+    assert result.exit_code == 0
+    assert "  delete " in result.stdout
+    assert "  stop " not in result.stdout
+
+
+def test_exec_help_documents_timeout_exit():
+    result = invoke("exec", "--help")
+    assert result.exit_code == 0
+    assert "124" in result.stdout
