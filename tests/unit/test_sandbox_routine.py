@@ -1,16 +1,16 @@
 import json
 
-import mobilerun_routines
-import mobilerun_routines.context
+import mobilerun_functions
+import mobilerun_functions.context
 import pytest
-from mobilerun_routines.cli import main
+from mobilerun_functions.cli import main
 
 
 def test_public_routine_api_is_reexported():
     import mobilerun.sandbox as sandbox
 
-    for name in mobilerun_routines.__all__:
-        assert getattr(sandbox, name) is getattr(mobilerun_routines, name)
+    for name in mobilerun_functions.__all__:
+        assert getattr(sandbox, name) is getattr(mobilerun_functions, name)
     assert callable(sandbox.routine)
 
 
@@ -35,7 +35,7 @@ class Output(BaseModel):
     paths = []
     for module, decorator in (
         ("mobilerun.sandbox", "routine"),
-        ("mobilerun_routines", "script"),
+        ("mobilerun_functions", "script"),
     ):
         path = tmp_path / f"{decorator}.py"
         path.write_text(
@@ -57,7 +57,9 @@ class Output(BaseModel):
             return f"device: {message}"
 
     monkeypatch.setattr(
-        mobilerun_routines.context, "connect_device", lambda device_id: FakeDevice()
+        mobilerun_functions.context,
+        "connect_device",
+        lambda device_id, **kwargs: FakeDevice(),
     )
     input_file = tmp_path / "input.json"
     input_file.write_text('{"message":"hello"}')
@@ -82,6 +84,13 @@ class Output(BaseModel):
         envelopes.append(json.loads(result_file.read_text()))
     assert (
         envelopes
-        == [{"ok": True, "outcome": "succeeded", "result": {"value": "device: hello"}}]
+        == [
+            {
+                "ok": True,
+                "outcome": "succeeded",
+                "result": {"value": "device: hello"},
+                "input": {"message": "hello"},
+            }
+        ]
         * 2
     )

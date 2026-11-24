@@ -11,8 +11,14 @@ import pytest
 from tests.demos import intro_demo
 
 
-def test_import_does_not_load_agent_addon():
+def test_import_does_not_load_agent_addon_or_deploy():
     code = """import builtins
+import mobilerun.sandbox as sandbox
+
+def blocked(*args, **kwargs):
+    raise AssertionError('demo attempted deployment during import')
+
+sandbox.deploy = blocked
 original = builtins.__import__
 def guarded(name, *args, **kwargs):
     if name == 'mobilerun.agents' or name.startswith('mobilerun.agents.'):
@@ -25,6 +31,11 @@ import tests.demos.intro_demo
         [sys.executable, "-c", code], capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_sandbox_example_runs_locally():
+    greeting = intro_demo.hello(intro_demo.GreetingInput(name="Ada"))
+    assert greeting.message == "Hello, Ada!"
 
 
 def test_main_without_agent_uses_base_device(monkeypatch):

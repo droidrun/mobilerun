@@ -72,7 +72,7 @@ _real_secrets = RealEnv(
         key: os.environ[key]
         for key in _secret_names()
         if key.endswith(("_API_KEY", "_TOKEN", "_SECRET_KEY"))
-        or key == "LANGFUSE_PUBLIC_KEY"
+        or key in {"LANGFUSE_PUBLIC_KEY", "MOBILERUN_CLOUD_BASE_URL"}
     }
 )
 _real_config_dir = Path(

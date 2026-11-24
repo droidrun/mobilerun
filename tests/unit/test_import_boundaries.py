@@ -53,6 +53,8 @@ def test_sdk_imports_only_live_in_cloud_clients():
             ):
                 continue  # Logger name, not an import or entry point.
             if target == "mobilerun_sdk" or target.startswith("mobilerun_sdk."):
+                if path == ROOT / "sandbox" / "clients.py":
+                    continue  # Sandbox is a self-contained plugin with its own adapter.
                 violations.append(f"{path.relative_to(ROOT)}:{line}")
     assert not violations, violations
 

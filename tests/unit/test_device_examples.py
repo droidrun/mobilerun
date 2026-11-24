@@ -95,7 +95,7 @@ def test_quickstart_runs_with_fake_devices(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "macro replay:" in output
     assert "pool screenshots: 2" in output
-    assert "sandbox app:" in output
+    assert "sandbox function (local): Hello, world!" in output
     assert "skills:" in output
 
     if importlib.util.find_spec("mobilerun.agents") is not None:

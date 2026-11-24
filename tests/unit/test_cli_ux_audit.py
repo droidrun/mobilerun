@@ -48,19 +48,23 @@ def test_unknown_skills_offer_list_and_close_match(
     assert "Did you mean" not in result.output
 
 
-def test_sandbox_hidden_from_root_help() -> None:
+def test_sandbox_visible_in_root_help() -> None:
     from mobilerun.cli.app import cli
 
-    assert "sandbox" not in CliRunner().invoke(cli, ["--help"]).output
+    output = CliRunner().invoke(cli, ["--help"]).output
+    assert "sandbox" in output and "Deploy and run cloud functions." in output
 
 
-def test_sandbox_hidden_from_root_menu() -> None:
+def test_sandbox_visible_in_root_menu() -> None:
     import click
 
     from mobilerun.cli.app import cli
 
     with click.Context(cli) as ctx:
-        assert "sandbox" not in [choice.value for choice in cli.menu_choices(ctx)]
+        choice = next(
+            choice for choice in cli.menu_choices(ctx) if choice.value == "sandbox"
+        )
+        assert choice.hint == "Deploy and run cloud functions."
 
 
 def test_agent_help_explains_llm_url_flags() -> None:

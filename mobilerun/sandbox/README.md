@@ -1,29 +1,317 @@
-# sandbox/
+# Sandbox cloud functions
 
-**Purpose:** Define sandbox apps, routines, and tasks. Task and client calls
-raise `SandboxNotImplemented` until sandbox-api ships. There is no registered
-`mobilerun sandbox` CLI command.
+Sandbox is a self-contained Mobilerun plugin for deploying typed Python functions
+as authenticated endpoints or UTC schedules.
+Install the `sandbox` extra (`pip install 'mobilerun[sandbox]'`) and configure
+cloud credentials before deploying. The extra pins `mobilerun-functions` 0.1.0
+with device support.
 
-**What belongs here / what doesn't:** Sandbox script APIs belong here; device and agent implementations do not.
+## Device-free example
 
-**Contents:**
-
-- `__init__.py` — Package exports.
-- `app.py` — App and task registration.
-- `models.py` — Task wrapper and routine decorator.
-- `client.py` — Deployed script and run result clients.
-- `errors.py` — Sandbox errors.
-
-**Examples:**
+Save as `hello.py`:
 
 ```python
-from mobilerun.sandbox import App
+from pydantic import BaseModel
 
-app = App("example")
+from mobilerun.sandbox import cloud
 
-@app.task()
-def greet():
-    return "hello"
+
+class Input(BaseModel):
+    name: str = "world"
+
+
+class Output(BaseModel):
+    message: str
+
+
+@cloud("hello")
+def hello(input: Input) -> Output:
+    return Output(message=f"hello {input.name}")
 ```
 
-**Depends on / used by:** Uses the shared base. Independent of macro/, skills/, and agents/; only shared CLI helper `cli/base/` is allowed.
+**Deploying, firing, and enabling can incur charges, even without a device.**
+An enabled schedule can incur future charges without your CLI running. The
+default billing mode is `paid`; `MOBILERUN_BILLING` changes the default and an
+explicit `--billing` or `billing=` overrides it. Deploy, fire, and enable
+require `paid`; reads, polling, disable, and owned cleanup allow `no_commerce`.
+
+```sh
+mobilerun sandbox deploy hello.py --yes
+mobilerun sandbox fire hello --input '{"name":"world"}' --yes
+mobilerun sandbox path --json
+```
+
+`fire` invokes an endpoint and returns the invocation ID
+without waiting. It does not fire cron triggers. Use `mobilerun sandbox list`
+to inspect deployments, `mobilerun sandbox runs hello` for recent executions,
+and `mobilerun sandbox enable hello --yes` or `mobilerun sandbox disable hello --yes`
+to toggle an owned flow. Mutations require interactive confirmation or `--yes`.
+`fire` accepts `--input-file FILE` instead of `--input`.
+
+Importing a declaration, or executing it as `__main__`, does not itself deploy
+anything. An ordinary call to `hello(Input(name="world"))` runs locally. To
+deploy from Python, explicitly call `deploy("hello.py", yes=True)` after importing
+`deploy` from `mobilerun.sandbox`; a confirmation callback is an alternative to
+`yes=True`.
+
+## Examples
+
+### Endpoint (default)
+
+Save as `greet.py`:
+
+```python
+from pydantic import BaseModel
+
+from mobilerun.sandbox import cloud
+
+
+class Input(BaseModel):
+    name: str
+
+
+class Output(BaseModel):
+    message: str
+
+
+@cloud("greet")
+def greet(input: Input) -> Output:
+    return Output(message=f"Hello, {input.name}!")
+```
+
+Deploy, then call the endpoint from the CLI or Python:
+
+```sh
+mobilerun sandbox deploy greet.py --yes
+mobilerun sandbox fire greet --input '{"name":"Ada"}' --yes
+```
+
+```python
+from mobilerun.sandbox import cloud
+
+run = cloud["greet"].fire(name="Ada")
+```
+
+`sandbox deploy` prints the trigger URL. A raw HTTP call sends the input under
+`payload`; `MOBILERUN_API_KEY` is the API key. HTTP 202 returns an
+`invocationId`, not the result. Poll the printed executions URL using that ID,
+then fetch the returned execution ID for `result.steps[].body.result`.
+
+```sh
+curl -X POST '<trigger-url>' \
+  -H "Authorization: Bearer $MOBILERUN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"payload":{"name":"Ada"}}'
+```
+
+### Endpoint that uses a phone
+
+The function receives a runtime `Context`; `ctx.device()` returns its device.
+Device time is billed.
+
+```python
+from mobilerun_functions import Context
+from pydantic import BaseModel
+from mobilerun.sandbox import cloud
+
+
+class Empty(BaseModel):
+    pass
+
+
+class Output(BaseModel):
+    message: str
+
+
+@cloud("open-settings", device="<device-id>")
+def open_settings(input: Empty, ctx: Context) -> Output:
+    device = ctx.device()
+    device.start_app("com.android.settings")
+    return Output(message="Settings opened")
+```
+
+```sh
+mobilerun sandbox deploy open_settings.py --yes
+```
+
+Alternatively, leave `device=` off the decorator and deploy with
+`mobilerun sandbox deploy open_settings.py --device ID --yes`.
+
+### Scheduled run
+
+This five-field cron runs at 06:00 UTC every day. A schedule can incur future
+charges; disable it when it is no longer needed. `fire` does not trigger cron
+flows; use `runs` to inspect executions.
+
+```python
+from mobilerun_functions import Context
+from pydantic import BaseModel
+from mobilerun.sandbox import cloud
+
+
+class Empty(BaseModel):
+    pass
+
+
+class Output(BaseModel):
+    message: str
+
+
+@cloud("nightly-report", schedule="0 6 * * *", device="<device-id>")
+def nightly_report(input: Empty, ctx: Context) -> Output:
+    device = ctx.device()
+    return Output(message=f"Report generated for {device.current_app_id()}")
+```
+
+```sh
+mobilerun sandbox deploy nightly_report.py --yes
+mobilerun sandbox runs nightly-report
+mobilerun sandbox disable nightly-report --yes
+```
+
+For a device-free schedule, use a separate declaration and a body that does not
+access `ctx.device()`:
+
+```python
+from pydantic import BaseModel
+from mobilerun.sandbox import cloud
+
+
+class Empty(BaseModel):
+    pass
+
+
+class Output(BaseModel):
+    message: str
+
+
+@cloud("nightly-report", schedule="0 6 * * *")
+def nightly_report(input: Empty) -> Output:
+    return Output(message="Device-free report generated")
+```
+
+```sh
+mobilerun sandbox deploy nightly_report.py --device-free --yes
+```
+
+### Function only
+
+Set `endpoint=False` to deploy the function without an endpoint or schedule.
+
+```python
+from pydantic import BaseModel
+
+from mobilerun.sandbox import cloud
+
+
+class Input(BaseModel):
+    value: str
+
+
+class Output(BaseModel):
+    result: str
+
+
+@cloud("helper", endpoint=False)
+def helper(input: Input) -> Output:
+    return Output(result=f"{input.value} is ready")
+```
+
+```sh
+mobilerun sandbox deploy helper.py --yes
+```
+
+## Remote calls
+
+```python
+from hello import hello
+
+run = hello.remote.fire(name="world")  # Potentially paid; does not wait.
+print(run.invocation_id)
+print(run.result().message)  # Validated as Output.
+```
+
+`hello.remote(...)` fires and waits in one call. `cloud["hello"]` is a lazy,
+untyped handle: it returns plain JSON rather than the declared Pydantic model.
+Neither handle deploys on demand. A payload field named `billing` or `input`
+belongs inside the explicit `input={...}` mapping, not in keyword arguments.
+Use either that mapping (or a Pydantic model) or payload keywords, not both.
+
+`Run.result(timeout=300)` shares one deadline across invocation lookup and
+execution polling; timing out does not cancel execution. Execution or function
+failure raises an error; a partial function result can still return typed
+output, with partial metadata in `run.snapshot`. `run.logs()` retrieves logs
+separately. Run handles expose execution ID, status, timestamps, and duration.
+These Python APIs are synchronous and cannot be called from a running event loop.
+
+## Source, triggers, and devices
+
+- Use one top-level `@cloud(...)` declaration per Python file, with literal
+  decorator arguments and the canonical `from mobilerun.sandbox import cloud`
+  import (no alias). Keep the typed signature models and any models they
+  reference in the file. The packager emits only the function, its required
+  models/imports, and the worker runtime wrapper.
+- Put helpers, constants, and lazy third-party imports used by the function
+  inside its body. Sibling modules, application assets, and arbitrary project
+  dependencies are not bundled or installed; unsupported decorators are
+  rejected. The deployer parses the original file without importing it, then
+  inspects the exact generated source locally. **Only deploy trusted files:**
+  inspection executes Python and is not a security boundary.
+- `@cloud("name")` deploys an authenticated endpoint by default. To deploy just
+  the function without a flow, set `endpoint=False` and omit `schedule`. Use
+  `schedule="<five-field UTC cron>"` for a scheduled workflow instead. Explicit
+  `endpoint=True` is still supported but cannot be combined with a schedule.
+  The client checks endpoint payloads with
+  plain `jsonschema`; the server checks `format` constraints. Endpoint input
+  schemas that contain `$ref` are rejected rather than resolved or uploaded.
+- `--device ID` / `device=` overrides the decorator's device. Use
+  `--device-free` / `device_free=True` to override the decorator and omit a
+  device. An endpoint without a device defaults to device-free. For a schedule
+  without a decorator device, the interactive CLI offers
+  existing cloud devices and a device-free choice; noninteractive deployment
+  must make that choice explicitly. Sandbox does not provision or delete devices.
+
+## Local store and ownership
+
+`mobilerun sandbox path` shows the expanded absolute store path without
+authenticating or creating it. The default is `<MOBILERUN_USER_CONFIG_DIR>/sandbox`.
+Set `MOBILERUN_SANDBOX_DIRECTORY` to relocate it; an empty value uses the default.
+The store is created on deployment and scoped as follows (`\0` is a NUL separator):
+
+```text
+<store>/<sha256(api-origin\0key-fingerprint)>/<sha256(declaration-name)>/
+  receipt.json
+  flow.yaml
+```
+
+The key fingerprint is the SHA-256 of the resolved API key, not the key itself or
+a server account ID. Changing the API origin or key selects a different scope.
+`receipt.json` records verified creation IDs and deployment progress, including
+partial deployments. `flow.yaml` is an inspectable workflow document, not proof
+of ownership. No function YAML, source copies, or application assets are stored
+there. Preserve the receipt: a lost receipt or key rotation can make previously
+deployed resources inaccessible to the plugin's mutation commands. Matching a
+name does not grant ownership, and resources are never adopted by name.
+
+Flows pin a numeric function version after it is ready. A replacement schedule
+is not activated unless the old schedule's shutdown is confirmed. The cutover
+can miss a firing, so do not rely on exactly-once scheduling. If creation is
+uncertain, retain the original source and receipt for recovery; do not delete
+resources based on names. Cleanup checks recorded IDs and relationships and
+preserves foreign/shared resources. Local flow YAML is removed only after
+owned flow removal is confirmed.
+
+## Files
+
+| File | Responsibility |
+| --- | --- |
+| [`__init__.py`](__init__.py), [`_runtime.py`](_runtime.py) | Public API and lazy worker-runtime exports |
+| [`app.py`](app.py) | Cloud decorator and synchronous `deploy`, `Remote`, and `Run` APIs |
+| [`packaging.py`](packaging.py) | Static declaration parsing, extraction, and local inspection |
+| [`deployment.py`](deployment.py) | Async deployment, receipts, workflow cutover, cleanup, and run polling |
+| [`clients.py`](clients.py) | Sandbox's async SDK adapter; uses shared [cloud client and billing helpers](../clients/cloud/README.md), closes clients it creates, and leaves injected clients caller-owned |
+| [`models.py`](models.py), [`errors.py`](errors.py), [`settings.py`](settings.py) | Declarations, receipts, errors, and defaults |
+| [`cli/`](cli/) | Removable `mobilerun sandbox` command group |
+
+See the [smoke test instructions](../../tests/unit/smoke/README.md#sandbox-cloud-functions)
+for the paid, device-free lifecycle check and its cleanup procedure.

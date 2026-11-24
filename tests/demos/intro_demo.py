@@ -27,7 +27,7 @@ from mobilerun.core.devices import (  # noqa: E402
 from mobilerun.macro import MacroOperator, MacroRecorder  # noqa: E402
 from mobilerun.macro.models import MACRO_SCHEMA_VERSION  # noqa: E402
 from mobilerun.models import Billing  # noqa: E402
-from mobilerun.sandbox import App, Context  # noqa: E402
+from mobilerun.sandbox import cloud  # noqa: E402
 from mobilerun.skills import list_skills  # noqa: E402
 from tests.demos.demo_billing import confirmation  # noqa: E402
 
@@ -50,13 +50,18 @@ def AgentOperator():
     return operator()
 
 
-# Define a sandbox task. Running it needs sandbox-api.
-app = App("playground")
+class GreetingInput(BaseModel):
+    name: str = "world"
 
 
-@app.task(device=CLOUD_DEVICE_ID)
-def task(input: AndroidVersion, ctx: Context) -> AndroidVersion:
-    return input
+class GreetingOutput(BaseModel):
+    message: str
+
+
+# Declare a device-free endpoint. Deployment is a separate, explicit step.
+@cloud("intro-demo-hello")
+def hello(input: GreetingInput) -> GreetingOutput:
+    return GreetingOutput(message=f"Hello, {input.name}!")
 
 
 async def local_basics(device: Device) -> None:
@@ -266,8 +271,8 @@ async def pool_demo(device: Device, cloud: Device) -> None:
 
 
 def sandbox_and_skills() -> None:
-    # Show the sandbox task without running it.
-    print("sandbox app:", app.name, "task:", task.__name__)
+    # A direct call runs locally, without a device or deployment.
+    print("sandbox function (local):", hello(GreetingInput()).message)
 
     # List the bundled skills.
     print("skills:", [skill.name for skill in list_skills()])

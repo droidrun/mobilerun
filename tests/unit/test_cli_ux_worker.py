@@ -101,7 +101,7 @@ def test_account_canonical_and_auth_alias():
     runner = CliRunner()
     assert "account" in runner.invoke(cli, ["--help"]).output
     assert runner.invoke(cli, ["account", "--help"]).exit_code == 0
-    assert runner.invoke(cli, ["sandbox", "--help"]).exit_code == 2
+    assert runner.invoke(cli, ["sandbox", "--help"]).exit_code == 0
 
 
 def test_variadic_choices_use_multiselect(monkeypatch):

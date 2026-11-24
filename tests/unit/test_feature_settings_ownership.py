@@ -22,15 +22,15 @@ def test_sandbox_missing_dependency_has_install_hint():
     code = """
 import importlib.abc
 import sys
-class BlockRoutines(importlib.abc.MetaPathFinder):
+class BlockFunctions(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "mobilerun_routines":
+        if fullname == "mobilerun_functions":
             raise ModuleNotFoundError("blocked", name=fullname)
-sys.meta_path.insert(0, BlockRoutines())
+sys.meta_path.insert(0, BlockFunctions())
 import mobilerun
 import mobilerun.cli.app
 try:
-    import mobilerun.sandbox
+    from mobilerun.sandbox import Context
 except ImportError as exc:
     assert "pip install 'mobilerun[sandbox]'" in str(exc), str(exc)
 else:

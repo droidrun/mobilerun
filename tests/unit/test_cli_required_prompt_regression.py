@@ -139,7 +139,7 @@ def test_cli_command_tree_required_parameters_are_prompting() -> None:
             assert isinstance(command, menu.MenuGroup), path
             ctx = click.Context(command, info_name=command.name)
             for name in command.list_commands(ctx):
-                if path == "mobilerun" and name in {"skills", "sandbox"}:
+                if path == "mobilerun" and name == "skills":
                     continue
                 child = command.get_command(ctx, name)
                 assert child is not None
@@ -246,9 +246,9 @@ def test_required_text_cancels_after_whitespace(
     assert "connected:" not in result.output
 
 
-def test_sandbox_is_not_a_cli_command() -> None:
+def test_sandbox_deploy_requires_file_in_automation() -> None:
     from mobilerun.cli.app import cli
 
-    result = CliRunner().invoke(cli, ["sandbox"])
+    result = CliRunner().invoke(cli, ["sandbox", "deploy"])
     assert result.exit_code == 2
-    assert "No such command" in result.output
+    assert "Missing argument 'FILE'" in result.output

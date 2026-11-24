@@ -8,13 +8,48 @@ Set `MOBILERUN_SMOKE_SERIAL` (default `emulator-5554`), `MOBILERUN_SMOKE_CLOUD_D
 
 The test harness redirects HOME and the config directory before importing application code. Secrets are restored in memory only for individual smoke tests. OAuth profiles, when needed, are copied read-only from the real config into a temporary directory; the original is never opened for writing. Tests can change device UI and end on the home screen.
 
-TODO: Add local/cloud pool ordering, agent/context provider, skills, sandbox and remaining CLI/macro coverage.
+TODO: Add local/cloud pool ordering, agent/context provider, skills and remaining CLI/macro coverage.
 
 `test_cloud_lifecycle.py::test_cloud_info_and_wait_ready` and
 `test_cloud_lifecycle.py::test_cloud_rejects_local_secrets` do not create a phone or run a task; check your account pricing before running cloud operations.
 `test_cloud_lifecycle.py::test_paid_cloud_create_lifecycle` creates a billable
 phone and resets it; collect only until explicitly approved. The typed-output
 task smoke also checks lazy trajectory and screenshot reads.
+
+## Sandbox cloud functions
+
+The sandbox endpoint smoke requires the `sandbox` and `dev` extras, a valid
+`MOBILERUN_API_KEY`, and an account authorized for paid functions and workflows.
+It needs no phone, emulator, or LLM credentials. **Device-free is not free:**
+deployment and the function execution may be billed. After explicit approval,
+run only this lifecycle check with:
+
+```sh
+source ~/.agent-env; .venv/bin/pytest --smoke tests/unit/smoke/test_sandbox_functions.py -v -s
+```
+
+To check discovery without calling the cloud:
+
+```sh
+source ~/.agent-env; .venv/bin/pytest tests/unit/smoke/test_sandbox_functions.py --collect-only -q
+```
+
+The test creates one UUID-named function, a ready version, and an endpoint flow
+with a trigger and function action. It fires once, polls for a typed pong, and
+prints resource and run IDs, available timing, and cleanup outcome (not keys,
+payloads, or URLs). Check account billing for actual usage and cost.
+
+The test prints the temporary receipt path before deploying. Its `finally`
+block uses [`mobilerun.sandbox.deployment`](../../../mobilerun/sandbox/deployment.py)
+to load that receipt even after a partial deployment, disable/remove the
+owned flow, and delete the unshared owned trigger, action, and function in
+`no_commerce` mode. It then reads the cloud state to verify removal. If the run
+is interrupted or cleanup fails, preserve the printed receipt and test source
+before pytest prunes its temporary files. Inspect the UUID name and recorded
+IDs in the account used for the test. If a create response was lost, cleanup
+can refuse because not all IDs are known; review the journal with an operator
+before authorizing recovery. Never delete a resource solely because its name
+matches, and do not assume re-running pytest will clean up a prior UUID.
 
 ## Cleanup
 
