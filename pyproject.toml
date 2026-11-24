@@ -25,7 +25,7 @@ dependencies = [
     "llama-index-llms-google-genai>=0.8.5",
     "llama-index-llms-ollama>=0.7.2",
     "llama-index-llms-openrouter>=0.4.2",
-    "mobilerun-sdk>=6.1.1",
+    "mobilerun-sdk==6.3.1",
     "mobilerun-core[local]>=1.12.0",
     "mobilerun-core-local[cloud]>=0.7.2",
     # Security floors also protect installations from the published wheel.
@@ -102,10 +102,6 @@ mobilerun = "mobilerun.cli.main:cli"
 
 [tool.uv]
 override-dependencies = ["filelock>=4.2.1"]
-
-[tool.uv.sources]
-mobilerun-functions = { git = "https://github.com/droidrun/mobilerun-functions", rev = "35ee7eb882a081b1cb2c04cf418d0b1b67d0eed2" }
-mobilerun-sdk = { git = "https://github.com/droidrun/mobilerun-sdk-python", rev = "35cf0804c6c5f36f5d52752853628be2d3de0541" }
 
 [tool.ruff]
 line-length = 100
