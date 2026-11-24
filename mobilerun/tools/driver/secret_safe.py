@@ -2,7 +2,7 @@
 
 Three pieces share one :class:`SecretRedactor` per agent:
 
-* :class:`SecretSafeDriver` wraps the (already Stealth/Recording wrapped)
+* :class:`SecretSafeDriver` wraps the (already Humanize/Recording wrapped)
   driver. UI trees pass through the redactor, screenshots turn black when
   start masking is requested or an approval-gated secret is typed. Input uses
   :meth:`SecretSafeDriver.input_secret`, which keeps the plaintext out of the
@@ -638,8 +638,8 @@ def black_like(image: Any) -> Any:
 class SecretSafeDriver:
     """Outermost driver wrapper: redacts observations, protects secret input.
 
-    Wrap order is ``raw -> Stealth -> Recording -> SecretSafe``. Recording and
-    Stealth only touch mutating actions, so observations returned through them
+    Wrap order is ``raw -> Humanize -> Recording -> SecretSafe``. Recording and
+    Humanize only touch mutating actions, so observations returned through them
     are still masked here, and secrets typed through :meth:`input_secret` are
     removed from the recording log right after they were typed.
     """
@@ -735,7 +735,7 @@ class SecretSafeDriver:
         """Replace this call's plaintext ``input_text`` entries by a marker.
 
         Only entries appended since ``starts`` are touched: the value itself,
-        or the words and blanks an inner Stealth wrapper typed one by one.
+        or the words and blanks an inner Humanize wrapper typed one by one.
         """
         spoken = {value, " ", *value.split(" ")}
         for log, start in starts:

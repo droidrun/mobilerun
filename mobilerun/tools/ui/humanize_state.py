@@ -1,4 +1,4 @@
-"""StealthUIState — randomized coordinate resolution for human-like taps.
+"""HumanizeUIState — randomized coordinate resolution for human-like taps.
 
 Overrides ``UIState.get_element_coords()`` and ``get_clear_point()``
 to return randomized positions within element bounds, avoiding the
@@ -13,7 +13,7 @@ from typing import Tuple
 from mobilerun.tools.ui.state import UIState
 
 
-class StealthUIState(UIState):
+class HumanizeUIState(UIState):
     """UIState variant that randomizes tap coordinates within element bounds."""
 
     def get_element_coords(self, index: int) -> Tuple[int, int]:

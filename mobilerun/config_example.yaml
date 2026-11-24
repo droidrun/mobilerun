@@ -211,8 +211,8 @@ tools:
   #   - click_at
   #   - click_area
   #   - long_press_at
-  # Stealth mode adds human-like timing and randomized coordinates.
-  stealth: false
+  # Humanize mode adds human-like timing and randomized coordinates.
+  humanize: false
 
 # === Credential Settings ===
 credentials:

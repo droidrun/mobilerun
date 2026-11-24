@@ -301,6 +301,9 @@ class LoggingConfig:
 DEFAULT_DISABLED_TOOLS: tuple[str, ...] = ("click_at", "click_area", "long_press_at")
 
 
+RENAMED_STEALTH_MESSAGE = "`tools.stealth` was renamed to `tools.humanize`"
+
+
 @dataclass
 class ToolsConfig:
     """Tools configuration.
@@ -312,7 +315,7 @@ class ToolsConfig:
     """
 
     disabled_tools: Optional[List[str]] = None
-    stealth: bool = False
+    humanize: bool = False
 
 
 @dataclass
@@ -480,6 +483,10 @@ class MobileConfig:
             servers=mcp_servers,
         )
 
+        tools_data = data.get("tools") or {}
+        if "stealth" in tools_data:
+            raise ValueError(RENAMED_STEALTH_MESSAGE)
+
         # ``data.get("X") or {}`` so a section present-but-null in YAML
         # (e.g. ``tools:`` followed only by comments) is treated as empty.
         return cls(
@@ -489,7 +496,7 @@ class MobileConfig:
             telemetry=TelemetryConfig(**(data.get("telemetry") or {})),
             tracing=TracingConfig(**(data.get("tracing") or {})),
             logging=LoggingConfig(**(data.get("logging") or {})),
-            tools=ToolsConfig(**(data.get("tools") or {})),
+            tools=ToolsConfig(**tools_data),
             credentials=CredentialsConfig(**(data.get("credentials") or {})),
             external_agents=external_agents,
             mcp=mcp_config,

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from mobilerun_core_local.driver.android import AndroidDriver
 from mobilerun_core_local.driver.recording import RecordingDriver
-from mobilerun_core_local.driver.stealth import StealthDriver
+from mobilerun_core_local.driver.humanize import HumanizeDriver
 from PIL import Image
 
 from mobilerun.tools.driver.secret_safe import (
@@ -353,13 +353,13 @@ def test_core_recording_driver_logs_plaintext_input():
 
 def test_secret_never_reaches_recording_log_or_its_view():
     core = PlainCore()
-    recording = RecordingDriver(StealthDriver(core))
+    recording = RecordingDriver(HumanizeDriver(core))
     driver = SecretSafeDriver(recording, SecretRedactor())
 
     run(driver.input_text("tap target"))  # ordinary input is recorded
     run(driver.input_secret("pw", "hunter two", protected=True))
 
-    assert core.typed[-3:] == ["hunter", " ", "two"]  # stealth still types
+    assert core.typed[-3:] == ["hunter", " ", "two"]  # humanize still types
     for log in (recording.log, driver.log):
         assert "hunter" not in repr(log)
     assert recording.log[-1] == {
@@ -868,10 +868,10 @@ def test_scrub_leaves_earlier_entries_untouched():
     assert len(recording.log) == 2
 
 
-def test_scrub_covers_recording_inside_stealth():
+def test_scrub_covers_recording_inside_humanize():
     recording = RecordingDriver(PlainCore())
-    stealth = StealthDriver(recording)
-    driver = SecretSafeDriver(stealth, SecretRedactor())
+    humanize = HumanizeDriver(recording)
+    driver = SecretSafeDriver(humanize, SecretRedactor())
     run(driver.input_text("hunter two"))  # earlier, same words
 
     run(driver.input_secret("pw", "hunter two", protected=True))
@@ -888,8 +888,8 @@ def test_scrub_covers_recording_inside_stealth():
     ]
 
 
-def test_scrub_covers_recording_outside_stealth():
-    recording = RecordingDriver(StealthDriver(PlainCore()))
+def test_scrub_covers_recording_outside_humanize():
+    recording = RecordingDriver(HumanizeDriver(PlainCore()))
     driver = SecretSafeDriver(recording, SecretRedactor())
 
     run(driver.input_secret("pw", "hunter two"))

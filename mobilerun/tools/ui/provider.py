@@ -24,7 +24,7 @@ from mobilerun.tools.helpers.images import (
     resize_image_to_max_side_with_grid,
 )
 from mobilerun.tools.ui.state import UIState
-from mobilerun.tools.ui.stealth_state import StealthUIState
+from mobilerun.tools.ui.humanize_state import HumanizeUIState
 
 if TYPE_CHECKING:
     from mobilerun_core_local.driver.base import DeviceDriver
@@ -1373,7 +1373,7 @@ class AndroidStateProvider(StateProvider):
         tree_filter: "TreeFilter",
         tree_formatter: "TreeFormatter",
         use_normalized: bool = False,
-        stealth: bool = False,
+        humanize: bool = False,
         ui_cls: "type[UIState] | None" = None,
         vision_enabled: bool = False,
         vision_resize_policy: Any = None,
@@ -1382,7 +1382,7 @@ class AndroidStateProvider(StateProvider):
         self.tree_filter = tree_filter
         self.tree_formatter = tree_formatter
         self.use_normalized = use_normalized
-        self._ui_cls = ui_cls or (StealthUIState if stealth else UIState)
+        self._ui_cls = ui_cls or (HumanizeUIState if humanize else UIState)
         self.vision_enabled = vision_enabled
         # Resolves the exact screenshot dims the active vision model grounds on
         # (duck-typed: needs ``effective_dims(w, h)``). None → legacy 2048 cap.
