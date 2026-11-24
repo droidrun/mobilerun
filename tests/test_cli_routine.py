@@ -226,6 +226,23 @@ def test_pull_writes_file_and_refuses_overwrite(sdk, tmp_path):  # noqa: F811
     assert json.loads(target.read_bytes()) == {**DOCUMENT, "name": "Changed"}
 
 
+@pytest.mark.parametrize(
+    "args,call",
+    [(("pull", FLOW_ID), "retrieve_document"), (("schema",), "document_schema")],
+)
+def test_existing_output_is_refused_before_the_download(
+    sdk, tmp_path, args, call  # noqa: F811
+):
+    target = tmp_path / "out.json"
+    target.write_text("keep")
+    result = invoke(*args, "-o", target)
+    assert result.exit_code == 1, result.output
+    assert "already exists; use --force" in result.stderr
+    assert target.read_text() == "keep"
+    sdk.factory.assert_not_called()
+    getattr(sdk.client.workflows.flows, call).assert_not_called()
+
+
 def page(*items, has_next=False):
     return SimpleNamespace(
         items=list(items), pagination=SimpleNamespace(has_next=has_next)

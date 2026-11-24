@@ -23,6 +23,8 @@ from mobilerun.cli.options import (
     no_input_option,
     print_issues,
     print_model,
+    print_models,
+    refuse_existing,
     verbose_option,
     write_file,
 )
@@ -60,8 +62,8 @@ def _push_document(client, flow_id, document, json_output):
         raise click.exceptions.Exit(INVALID_EXIT_CODE) from None
 
 
-def _emit_or_write(document, output, force, json_output, format="json"):
-    text = render_document(document, "json" if json_output else format)
+def _emit_or_write(document, output, force, json_output, document_format="json"):
+    text = render_document(document, "json" if json_output else document_format)
     if output is None:
         emit(
             json.loads(text) if json_output else text.rstrip("\n"),
@@ -87,6 +89,8 @@ def _emit_or_write(document, output, force, json_output, format="json"):
 @verbose_option
 def routine_schema(output, force, api_url, json_output, verbose):
     """Print the JSON schema of routine documents."""
+    if output is not None:
+        refuse_existing(output, force)
     with cloud_client(api_url) as client:
         schema = client.workflows.flows.document_schema()
     _emit_or_write(schema, output, force, json_output)
@@ -156,6 +160,7 @@ def push_routine(file, flow_id, api_url, json_output, verbose):
 @click.option("--force", is_flag=True, help="Overwrite the output file if it exists.")
 @click.option(
     "--format",
+    "document_format",
     type=click.Choice(["yaml", "json"]),
     default="yaml",
     help="Document output format (--json overrides this).",
@@ -163,11 +168,15 @@ def push_routine(file, flow_id, api_url, json_output, verbose):
 @api_url_option
 @json_option
 @verbose_option
-def pull_routine(flow_id, output, force, format, api_url, json_output, verbose):
+def pull_routine(
+    flow_id, output, force, document_format, api_url, json_output, verbose
+):
     """Download a routine as a document."""
+    if output is not None:
+        refuse_existing(output, force)
     with cloud_client(api_url) as client:
         document = client.workflows.flows.retrieve_document(flow_id).data
-    _emit_or_write(document, output, force, json_output, format)
+    _emit_or_write(document, output, force, json_output, document_format)
 
 
 @routine_cli.command("list", epilog=examples("mobilerun routine list -j"))
@@ -178,23 +187,11 @@ def list_routines(api_url, json_output, verbose):
     """List routines."""
     with cloud_client(api_url) as client:
         items = all_pages(lambda page: client.workflows.flows.list(page=page))
-    if json_output:
-        emit(
-            [item.model_dump(mode="json", by_alias=True) for item in items],
-            json_output=True,
-        )
-        return
-    emit_rows(
+    print_models(
+        items,
+        json_output,
         ("ID", "NAME", "STATUS", "UPDATED"),
-        (
-            (
-                item.id,
-                item.name,
-                item.lifecycle_status,
-                item.updated_at.isoformat() if item.updated_at else "-",
-            )
-            for item in items
-        ),
+        lambda item: (item.id, item.name, item.lifecycle_status, item.updated_at),
     )
 
 
@@ -252,16 +249,12 @@ def routine_runs(flow_id, api_url, json_output, verbose):
         items = all_pages(
             lambda page: client.workflows.executions.list(flow_id=flow_id, page=page)
         )
-    if json_output:
-        emit(
-            [item.model_dump(mode="json", by_alias=True) for item in items],
-            json_output=True,
-        )
-    else:
-        emit_rows(
-            ("ID", "STATUS", "STARTED"),
-            ((item.id, item.status, item.started_at) for item in items),
-        )
+    print_models(
+        items,
+        json_output,
+        ("ID", "STATUS", "STARTED"),
+        lambda item: (item.id, item.status, item.started_at),
+    )
 
 
 @routine_cli.command("enable", epilog=examples("mobilerun routine enable ID"))

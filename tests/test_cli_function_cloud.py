@@ -747,7 +747,8 @@ def test_delete_name_requires_exactly_one_version_choice(sdk, args):
     assert result.exit_code == 2
     assert "--version" in result.stderr
     assert "--all" in result.stderr
-    sdk.factory.assert_not_called()
+    sdk.functions.delete.assert_not_called()
+    sdk.functions.versions.delete.assert_not_called()
 
 
 def test_delete_name_all_deletes_function(sdk):
@@ -870,3 +871,10 @@ def test_function_run_help_documents_timeout_exit():
     result = invoke("run", "--help")
     assert result.exit_code == 0
     assert "124" in result.stdout
+
+
+def test_list_rejects_name_with_search(sdk):
+    result = invoke("list", "--name", "hello.py", "--search", "hel")
+    assert result.exit_code == 2
+    assert "--name or --search" in result.stderr
+    sdk.factory.assert_not_called()

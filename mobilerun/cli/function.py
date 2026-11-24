@@ -17,6 +17,7 @@ from click.core import ParameterSource
 
 from mobilerun.cli.options import (
     INVALID_EXIT_CODE,
+    TIMEOUT_EXIT_CODE,
     Group,
     all_pages,
     api_url_option,
@@ -32,15 +33,21 @@ from mobilerun.cli.options import (
     platform_option,
     print_issues,
     print_model,
+    print_models,
     redact_secrets,
+    refuse_existing,
     target_option,
     verbose_option,
     write_file,
 )
 
-# Total wait for inspection or validation, and the server-side long-poll per request.
+# Total wait for inspection, validation, cloud runs and logs.
 WAIT_SECONDS = 60
+# Server-side long-poll per validation request.
 VALIDATION_POLL_SECONDS = 5
+# Cap for one polling request.
+POLL_REQUEST_SECONDS = 10
+FUNCTION_HEADERS = ("NAME", "VERSION", "ID", "STATUS")
 
 python_option = click.option(
     "--python", "python_path", help="Python interpreter for the function."
@@ -254,7 +261,7 @@ def _device_flags(
     "--timeout",
     "timeout_s",
     type=click.IntRange(min=1),
-    default=60,
+    default=WAIT_SECONDS,
     help="Cloud run wait timeout in seconds (requires --wait); exits 124 on timeout.",
 )
 @click.option("--input", "input_json", help="Function input as JSON.")
@@ -293,77 +300,107 @@ def run_function(
     verbose,
 ):
     """Run a function and print its result."""
+    data = _read_input(input_json, input_file)
+    if local:
+        _run_local(
+            path,
+            data,
+            version,
+            wait,
+            state_file,
+            python_path,
+            (device, target, platform, api_url),
+            json_output,
+        )
+        return
+    _run_cloud(path, data, input_json, version, wait, timeout_s, api_url, json_output)
+
+
+def _input_option(input_json):
+    return "--input" if input_json is not None else "--input-file"
+
+
+def _read_input(input_json, input_file):
     if (input_json is None) == (input_file is None):
         raise click.UsageError("Provide exactly one of --input or --input-file.")
     try:
-        data = json.loads(
+        return json.loads(
             input_json
             if input_json is not None
             else input_file.read_text(encoding="utf-8")
         )
     except (ValueError, OSError) as exc:
-        option = "--input" if input_json is not None else "--input-file"
-        raise click.BadParameter(str(exc), param_hint=option) from None
-    ctx = click.get_current_context()
-    if not local:
-        if any(
-            ctx.get_parameter_source(name) == ParameterSource.COMMANDLINE
-            for name in ("python_path", "state_file", "target", "platform")
-        ):
-            raise click.UsageError(
-                "--python, --state-file, --target and --platform require --local."
-            )
-        if ctx.get_parameter_source("device") == ParameterSource.COMMANDLINE:
-            raise click.UsageError(
-                "Cloud function runs cannot target a device; use --local for device access."
-            )
-        if (
-            not wait
-            and ctx.get_parameter_source("timeout_s") == ParameterSource.COMMANDLINE
-        ):
-            raise click.UsageError("--timeout requires --wait.")
-        if not isinstance(data, dict):
-            raise click.BadParameter("Expected a JSON object.", param_hint="--input")
-        with cloud_client(api_url) as client:
-            item = _resolve_function(client, path)
-            # Creation must not consume the completion wait budget on the server.
-            params = {"input": data, "wait_s": 0}
-            if version is not None:
-                params["version"] = version
-            run = client.compute.functions.runs.create(item.id, **params).data
-            log_download = None
-            if wait:
-                from mobilerun_sdk import Run, WaitFailureError, WaitTimeoutError
+        raise click.BadParameter(
+            str(exc), param_hint=_input_option(input_json)
+        ) from None
 
-                handle = Run(client, run.id)
-                try:
-                    run = handle.wait(timeout=timeout_s, poll_interval=1).data
-                except WaitFailureError as exc:
-                    run = exc.response.data
-                except WaitTimeoutError:
-                    _emit_run(run, json_output)
-                    click.echo(
-                        f"Run {run.id} is still running; the wait timed out. Check `mobilerun function logs {run.id}` later.",
-                        err=True,
-                    )
-                    raise click.exceptions.Exit(124) from None
-                try:
-                    run, log_download = _run_logs(client, run.id)
-                except Exception as exc:
-                    converted = convert_api_error(exc)
-                    message = (
-                        converted[0] if converted else redact_secrets(str(exc), ctx)
-                    )
-                    click.echo(
-                        f"warning: Could not retrieve logs for run {run.id}: {message}",
-                        err=True,
-                    )
-        _emit_run(run, json_output, log_download=log_download)
-        if run.error_code == "timeout":
-            raise click.exceptions.Exit(124)
-        if run.status == "failed" or run.outcome == "failed":
-            raise click.exceptions.Exit(1)
-        return
+
+def _run_cloud(path, data, input_json, version, wait, timeout_s, api_url, json_output):
+    ctx = click.get_current_context()
+    if any(
+        ctx.get_parameter_source(name) == ParameterSource.COMMANDLINE
+        for name in ("python_path", "state_file", "target", "platform")
+    ):
+        raise click.UsageError(
+            "--python, --state-file, --target and --platform require --local."
+        )
+    if ctx.get_parameter_source("device") == ParameterSource.COMMANDLINE:
+        raise click.UsageError(
+            "Cloud function runs cannot target a device; use --local for device access."
+        )
+    if (
+        not wait
+        and ctx.get_parameter_source("timeout_s") == ParameterSource.COMMANDLINE
+    ):
+        raise click.UsageError("--timeout requires --wait.")
+    if not isinstance(data, dict):
+        raise click.BadParameter(
+            "Expected a JSON object.", param_hint=_input_option(input_json)
+        )
+    with cloud_client(api_url) as client:
+        item = _resolve_function(client, path)
+        # Creation must not consume the completion wait budget on the server.
+        params = {"input": data, "wait_s": 0}
+        if version is not None:
+            params["version"] = version
+        run = client.compute.functions.runs.create(item.id, **params).data
+        log_download = None
+        if wait:
+            from mobilerun_sdk import Run, WaitFailureError, WaitTimeoutError
+
+            handle = Run(client, run.id)
+            try:
+                run = handle.wait(timeout=timeout_s, poll_interval=1).data
+            except WaitFailureError as exc:
+                run = exc.response.data
+            except WaitTimeoutError:
+                _emit_run(run, json_output)
+                click.echo(
+                    f"Run {run.id} is still running; the wait timed out. "
+                    f"Check `mobilerun function logs {run.id}` later.",
+                    err=True,
+                )
+                raise click.exceptions.Exit(TIMEOUT_EXIT_CODE) from None
+            try:
+                run, log_download = _run_logs(client, run.id)
+            except Exception as exc:
+                converted = convert_api_error(exc)
+                message = converted[0] if converted else redact_secrets(str(exc), ctx)
+                click.echo(
+                    f"warning: Could not retrieve logs for run {run.id}: {message}",
+                    err=True,
+                )
+    _emit_run(run, json_output, log_download=log_download)
+    if run.error_code == "timeout":
+        raise click.exceptions.Exit(TIMEOUT_EXIT_CODE)
+    if run.status == "failed" or run.outcome == "failed":
+        raise click.exceptions.Exit(1)
+
+
+def _run_local(
+    path, data, version, wait, state_file, python_path, device_flags, json_output
+):
+    ctx = click.get_current_context()
     if (
         version is not None
         or wait
@@ -373,7 +410,7 @@ def run_function(
             "--version, --wait and --timeout apply to cloud runs only."
         )
     interpreter = _interpreter(python_path)
-    device_args, env = _device_flags(device, target, platform, api_url)
+    device_args, env = _device_flags(*device_flags)
     with tempfile.TemporaryDirectory(prefix="mobilerun-function-") as directory:
         input_path = Path(directory) / "input.json"
         result_path = Path(directory) / "result.json"
@@ -414,6 +451,20 @@ def _functions(client, **filters):
     )
 
 
+def _functions_named(client, name):
+    return [item for item in _functions(client, search=name) if item.name == name]
+
+
+def _function_row(item):
+    latest = item.latest_version
+    return (
+        item.name,
+        latest.version if latest else "-",
+        item.id,
+        latest.status if latest else "-",
+    )
+
+
 def _resolve_function(client, name_or_id):
     from mobilerun_core.detect import is_uuid
     from mobilerun_sdk import NotFoundError
@@ -423,11 +474,7 @@ def _resolve_function(client, name_or_id):
             return client.compute.functions.retrieve(name_or_id).data
         except NotFoundError:
             pass
-    matches = [
-        item
-        for item in _functions(client, search=name_or_id)
-        if item.name == name_or_id
-    ]
+    matches = _functions_named(client, name_or_id)
     if not matches:
         raise click.ClickException(
             f"No function named {name_or_id}; use `mobilerun function list`."
@@ -439,18 +486,7 @@ def _print_function(item, json_output):
     if json_output:
         emit(item.model_dump(mode="json", by_alias=True), json_output=True)
     else:
-        latest = item.latest_version
-        emit_rows(
-            ("NAME", "VERSION", "ID", "STATUS"),
-            [
-                (
-                    item.name,
-                    latest.version if latest else "-",
-                    item.id,
-                    latest.status if latest else "-",
-                )
-            ],
-        )
+        emit_rows(FUNCTION_HEADERS, [_function_row(item)])
 
 
 def _emit_run(run, json_output, *, log_download=None):
@@ -473,14 +509,14 @@ def _emit_run(run, json_output, *, log_download=None):
             emit(f"Logs: {log_download.url}")
 
 
-def _poll_until(client, item, fetch, is_final, delays=(1, 2)):
+def _poll_until(client, item, fetch, is_final, first_pause=1, pause=2):
     import httpx
     from mobilerun_sdk import APIError
 
     # Retried requests could outlive the wait budget.
     poller = client.with_options(max_retries=0)
     deadline = time.monotonic() + WAIT_SECONDS
-    delay = delays[0]
+    delay = first_pause
     while not is_final(item):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -490,11 +526,13 @@ def _poll_until(client, item, fetch, is_final, delays=(1, 2)):
         if remaining <= 0:
             break
         try:
-            item = fetch(poller, item.id, httpx.Timeout(min(remaining, 10)))
+            item = fetch(
+                poller, item.id, httpx.Timeout(min(remaining, POLL_REQUEST_SECONDS))
+            )
         except APIError:
             # The upload succeeded: retain its identity even if polling fails.
             break
-        delay = delays[1]
+        delay = pause
     return item
 
 
@@ -508,7 +546,8 @@ def _wait_for_validation(client, item):
         lambda item: item.status != "pending",
         # The server long-polls (wait_s); pause only between polls so an
         # immediate pending answer cannot become a tight loop.
-        delays=(0, 1),
+        first_pause=0,
+        pause=1,
     )
 
 
@@ -529,7 +568,9 @@ def _read_source(file):
     help="Manifest JSON with hosts, credentials, and scopes.",
 )
 @click.option(
-    "--wait/--no-wait", default=True, help="Wait up to 60 seconds for inspection."
+    "--wait/--no-wait",
+    default=True,
+    help=f"Wait up to {WAIT_SECONDS} seconds for inspection.",
 )
 @api_url_option
 @json_option
@@ -548,9 +589,7 @@ def push_function(
         if not isinstance(params["manifest"], dict):
             raise click.BadParameter("Expected a JSON object.", param_hint="--manifest")
     with cloud_client(api_url) as client:
-        matches = [
-            item for item in _functions(client, search=name) if item.name == name
-        ]
+        matches = _functions_named(client, name)
         if matches:
             item = matches[0]
             if description is not None:
@@ -597,30 +636,14 @@ def push_function(
 @verbose_option
 def list_functions(name, search, api_url, json_output, verbose):
     """List functions and their latest versions."""
+    if name is not None and search is not None:
+        raise click.UsageError("Use --name or --search, not both.")
     with cloud_client(api_url) as client:
-        items = _functions(
-            client, **({"search": name or search} if name or search else {})
-        )
-    if name is not None:
-        items = [item for item in items if item.name == name]
-    if json_output:
-        emit(
-            [item.model_dump(mode="json", by_alias=True) for item in items],
-            json_output=True,
-        )
-    else:
-        emit_rows(
-            ("NAME", "VERSION", "ID", "STATUS"),
-            (
-                (
-                    item.name,
-                    item.latest_version.version if item.latest_version else "-",
-                    item.id,
-                    item.latest_version.status if item.latest_version else "-",
-                )
-                for item in items
-            ),
-        )
+        if name is not None:
+            items = _functions_named(client, name)
+        else:
+            items = _functions(client, **({"search": search} if search else {}))
+    print_models(items, json_output, FUNCTION_HEADERS, _function_row)
 
 
 @function_cli.command("show", epilog=examples("mobilerun function show hello.py -j"))
@@ -656,16 +679,12 @@ def versions_function(name_or_id, api_url, json_output, verbose):
         items = all_pages(
             lambda page: client.compute.functions.versions.list(item.id, page=page).data
         )
-    if json_output:
-        emit(
-            [value.model_dump(mode="json", by_alias=True) for value in items],
-            json_output=True,
-        )
-    else:
-        emit_rows(
-            ("VERSION", "STATUS", "CREATED"),
-            ((value.version, value.status, value.created_at) for value in items),
-        )
+    print_models(
+        items,
+        json_output,
+        ("VERSION", "STATUS", "CREATED"),
+        lambda value: (value.version, value.status, value.created_at),
+    )
 
 
 @function_cli.command(
@@ -692,10 +711,7 @@ def pull_function(name_or_id, version, output, force, api_url, json_output, verb
         if output is not None
         else Path(name_or_id if name_or_id.endswith(".py") else name_or_id + ".py")
     )
-    if path.exists() and not force:
-        raise click.ClickException(
-            f"{path} already exists; use --force to overwrite it."
-        )
+    refuse_existing(path, force)
     with cloud_client(api_url) as client:
         item = _resolve_function(client, name_or_id)
         source = client.compute.functions.source(
@@ -767,23 +783,16 @@ def delete_function(
     """Delete a function, or one of its versions."""
     if version is not None and all_versions:
         raise click.UsageError("Choose --version or --all, not both.")
-    from mobilerun_core.detect import is_uuid
-
-    if not is_uuid(name_or_id) and version is None and not all_versions:
-        raise click.UsageError(
-            "A function name requires exactly one of --version N or --all."
-        )
-    confirm_destructive(
-        f"Delete {name_or_id} ({'version ' + str(version) if version else 'all versions'})?",
-        yes=yes,
-        no_input=no_input,
-    )
     with cloud_client(api_url) as client:
         item = _resolve_function(client, name_or_id)
         if item.id != name_or_id and version is None and not all_versions:
             raise click.UsageError(
                 "A function name requires exactly one of --version N or --all."
             )
+        scope = f"version {version}" if version else "all versions"
+        confirm_destructive(
+            f"Delete {item.name} ({scope})?", yes=yes, no_input=no_input
+        )
         if version is not None:
             client.compute.functions.versions.delete(version, function_id=item.id)
         else:

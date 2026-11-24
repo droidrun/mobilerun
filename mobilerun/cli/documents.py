@@ -76,7 +76,10 @@ DocumentLoader.add_constructor("tag:yaml.org,2002:int", _integer)
 DocumentLoader.add_implicit_resolver(
     "tag:yaml.org,2002:float",
     re.compile(
-        r"^[+-]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+|\.(?:inf|Inf|INF|nan|NaN|NAN))$"
+        r"^[+-]?(?:"
+        r"(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+        r"|[0-9]+[eE][+-]?[0-9]+"
+        r"|\.(?:inf|Inf|INF|nan|NaN|NAN))$"
     ),
     list("-+0123456789."),
 )
@@ -84,8 +87,6 @@ DocumentLoader.add_implicit_resolver(
 
 def _wire_value(value):
     if isinstance(value, dict):
-        if any(not isinstance(key, str) for key in value):
-            raise ValueError("Document keys must be strings.")
         return {key: _wire_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_wire_value(item) for item in value]
@@ -123,23 +124,24 @@ def read_document(file):
         raise click.ClickException(f"Cannot read {file} as JSON/YAML: {exc}") from None
 
 
-def render_document(document, format):
+class DocumentDumper(yaml.SafeDumper):
+    """Quote all strings so PyYAML's YAML 1.1 dumper cannot change 1.2 scalars
+    such as 1e3, 012, on and dates when the file is read again."""
+
+
+DocumentDumper.add_representer(
+    str,
+    lambda dumper, value: dumper.represent_scalar(
+        "tag:yaml.org,2002:str", value, style='"'
+    ),
+)
+
+
+def render_document(document, document_format):
     if "$schema" in document:
         document = {"$schema": document["$schema"], **document}
-    if format == "json":
+    if document_format == "json":
         return json.dumps(document, indent=2) + "\n"
-
-    # Quote all strings so PyYAML's YAML 1.1 dumper cannot change 1.2 scalars
-    # such as 1e3, 012, on and dates when this file is read again.
-    class DocumentDumper(yaml.SafeDumper):
-        pass
-
-    DocumentDumper.add_representer(
-        str,
-        lambda dumper, value: dumper.represent_scalar(
-            "tag:yaml.org,2002:str", value, style='"'
-        ),
-    )
     stream = io.StringIO()
     yaml.dump(
         document, stream, Dumper=DocumentDumper, sort_keys=False, allow_unicode=True

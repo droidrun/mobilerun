@@ -25,6 +25,12 @@ SECRETS_KEY = "cli_secrets"
 INPUT_CLOSED = "Input closed; run the command again in a terminal."
 # Short secrets would also redact ordinary words in diagnostics.
 MIN_REDACTABLE_SECRET = 8
+# Exit code when a validator rejects a script or routine document (as in mobilerun_routines inspect).
+INVALID_EXIT_CODE = 3
+# POSIX `timeout` exit code for a wait or execution that ran out of time.
+TIMEOUT_EXIT_CODE = 124
+MAX_DETAIL_LINES = 10
+MAX_DETAIL_CHARS = 200
 NO_LOCAL_DEVICES_HINT = (
     "Connect a device over USB or run `mobilerun device pair`; "
     "use `-t cloud` for cloud devices."
@@ -156,6 +162,33 @@ def _sdk_error(exc):
     return None
 
 
+def _detail_lines(entries):
+    """Render structured error details as bounded single-line JSON entries."""
+    if isinstance(entries, dict):
+        entries = [{key: value} for key, value in entries.items()]
+    elif not isinstance(entries, list):
+        entries = [entries]
+    lines = [
+        json.dumps(entry, ensure_ascii=False) for entry in entries[:MAX_DETAIL_LINES]
+    ]
+    lines = [
+        line if len(line) <= MAX_DETAIL_CHARS else line[: MAX_DETAIL_CHARS - 1] + "…"
+        for line in lines
+    ]
+    if len(entries) > MAX_DETAIL_LINES:
+        lines.append(f"… {len(entries) - MAX_DETAIL_LINES} more")
+    return lines
+
+
+# Hints for statuses that need no credential or request lookup.
+_STATUS_HINTS = {
+    404: "Check the resource id with the corresponding list command.",
+    409: "Check the resource state and resolve the conflict before retrying.",
+    422: "Check the input fields and validation details.",
+    429: "Wait before retrying; follow Retry-After when provided.",
+}
+
+
 def convert_api_error(exc):
     """Return safe text, JSON and method/path diagnostics for an SDK error."""
     from mobilerun_sdk import APIStatusError, APITimeoutError
@@ -232,19 +265,7 @@ def convert_api_error(exc):
             return clean(value) if isinstance(value, str) else value
 
         document["details"] = clean_details(details)
-        entries = document["details"]
-        if isinstance(entries, dict):
-            entries = [{key: value} for key, value in entries.items()]
-        elif not isinstance(entries, list):
-            entries = [entries]
-        messages = [json.dumps(entry, ensure_ascii=False) for entry in entries[:10]]
-        messages = [
-            message if len(message) <= 200 else message[:199] + "…"
-            for message in messages
-        ]
-        if len(entries) > 10:
-            messages.append(f"… {len(entries) - 10} more")
-        text += "\nDetails:\n" + "\n".join(messages)
+        text += "\nDetails:\n" + "\n".join(_detail_lines(document["details"]))
     if status is not None and exc.response.headers.get("retry-after"):
         document["retryAfter"] = clean(exc.response.headers["retry-after"])
         text += f"\nRetry-After: {document['retryAfter']}"
@@ -275,13 +296,6 @@ def convert_api_error(exc):
             hint = "The saved sign-in was rejected or has expired. Run `mobilerun auth login`."
     elif status == 404 and "devices" in request.url.path.split("/"):
         hint = "Find device ids with `mobilerun device list -t cloud`."
-    elif status in {404, 409, 422, 429}:
-        hint = {
-            404: "Check the resource id with the corresponding list command.",
-            409: "Check the resource state and resolve the conflict before retrying.",
-            422: "Check the input fields and validation details.",
-            429: "Wait before retrying; follow Retry-After when provided.",
-        }[status]
     elif status is None:
         host = request.url.host
         if ":" in host:
@@ -289,7 +303,12 @@ def convert_api_error(exc):
         origin = f"{request.url.scheme}://{host}"
         if request.url.port is not None:
             origin += f":{request.url.port}"
-        hint = f"Check the API URL from --api-url or MOBILERUN_API_BASE_URL: {clean(origin)}."
+        hint = (
+            "Check the API URL from --api-url, MOBILERUN_BASE_URL or "
+            f"MOBILERUN_API_BASE_URL: {clean(origin)}."
+        )
+    else:
+        hint = _STATUS_HINTS.get(status)
     if hint:
         text += f"\n{hint}"
     diagnostic = f"{request.method} {clean(request.url.path)}"
@@ -661,10 +680,6 @@ def examples(*lines, docs=None):
     return text + (f"\n\nDocs: {docs}" if docs else "")
 
 
-# Exit code when a validator rejects a script or routine document (as in mobilerun_routines inspect).
-INVALID_EXIT_CODE = 3
-
-
 @contextmanager
 def cloud_client(api_url):
     # Keep the SDK and core imports out of help, completion, and version startup.
@@ -694,9 +709,6 @@ def _issue_line(issue, prefix=""):
 
 def print_issues(document):
     """Render a validation document: errors as lines, warnings with a prefix."""
-    if not isinstance(document, dict):
-        click.echo(str(document), err=True)
-        return
     errors = document.get("errors")
     if isinstance(errors, list) and errors:
         for issue in errors:
@@ -713,12 +725,17 @@ def print_issues(document):
             click.echo(_issue_line(issue, "warning: "), err=True)
 
 
-def write_file(path, data, *, force):
-    """Publish a complete file; without `force` only if the destination is free."""
+def refuse_existing(path, force):
+    """Fail before any network call when the destination is taken."""
     if path.exists() and not force:
         raise click.ClickException(
             f"{path} already exists; use --force to overwrite it."
         )
+
+
+def write_file(path, data, *, force):
+    """Publish a complete file; without `force` only if the destination is free."""
+    refuse_existing(path, force)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -733,7 +750,7 @@ def write_file(path, data, *, force):
         else:
             # Linking publishes the complete file only if the destination is free.
             os.link(temporary, path)
-    except FileExistsError:
+    except FileExistsError:  # lost the race after the pre-check
         raise click.ClickException(
             f"{path} already exists; use --force to overwrite it."
         ) from None
@@ -756,33 +773,41 @@ def all_pages(fetch):
         page += 1
 
 
+def _json_default(value):
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
 def print_model(item, json_output):
     """Render a response model as JSON or field/value rows."""
     document = item.model_dump(mode="json" if json_output else "python", by_alias=True)
     if json_output:
         emit(document, json_output=True)
-    else:
-        emit_rows(
-            ("FIELD", "VALUE"),
+        return
+    emit_rows(
+        ("FIELD", "VALUE"),
+        (
             (
+                key,
                 (
-                    key,
-                    (
-                        json.dumps(
-                            value,
-                            default=lambda item: (
-                                item.isoformat()
-                                if isinstance(item, datetime)
-                                else str(item)
-                            ),
-                        )
-                        if isinstance(value, (dict, list))
-                        else value
-                    ),
-                )
-                for key, value in document.items()
-            ),
+                    json.dumps(value, default=_json_default)
+                    if isinstance(value, (dict, list))
+                    else value
+                ),
+            )
+            for key, value in document.items()
+        ),
+    )
+
+
+def print_models(items, json_output, headers, row):
+    """Render response models as one JSON array or as rows."""
+    if json_output:
+        emit(
+            [item.model_dump(mode="json", by_alias=True) for item in items],
+            json_output=True,
         )
+    else:
+        emit_rows(headers, (row(item) for item in items))
 
 
 def confirm_destructive(message, *, yes, no_input):

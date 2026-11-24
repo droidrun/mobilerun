@@ -195,13 +195,24 @@ mobilerun
 │   ├── pull NAME|ID
 │   └── delete NAME|ID
 ├── routine
-│   ├── schema / check FILE / push FILE / pull ID
-│   ├── list / show ID / run ID / runs ID
-│   └── enable ID / disable ID / delete ID
+│   ├── schema
+│   ├── check FILE
+│   ├── push FILE
+│   ├── pull ID
+│   ├── list
+│   ├── show ID
+│   ├── run ID
+│   ├── runs ID
+│   ├── enable ID
+│   ├── disable ID
+│   └── delete ID
 ├── sandbox
-│   ├── create / list / show ID
+│   ├── create
+│   ├── list
+│   ├── show ID
 │   ├── exec ID COMMAND
-│   ├── files upload ID FILE PATH / download ID PATH -o FILE
+│   ├── files upload ID FILE PATH
+│   ├── files download ID PATH -o FILE
 │   └── delete ID
 ├── configure
 ├── auth

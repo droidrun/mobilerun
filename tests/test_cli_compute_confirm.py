@@ -45,7 +45,11 @@ def test_cancel_or_no_input_prevents_remote_delete(
     result = CliRunner().invoke(cli, [*command, *flags], input=input_text)
     assert result.exit_code == expected, result.output
     assert message in result.stderr
-    sdk.factory.assert_not_called()
+    # `function delete` resolves the name before it asks; nothing is deleted.
+    sdk.functions.delete.assert_not_called()
+    sdk.functions.versions.delete.assert_not_called()
+    sdk.client.compute.sandboxes.delete.assert_not_called()
+    sdk.client.workflows.flows.delete.assert_not_called()
 
 
 @pytest.mark.parametrize("command", COMMANDS)

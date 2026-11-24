@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from mobilerun.cli.options import (
+    TIMEOUT_EXIT_CODE,
     Group,
     all_pages,
     api_url_option,
@@ -17,9 +18,18 @@ from mobilerun.cli.options import (
     examples,
     json_option,
     no_input_option,
+    print_models,
+    refuse_existing,
     verbose_option,
     write_file,
 )
+
+# Server-side long-poll for the first exec response, and the extra wait for it to finish.
+EXEC_LONG_POLL_SECONDS = 30
+EXEC_WAIT_GRACE_SECONDS = 30
+# Long-poll per status request while the command runs.
+EXEC_POLL_SECONDS = 5
+SANDBOX_HEADERS = ("ID", "NAME", "STATUS", "EXPIRES")
 
 
 @click.group(cls=Group, epilog=examples("mobilerun sandbox create --timeout 300"))
@@ -28,14 +38,15 @@ def sandbox_cli(verbose):
     """Create sandboxes, execute commands, and transfer files."""
 
 
+def _sandbox_row(item):
+    return (item.id, item.name, item.status, item.expires_at)
+
+
 def _show(item, json_output):
     if json_output:
         emit(item.model_dump(mode="json", by_alias=True), json_output=True)
     else:
-        emit_rows(
-            ("ID", "NAME", "STATUS", "EXPIRES"),
-            [(item.id, item.name, item.status, item.expires_at)],
-        )
+        emit_rows(SANDBOX_HEADERS, [_sandbox_row(item)])
 
 
 def _env(values):
@@ -99,16 +110,7 @@ def list_sandboxes(api_url, json_output, verbose):
     """List sandboxes, including stopped sandboxes retained by the API."""
     with cloud_client(api_url) as client:
         items = all_pages(lambda page: client.compute.sandboxes.list(page=page).data)
-    if json_output:
-        emit(
-            [item.model_dump(mode="json", by_alias=True) for item in items],
-            json_output=True,
-        )
-    else:
-        emit_rows(
-            ("ID", "NAME", "STATUS", "EXPIRES"),
-            ((item.id, item.name, item.status, item.expires_at) for item in items),
-        )
+    print_models(items, json_output, SANDBOX_HEADERS, _sandbox_row)
 
 
 @sandbox_cli.command("show", epilog=examples("mobilerun sandbox show ID"))
@@ -146,33 +148,39 @@ def exec_sandbox(
     sandbox_id, command, cwd, env, timeout_s, api_url, json_output, verbose
 ):
     """Execute a shell command and return its remote exit code."""
-    params = {"command": command, "timeout_s": timeout_s, "wait_s": min(timeout_s, 30)}
+    params = {
+        "command": command,
+        "timeout_s": timeout_s,
+        "wait_s": min(timeout_s, EXEC_LONG_POLL_SECONDS),
+    }
     if cwd is not None:
         params["cwd"] = cwd
     if env:
         params["env"] = _env(env)
     with cloud_client(api_url) as client:
         result = client.compute.sandboxes.exec(sandbox_id, **params).data
-        deadline = time.monotonic() + timeout_s + 30
+        deadline = time.monotonic() + timeout_s + EXEC_WAIT_GRACE_SECONDS
         while result.status == "running" and time.monotonic() < deadline:
             result = client.compute.sandboxes.commands.retrieve(
-                result.command_id, sandbox_id=sandbox_id, wait_s=5
+                result.command_id, sandbox_id=sandbox_id, wait_s=EXEC_POLL_SECONDS
             ).data
     if json_output:
         emit(result.model_dump(mode="json", by_alias=True), json_output=True)
     else:
-        emit(result.stdout.rstrip("\n")) if result.stdout else None
+        if result.stdout:
+            emit(result.stdout.rstrip("\n"))
         if result.stderr:
             click.echo(result.stderr, err=True, nl=False)
     if result.status == "running":
         click.echo(
-            f"Command {result.command_id} is still running and may still finish in the sandbox; the wait timed out and its exit code is not available.",
+            f"Command {result.command_id} is still running and may still finish "
+            "in the sandbox; the wait timed out and its exit code is not available.",
             err=True,
         )
-        raise click.exceptions.Exit(124)
+        raise click.exceptions.Exit(TIMEOUT_EXIT_CODE)
     if result.timed_out:
         click.echo("Command timed out.", err=True)
-        raise click.exceptions.Exit(124)
+        raise click.exceptions.Exit(TIMEOUT_EXIT_CODE)
     if result.truncated:
         click.echo("Command output was truncated by the API.", err=True)
     raise click.exceptions.Exit(result.exit_code if result.exit_code is not None else 1)
@@ -226,10 +234,7 @@ def upload_file(sandbox_id, file, path, api_url, json_output, verbose):
 @verbose_option
 def download_file(sandbox_id, path, output, force, api_url, json_output, verbose):
     """Download a file from the sandbox work directory."""
-    if output.exists() and not force:
-        raise click.ClickException(
-            f"{output} already exists; use --force to overwrite it."
-        )
+    refuse_existing(output, force)
     with cloud_client(api_url) as client:
         response = client.compute.sandboxes.files.retrieve(sandbox_id, path=path)
         data = response.read()
@@ -237,7 +242,15 @@ def download_file(sandbox_id, path, output, force, api_url, json_output, verbose
     emit({"path": str(output)} if json_output else str(output), json_output=json_output)
 
 
-def _stop(sandbox_id, yes, no_input, api_url, json_output):
+@sandbox_cli.command("delete", epilog=examples("mobilerun sandbox delete ID --yes"))
+@click.argument("sandbox_id", metavar="ID")
+@click.option("--yes", is_flag=True, help="Confirm stopping the sandbox.")
+@no_input_option
+@api_url_option
+@json_option
+@verbose_option
+def delete_sandbox(sandbox_id, yes, no_input, api_url, json_output, verbose):
+    """Delete (stop) a sandbox."""
     confirm_destructive(f"Stop sandbox {sandbox_id}?", yes=yes, no_input=no_input)
     with cloud_client(api_url) as client:
         client.compute.sandboxes.delete(sandbox_id)
@@ -250,18 +263,6 @@ def _stop(sandbox_id, yes, no_input, api_url, json_output):
             "Deleted sandboxes may still appear as stopped in `mobilerun sandbox list`.",
             err=True,
         )
-
-
-@sandbox_cli.command("delete", epilog=examples("mobilerun sandbox delete ID --yes"))
-@click.argument("sandbox_id", metavar="ID")
-@click.option("--yes", is_flag=True, help="Confirm stopping the sandbox.")
-@no_input_option
-@api_url_option
-@json_option
-@verbose_option
-def delete_sandbox(sandbox_id, yes, no_input, api_url, json_output, verbose):
-    """Delete (stop) a sandbox."""
-    _stop(sandbox_id, yes, no_input, api_url, json_output)
 
 
 # Keep the old spelling callable without adding a second advertised operation.
