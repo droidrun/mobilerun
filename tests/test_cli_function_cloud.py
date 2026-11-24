@@ -709,9 +709,149 @@ def test_resource_failures_have_nonzero_exit(sdk, command, method):
 
 
 def test_delete_interactive_cancel_never_mutates(sdk, monkeypatch):
-    monkeypatch.setattr(function, "input_allowed", lambda value: True)
+    from mobilerun.cli import options
+
+    monkeypatch.setattr(options, "input_allowed", lambda value: True)
     result = invoke("delete", ID2, input="n\n")
     assert result.exit_code == 1
     assert "cancelled" in result.stderr
     sdk.functions.delete.assert_not_called()
     sdk.functions.versions.delete.assert_not_called()
+
+
+def test_cloud_run_ignores_inherited_device_settings(sdk, monkeypatch):
+    monkeypatch.setenv("MOBILERUN_TARGET", "cloud")
+    monkeypatch.setenv("MOBILERUN_DEVICE", "inherited-phone")
+    sdk.functions.runs.create.return_value.data = run_record()
+    result = invoke("run", ID2, "--input", "{}", "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["id"] == ID1
+    sdk.functions.runs.create.assert_called_once_with(ID2, input={})
+
+
+@pytest.mark.parametrize(
+    "flags", [["--target", "cloud"], ["--target", "local"], ["--device", "phone"]]
+)
+def test_cloud_run_rejects_only_explicit_device_flags(sdk, monkeypatch, flags):
+    monkeypatch.setenv("MOBILERUN_TARGET", "cloud")
+    monkeypatch.setenv("MOBILERUN_DEVICE", "inherited-phone")
+    result = invoke("run", ID2, "--input", "{}", *flags)
+    assert result.exit_code == 2
+    assert "--local" in result.stderr
+    sdk.factory.assert_not_called()
+
+
+@pytest.mark.parametrize("args", [[], ["--version", "2", "--all"]])
+def test_delete_name_requires_exactly_one_version_choice(sdk, args):
+    result = invoke("delete", "hello.py", "--yes", *args)
+    assert result.exit_code == 2
+    assert "--version" in result.stderr
+    assert "--all" in result.stderr
+    sdk.factory.assert_not_called()
+
+
+def test_delete_name_all_deletes_function(sdk):
+    result = invoke("delete", "hello.py", "--all", "--yes", "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["deleted"] is True
+    sdk.functions.delete.assert_called_once_with(ID2)
+
+
+def test_delete_name_version_reports_selected_version(sdk):
+    result = invoke("delete", "hello.py", "--version", "2", "--yes")
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "Deleted hello.py version 2\n"
+    sdk.functions.versions.delete.assert_called_once_with(2, function_id=ID2)
+    sdk.functions.delete.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "status,outcome,expected", [("done", "succeeded", 0), ("failed", "failed", 1)]
+)
+def test_finished_run_without_logs_keeps_its_exit_code(sdk, status, outcome, expected):
+    sdk.functions.runs.create.return_value.data = run_record("running")
+    sdk.client.compute.runs.retrieve.return_value.data = run_record(
+        status, logs="none", outcome=outcome
+    )
+    result = invoke("run", ID2, "--input", "{}", "--wait", "-j")
+    assert result.exit_code == expected, result.output
+    assert json.loads(result.stdout)["status"] == status
+    assert json.loads(result.stdout)["logs"] == "none"
+    assert "warning: Could not retrieve logs" in result.stderr
+    sdk.client.compute.runs.logs.assert_not_called()
+
+
+def test_finished_run_with_slow_logs_warns_and_succeeds(sdk, monkeypatch):
+    from mobilerun_sdk import Run, WaitTimeoutError
+
+    sdk.functions.runs.create.return_value.data = run_record("running")
+    sdk.client.compute.runs.retrieve.return_value.data = run_record(outcome="succeeded")
+    monkeypatch.setattr(
+        Run, "wait_logs", Mock(side_effect=WaitTimeoutError("Wait timed out"))
+    )
+    result = invoke("run", ID2, "--input", "{}", "--wait", "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["outcome"] == "succeeded"
+    assert "warning: Could not retrieve logs" in result.stderr
+
+
+def test_cloud_run_custom_timeout_spans_deadline(sdk, clock):
+    sdk.functions.runs.create.return_value.data = run_record("running")
+    sdk.client.compute.runs.retrieve.return_value.data = run_record("running")
+    result = invoke("run", ID2, "--input", "{}", "--wait", "--timeout", "3", "-j")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["id"] == ID1
+    assert "still running" in result.stderr
+    assert sum(clock.sleeps) == 3
+
+
+def test_versions_tsv_uses_iso_timestamp(sdk):
+    from mobilerun_sdk.types.compute.functions.version_list_response import (
+        VersionListResponse,
+    )
+
+    sdk.functions.versions.list.return_value = VersionListResponse(
+        data={
+            "items": [record().latest_version.model_dump(by_alias=True)],
+            "pagination": {
+                "hasNext": False,
+                "hasPrev": False,
+                "page": 1,
+                "pageSize": 20,
+                "total": 1,
+                "pages": 1,
+            },
+        }
+    )
+    result = invoke("versions", ID2)
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "2\tready\t2026-11-13T00:00:00+00:00\n"
+
+
+def test_show_tsv_uses_iso_timestamps_in_metadata(sdk):
+    result = invoke("show", ID2)
+    assert result.exit_code == 0, result.output
+    rows = dict(line.split("\t", 1) for line in result.stdout.splitlines())
+    assert rows["createdAt"] == "2026-11-13T00:00:00+00:00"
+    assert json.loads(rows["latestVersion"])["createdAt"] == "2026-11-13T00:00:00+00:00"
+
+
+def test_best_effort_log_warning_redacts_api_credentials(sdk, monkeypatch):
+    from mobilerun_sdk import Run
+
+    sdk.functions.runs.create.return_value.data = run_record("running")
+    sdk.client.compute.runs.retrieve.return_value.data = run_record(outcome="succeeded")
+    error = APIStatusError(
+        "error",
+        response=httpx.Response(
+            403, request=httpx.Request("GET", "https://example.test/logs")
+        ),
+        body={"message": "Rejected unit-cloud-function-key"},
+    )
+    monkeypatch.setattr(Run, "wait_logs", Mock(side_effect=error))
+    result = invoke("run", ID2, "--input", "{}", "--wait", "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["outcome"] == "succeeded"
+    assert "unit-cloud-function-key" not in result.output
+    assert "warning: Could not retrieve logs" in result.stderr
+    assert "[redacted]" in result.stderr

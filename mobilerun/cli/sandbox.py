@@ -7,12 +7,15 @@ import click
 
 from mobilerun.cli.options import (
     Group,
+    all_pages,
     api_url_option,
     cloud_client,
+    confirm_destructive,
     emit,
     emit_rows,
     examples,
     json_option,
+    no_input_option,
     verbose_option,
     write_file,
 )
@@ -93,15 +96,8 @@ def create_sandbox(name, timeout_s, idle_timeout_s, env, api_url, json_output, v
 @verbose_option
 def list_sandboxes(api_url, json_output, verbose):
     """List sandboxes, including stopped sandboxes retained by the API."""
-    items = []
     with cloud_client(api_url) as client:
-        page = 1
-        while True:
-            result = client.compute.sandboxes.list(page=page).data
-            items.extend(result.items)
-            if not result.pagination.has_next:
-                break
-            page += 1
+        items = all_pages(lambda page: client.compute.sandboxes.list(page=page).data)
     if json_output:
         emit(
             [item.model_dump(mode="json", by_alias=True) for item in items],
@@ -169,7 +165,7 @@ def exec_sandbox(
             click.echo(result.stderr, err=True, nl=False)
     if result.status == "running":
         raise click.ClickException(
-            f"Command {result.command_id} is still running; its exit code is not available."
+            f"Command {result.command_id} is still running and may still finish in the sandbox; its exit code is not available."
         )
     if result.timed_out:
         click.echo("Command timed out.", err=True)
@@ -200,8 +196,8 @@ def sandbox_files(verbose):
 @verbose_option
 def upload_file(sandbox_id, file, path, api_url, json_output, verbose):
     """Upload a local file inside the sandbox work directory (relative path allowed)."""
-    with cloud_client(api_url) as client, file.open("rb") as stream:
-        client.compute.sandboxes.files.upload(sandbox_id, stream, path=path)
+    with cloud_client(api_url) as client:
+        client.compute.sandboxes.files.upload(sandbox_id, file, path=path)
     emit({"path": path} if json_output else path, json_output=json_output)
 
 
@@ -237,38 +233,40 @@ def download_file(sandbox_id, path, output, force, api_url, json_output, verbose
     emit({"path": str(output)} if json_output else str(output), json_output=json_output)
 
 
-def _stop(sandbox_id, yes, api_url, json_output):
-    if not yes:
-        raise click.UsageError("Stopping a sandbox requires --yes.")
+def _stop(sandbox_id, yes, no_input, api_url, json_output):
+    confirm_destructive(f"Stop sandbox {sandbox_id}?", yes=yes, no_input=no_input)
     with cloud_client(api_url) as client:
         client.compute.sandboxes.delete(sandbox_id)
     emit(
         {"id": sandbox_id, "stopped": True} if json_output else f"Stopped {sandbox_id}",
         json_output=json_output,
     )
-    click.echo(
-        "Deleted sandboxes may still appear as stopped in `mobilerun sandbox list`.",
-        err=True,
-    )
+    if not json_output:
+        click.echo(
+            "Deleted sandboxes may still appear as stopped in `mobilerun sandbox list`.",
+            err=True,
+        )
 
 
 @sandbox_cli.command("stop", epilog=examples("mobilerun sandbox stop ID --yes"))
 @click.argument("sandbox_id", metavar="ID")
 @click.option("--yes", is_flag=True, help="Confirm stopping the sandbox.")
+@no_input_option
 @api_url_option
 @json_option
 @verbose_option
-def stop_sandbox(sandbox_id, yes, api_url, json_output, verbose):
+def stop_sandbox(sandbox_id, yes, no_input, api_url, json_output, verbose):
     """Stop a sandbox using the API's delete operation."""
-    _stop(sandbox_id, yes, api_url, json_output)
+    _stop(sandbox_id, yes, no_input, api_url, json_output)
 
 
 @sandbox_cli.command("delete", epilog=examples("mobilerun sandbox delete ID --yes"))
 @click.argument("sandbox_id", metavar="ID")
 @click.option("--yes", is_flag=True, help="Confirm stopping the sandbox.")
+@no_input_option
 @api_url_option
 @json_option
 @verbose_option
-def delete_sandbox(sandbox_id, yes, api_url, json_output, verbose):
+def delete_sandbox(sandbox_id, yes, no_input, api_url, json_output, verbose):
     """Delete (stop) a sandbox."""
-    _stop(sandbox_id, yes, api_url, json_output)
+    _stop(sandbox_id, yes, no_input, api_url, json_output)

@@ -478,3 +478,28 @@ def test_run_enqueue_failure_is_not_success(sdk):  # noqa: F811
     assert result.exit_code == 1
     assert json.loads(result.stdout)["enqueueFailed"] is True
     assert "could not enqueue" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "suffix,source,message",
+    [
+        (".json", '{"name":"first","name":"second"}', "Duplicate document key: name"),
+        (".json", '{"steps":[{"with":{"x":1,"x":2}}]}', "Duplicate document key: x"),
+        (".yaml", "name: &name demo", "YAML anchors and aliases are not supported"),
+        (".yaml", "name: *missing", "YAML anchors and aliases are not supported"),
+        (
+            ".yaml",
+            "a: &a [1]\nb: [*a, *a]",
+            "YAML anchors and aliases are not supported",
+        ),
+    ],
+)
+def test_documents_reject_ambiguous_or_expanding_values(
+    sdk, tmp_path, suffix, source, message  # noqa: F811
+):
+    path = tmp_path / ("routine" + suffix)
+    path.write_text(source)
+    result = invoke("check", path, "-j")
+    assert result.exit_code == 1
+    assert message in json.loads(result.stdout)["error"]
+    sdk.factory.assert_not_called()

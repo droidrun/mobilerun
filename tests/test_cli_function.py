@@ -168,7 +168,11 @@ def test_check_failure_diagnostics(monkeypatch, source, flags, expected_stdout):
 
 @pytest.mark.parametrize(
     "stdout,expected_stdout",
-    [("", ""), ("not JSON", ""), ('{"ok": false}', '{"ok": false}\n')],
+    [
+        ("", '{"error": "invalid entry point"}\n'),
+        ("not JSON", '{"error": "invalid entry point"}\n'),
+        ('{"ok": false}', '{"ok": false}\n'),
+    ],
 )
 def test_check_error_passthrough(monkeypatch, source, stdout, expected_stdout):
     monkeypatch.setattr(

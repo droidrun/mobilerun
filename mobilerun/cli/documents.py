@@ -28,6 +28,17 @@ class DocumentLoader(yaml.SafeLoader):
         for key, rules in yaml.SafeLoader.yaml_implicit_resolvers.items()
     }
 
+    def compose_node(self, parent, index):
+        event = self.peek_event()
+        if (
+            isinstance(event, yaml.AliasEvent)
+            or getattr(event, "anchor", None) is not None
+        ):
+            raise ValueError(
+                "YAML anchors and aliases are not supported; write the values explicitly."
+            )
+        return super().compose_node(parent, index)
+
     def construct_mapping(self, node, deep=False):
         result = {}
         for key_node, value_node in node.value:
@@ -87,11 +98,20 @@ def _wire_value(value):
     )
 
 
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate document key: {key}")
+        result[key] = value
+    return result
+
+
 def read_document(file):
     try:
         text = file.read_text(encoding="utf-8")
         value = (
-            json.loads(text)
+            json.loads(text, object_pairs_hook=_unique_object)
             if file.suffix.lower() == ".json"
             else yaml.load(text, Loader=DocumentLoader)
         )

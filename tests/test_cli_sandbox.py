@@ -1,7 +1,7 @@
 """Sandbox CLI behaviour using generated response types, without live calls."""
 
 import json
-from unittest.mock import call
+from unittest.mock import Mock, call
 
 import httpx
 import pytest
@@ -178,13 +178,13 @@ def test_files_upload_download_exact_bytes(sdk, tmp_path):  # noqa: F811
     source.write_bytes(b"\x00\xffpayload")
     payloads = []
     sdk.client.compute.sandboxes.files.upload.side_effect = (
-        lambda sandbox_id, stream, **kwargs: payloads.append(stream.read())
+        lambda sandbox_id, source, **kwargs: payloads.append(source.read_bytes())
     )
     uploaded = invoke("files", "upload", ID, source, "/tmp/data", "-j")
     assert uploaded.exit_code == 0, uploaded.output
     assert json.loads(uploaded.stdout) == {"path": "/tmp/data"}
     assert payloads == [b"\x00\xffpayload"]
-    assert sdk.client.compute.sandboxes.files.upload.call_args.args[0] == ID
+    assert sdk.client.compute.sandboxes.files.upload.call_args.args == (ID, source)
     assert sdk.client.compute.sandboxes.files.upload.call_args.kwargs == {
         "path": "/tmp/data"
     }
@@ -214,8 +214,11 @@ def test_stop_delete_warn_about_retained_record(sdk, verb):  # noqa: F811
     result = invoke(verb, ID, "--yes", "-j")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {"id": ID, "stopped": True}
-    assert "still appear as stopped" in result.stderr
-    sdk.client.compute.sandboxes.delete.assert_called_once_with(ID)
+    assert result.stderr == ""
+    human = invoke(verb, ID, "--yes")
+    assert human.exit_code == 0, human.output
+    assert human.stderr.count("still appear as stopped") == 1
+    assert sdk.client.compute.sandboxes.delete.call_args_list == [call(ID), call(ID)]
 
 
 @pytest.mark.parametrize("status", [401, 403, 404, 409, 422, 429])
@@ -266,3 +269,55 @@ def test_sandbox_operation_failure_is_nonzero(
     assert result.exit_code == 1
     assert json.loads(result.stdout)["status"] == 404
     assert "Sandbox not found" in result.stderr
+
+
+def test_upload_sdk_retry_resends_complete_content(
+    sdk, tmp_path, monkeypatch  # noqa: F811
+):
+    import time
+
+    from mobilerun_sdk import Mobilerun
+
+    source = tmp_path / "payload.bin"
+    source.write_bytes(b"\x00\xffcomplete payload")
+    bodies = []
+    responses = iter([502, 204])
+
+    def handle(request):
+        bodies.append(request.read())
+        return httpx.Response(next(responses), request=request)
+
+    monkeypatch.setattr(time, "sleep", lambda delay: None)
+    sdk.factory.return_value = Mobilerun(
+        api_key="unit-cloud-function-key",
+        max_retries=1,
+        http_client=httpx.Client(transport=httpx.MockTransport(handle)),
+    )
+    result = invoke("files", "upload", ID, source, "payload.bin", "-j")
+    assert result.exit_code == 0, result.output
+    assert bodies == [b"\x00\xffcomplete payload", b"\x00\xffcomplete payload"]
+
+
+def test_exec_still_running_identifies_background_command(
+    sdk, monkeypatch  # noqa: F811
+):
+    from mobilerun.cli import sandbox as module
+
+    sdk.client.compute.sandboxes.exec.return_value = command(
+        status="running", exitCode=None
+    )
+    sdk.client.compute.sandboxes.commands.retrieve.return_value = command(
+        status="running", exitCode=None
+    )
+    monkeypatch.setattr(module.time, "monotonic", Mock(side_effect=[0, 0, 32]))
+    result = invoke("exec", ID, "long-running-command", "--timeout", "1", "-j")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["commandId"] == "cmd-1"
+    assert "Command cmd-1 is still running and may still finish" in result.stderr
+
+
+def test_sandbox_tsv_uses_iso_timestamp(sdk):  # noqa: F811
+    sdk.client.compute.sandboxes.retrieve.return_value = sandbox()
+    result = invoke("show", ID)
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"{ID}\tdemo\trunning\t2026-11-24T11:00:00+00:00\n"

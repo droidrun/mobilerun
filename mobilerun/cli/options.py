@@ -12,6 +12,7 @@ import tempfile
 import traceback
 import unicodedata
 from contextlib import contextmanager, redirect_stdout
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
@@ -629,6 +630,8 @@ def emit(value, *, json_output=False):
 
 
 def _ui_cell(value):
+    if isinstance(value, datetime):
+        value = value.isoformat()
     return "".join(
         " " if unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} else char
         for char in str(value if value is not None else "")
@@ -739,3 +742,56 @@ def write_file(path, data, *, force):
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def all_pages(fetch):
+    """Collect raw SDK response pages with the API's shared pagination shape."""
+    items = []
+    page = 1
+    while True:
+        result = fetch(page=page)
+        items.extend(item for item in result.items if item is not None)
+        if not result.pagination.has_next:
+            return items
+        page += 1
+
+
+def print_model(item, json_output):
+    """Render a response model as JSON or field/value rows."""
+    document = item.model_dump(mode="json" if json_output else "python", by_alias=True)
+    if json_output:
+        emit(document, json_output=True)
+    else:
+        emit_rows(
+            ("FIELD", "VALUE"),
+            (
+                (
+                    key,
+                    (
+                        json.dumps(
+                            value,
+                            default=lambda item: (
+                                item.isoformat()
+                                if isinstance(item, datetime)
+                                else str(item)
+                            ),
+                        )
+                        if isinstance(value, (dict, list))
+                        else value
+                    ),
+                )
+                for key, value in document.items()
+            ),
+        )
+
+
+def confirm_destructive(message, *, yes, no_input):
+    """Use the same prompt and automation policy for every destructive command."""
+    if yes:
+        return
+    if not input_allowed(no_input):
+        raise click.UsageError(
+            "This action requires --yes when input is unavailable or --no-input is set."
+        )
+    if not click.confirm(message, err=True):
+        raise click.ClickException("Action cancelled.")

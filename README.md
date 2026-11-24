@@ -394,16 +394,23 @@ A rejected version exits 1; a pending upload exits 0 and explains how to check i
 `show` and `pull` select the latest version by default, or accept `--version N`.
 `pull` verifies SHA-256 and requires `--force` to overwrite an existing file.
 `delete --version N` removes one version; without it, deletion removes the function
-and all its versions. Deletion requires `--yes`.
+and all its versions. Deleting by name requires exactly one of `--version N` or
+`--all`. Destructive commands prompt in a terminal; use `--yes` to confirm in
+automation. `--no-input` prevents prompts, and requires `--yes`.
 
 `run` runs a cloud function unless `--local` is specified. Use exactly one of
 `--input JSON` or `--input-file FILE`. Cloud inputs must be objects; `--version N`
-pins a version. Cloud runs do not accept `--device` in SDK 6.3.1.
-`--wait` waits up to 60 seconds for completion and then up to 60 seconds for logs,
+pins a version. Cloud runs cannot target a device. Inherited `MOBILERUN_TARGET` and
+`MOBILERUN_DEVICE` settings are ignored for cloud runs; explicit device flags
+require `--local`.
+`--wait` waits up to 60 seconds for completion (`--timeout SECONDS` changes this
+wait budget) and then up to 60 seconds for logs,
 using the SDK's `Run.wait_logs()` before obtaining a download link. JSON output
 includes `logDownload`; human output prints the result and logs URL.
 `logs RUN_ID` also waits for logs to settle. Unavailable or expired logs give an
-actionable error. Failed runs and waits exit nonzero.
+actionable error. Log retrieval after a finished run is best-effort: unavailable
+or slow logs warn on stderr and preserve the run result and exit code. Failed
+runs and run waits exit nonzero.
 
 `check --remote` validates in the cloud instead of locally. It waits up to 60
 seconds (`--no-wait` returns the validation id). Invalid functions exit 3 with
@@ -458,7 +465,8 @@ status. A function step can run without a device.
 `--format json` selects JSON, and `--json` always prints JSON. Without `-o`, the
 document goes to stdout; file overwrites require `--force`.
 YAML `on`, `yes`, dates, and quoted numbers stay strings, while YAML 1.2 numeric
-scalars become JSON numbers. Non-JSON values such as NaN are rejected locally.
+scalars become JSON numbers. Non-JSON values such as NaN, duplicate JSON/YAML
+keys, and YAML anchors or aliases are rejected locally.
 
 ### Sandboxes
 
