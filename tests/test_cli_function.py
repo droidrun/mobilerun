@@ -142,8 +142,10 @@ def test_check_output(monkeypatch, source, flags):
 
 @pytest.mark.parametrize(
     "flags,expected_stdout",
-    [(["-j"], '{"ok": false, "errors": [{"message": "Entry point missing"}]}\n'),
-     ([], "")],
+    [
+        (["-j"], '{"ok": false, "errors": [{"message": "Entry point missing"}]}\n'),
+        ([], ""),
+    ],
 )
 def test_check_failure_diagnostics(monkeypatch, source, flags, expected_stdout):
     raw = '{"ok": false, "errors": [{"message": "Entry point missing"}]}\n'
@@ -151,10 +153,12 @@ def test_check_failure_diagnostics(monkeypatch, source, flags, expected_stdout):
     monkeypatch.setattr(
         function.subprocess,
         "run",
-        Mock(side_effect=[
-            subprocess.CompletedProcess([], 0),
-            subprocess.CompletedProcess([], 3, raw, stderr),
-        ]),
+        Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0),
+                subprocess.CompletedProcess([], 3, raw, stderr),
+            ]
+        ),
     )
     result = CliRunner().invoke(cli, ["function", "check", source, *flags])
     assert result.exit_code == 3, result.output
@@ -170,10 +174,12 @@ def test_check_error_passthrough(monkeypatch, source, stdout, expected_stdout):
     monkeypatch.setattr(
         function.subprocess,
         "run",
-        Mock(side_effect=[
-            subprocess.CompletedProcess([], 0),
-            subprocess.CompletedProcess([], 3, stdout, "invalid entry point\n"),
-        ]),
+        Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0),
+                subprocess.CompletedProcess([], 3, stdout, "invalid entry point\n"),
+            ]
+        ),
     )
     result = CliRunner().invoke(cli, ["function", "check", source, "-j"])
     assert result.exit_code == 3
@@ -416,7 +422,11 @@ def test_run_device_error_does_not_start_functions(monkeypatch, source, flags, m
     if "-d" in flags and CLOUD_ID in flags:
         assert "mobilerun auth login" in result.stderr
     call.assert_called_once()
-    assert call.call_args.args[0] == [sys.executable, "-c", "import mobilerun_functions"]
+    assert call.call_args.args[0] == [
+        sys.executable,
+        "-c",
+        "import mobilerun_functions",
+    ]
 
 
 def test_check_remote_rejects_python(source):

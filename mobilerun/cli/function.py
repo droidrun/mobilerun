@@ -244,7 +244,9 @@ def _device_flags(
     help="Read function input from a JSON file.",
 )
 @click.option(
-    "--state-file", type=click.Path(dir_okay=False), help="Read and save function state."
+    "--state-file",
+    type=click.Path(dir_okay=False),
+    help="Read and save function state.",
 )
 @python_option
 @device_option
