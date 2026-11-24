@@ -25,6 +25,10 @@ from mobilerun_core_local.transport.android.portal_client import PortalClient
 from rich.console import Console
 
 from mobilerun import __version__
+from mobilerun.agent.utils.android_user import (
+    foreground_user_flag,
+    list_foreground_packages,
+)
 
 console = Console(stderr=True)
 
@@ -228,7 +232,7 @@ async def check_portal_installed(
 ) -> tuple[CheckResult, bool]:
     """Check if Portal APK is installed. Returns (result, is_installed)."""
     try:
-        packages = await device.list_packages()
+        packages = await list_foreground_packages(device)
         if PORTAL_PACKAGE_NAME in packages:
             return CheckResult("Portal", Status.PASS, "installed"), True
         else:
@@ -264,9 +268,9 @@ async def check_portal_version(
     # Get installed version
     installed = None
     try:
-        output = await device.shell(
-            f"content query --uri {portal_content_uri(PORTAL_PACKAGE_NAME, 'version')}"
-        )
+        flag = await foreground_user_flag(device)
+        uri = portal_content_uri(PORTAL_PACKAGE_NAME, "version")
+        output = await device.shell(f"content query{flag} --uri {uri}")
         if "result=" in output:
             json_str = output.split("result=", 1)[1].strip()
             data = json.loads(json_str)
@@ -406,9 +410,9 @@ async def check_accessibility(
 async def check_content_provider(device: AdbDevice, debug: bool) -> CheckResult:
     """Check content provider connectivity."""
     try:
-        state = await device.shell(
-            f"content query --uri {portal_content_uri(PORTAL_PACKAGE_NAME, 'state')}"
-        )
+        flag = await foreground_user_flag(device)
+        uri = portal_content_uri(PORTAL_PACKAGE_NAME, "state")
+        state = await device.shell(f"content query{flag} --uri {uri}")
         if "Row: 0 result=" in state:
             return CheckResult("Content Provider", Status.PASS, "reachable")
         else:
@@ -429,8 +433,11 @@ async def check_tcp(device: AdbDevice, debug: bool) -> CheckResult:
 
     # Step 1: Enable socket server via content provider
     try:
+        flag = await foreground_user_flag(device)
         toggle_uri = portal_content_uri(PORTAL_PACKAGE_NAME, "toggle_socket_server")
-        await device.shell(f"content insert --uri {toggle_uri} --bind enabled:b:true")
+        await device.shell(
+            f"content insert{flag} --uri {toggle_uri} --bind enabled:b:true"
+        )
         steps.append("server enabled")
     except Exception as e:
         return CheckResult(
@@ -447,6 +454,10 @@ async def check_tcp(device: AdbDevice, debug: bool) -> CheckResult:
     auth_headers: dict[str, str] = {}
     try:
         portal = PortalClient(device, prefer_tcp=False)
+        # Target the foreground user's Portal, where core-local supports it.
+        refresh_user = getattr(portal, "refresh_user", None)
+        if refresh_user is not None:
+            await refresh_user()
         token = await portal._fetch_auth_token()
         if token:
             auth_headers["Authorization"] = f"Bearer {token}"

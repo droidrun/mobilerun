@@ -1432,6 +1432,8 @@ class AndroidStateProvider(StateProvider):
             portal_content_uri,
         )
 
+        from mobilerun.agent.utils.android_user import user_flag
+
         a11y = portal_a11y_service(PORTAL_PACKAGE_NAME)
 
         # 1. Restart accessibility service
@@ -1446,13 +1448,16 @@ class AndroidStateProvider(StateProvider):
         if portal is not None and portal.tcp_available:
             logger.debug("Restarting Portal TCP socket server...")
             toggle_uri = portal_content_uri(PORTAL_PACKAGE_NAME, "toggle_socket_server")
+            # The Android user whose Portal the client targets (core-local
+            # with multi-user support); `settings` already follows it.
+            flag = user_flag(getattr(portal, "user", None))
             try:
                 await device.shell(
-                    f"content insert --uri {toggle_uri} --bind enabled:b:false"
+                    f"content insert{flag} --uri {toggle_uri} --bind enabled:b:false"
                 )
                 await asyncio.sleep(0.3)
                 await device.shell(
-                    f"content insert --uri {toggle_uri} --bind enabled:b:true"
+                    f"content insert{flag} --uri {toggle_uri} --bind enabled:b:true"
                 )
                 # Re-fetch auth token — server restart may rotate it
                 new_token = await portal._fetch_auth_token()

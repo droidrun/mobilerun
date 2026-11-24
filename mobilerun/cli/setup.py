@@ -23,6 +23,7 @@ from mobilerun.agent.utils.android_device import (
     AndroidDeviceSelectionError,
     resolve_android_serial,
 )
+from mobilerun.agent.utils.android_user import foreground_user_flag
 from mobilerun.agent.utils.portal_setup import portal_version_kwargs
 
 console = Console(stderr=True)
@@ -36,14 +37,16 @@ async def _wait_for_portal_service(
     Android drops the service when it is enabled before a fresh install is
     registered, so it is enabled again while waiting. ``/ping`` answers once
     the service is bound, even without an active window. A busy device can
-    take well over 10s to bind it.
+    take well over 10s to bind it. The query targets the foreground Android
+    user's Portal.
     """
     uri = portal_content_uri(PORTAL_PACKAGE_NAME, "ping")
+    flag = await foreground_user_flag(device_obj)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
         try:
-            result = await device_obj.shell(f"content query --uri {uri}")
+            result = await device_obj.shell(f"content query{flag} --uri {uri}")
             if '"status":"success"' in result:
                 return True
             if not await check_portal_accessibility(device_obj):
