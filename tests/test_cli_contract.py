@@ -78,6 +78,7 @@ def test_tree_and_short_options():
         "completion",
         "function",
         "routine",
+        "sandbox",
     }
     assert set(cli.commands["device"].commands) == {
         "list",

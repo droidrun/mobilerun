@@ -274,6 +274,13 @@ def convert_api_error(exc):
             hint = "The saved sign-in was rejected or has expired. Run `mobilerun auth login`."
     elif status == 404 and "devices" in request.url.path.split("/"):
         hint = "Find device ids with `mobilerun device list -t cloud`."
+    elif status in {404, 409, 422, 429}:
+        hint = {
+            404: "Check the resource id with the corresponding list command.",
+            409: "Check the resource state and resolve the conflict before retrying.",
+            422: "Check the input fields and validation details.",
+            429: "Wait before retrying; follow Retry-After when provided.",
+        }[status]
     elif status is None:
         host = request.url.host
         if ":" in host:
@@ -570,7 +577,7 @@ platform_option = click.option(
 api_url_option = click.option(
     "--api-url",
     default=DEFAULT_API_URL,
-    envvar="MOBILERUN_API_BASE_URL",
+    envvar=["MOBILERUN_BASE_URL", "MOBILERUN_API_BASE_URL"],
     show_envvar=True,
     show_default=True,
     help="Cloud API URL.",

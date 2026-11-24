@@ -136,7 +136,7 @@ def test_push_creates_disabled_routine(sdk, document_file):  # noqa: F811
     result = invoke("push", document_file)
     assert result.exit_code == 0, result.output
     assert result.stdout == f"{FLOW_ID}\tMorning check\tdisabled\n"
-    assert "created disabled; activate it in Mobilerun Cloud" in result.stderr
+    assert "created disabled; enable it with" in result.stderr
     sdk.client.workflows.flows.create_from_document.assert_called_once_with(
         document=DOCUMENT
     )
@@ -165,8 +165,8 @@ def status_error(status, body, headers=None):
 
 @pytest.mark.parametrize("json_output", [False, True])
 def test_push_rejected_document_renders_issues(
-    sdk, document_file, json_output
-):  # noqa: F811
+    sdk, document_file, json_output  # noqa: F811
+):
     body = {"code": "document_invalid", "message": "Invalid", "details": ERRORS}
     sdk.client.workflows.flows.create_from_document.side_effect = status_error(
         422, body
@@ -202,7 +202,7 @@ def test_pull_stdout(sdk):  # noqa: F811
     sdk.client.workflows.flows.retrieve_document.return_value = SimpleNamespace(
         data=DOCUMENT
     )
-    result = invoke("pull", FLOW_ID)
+    result = invoke("pull", FLOW_ID, "--format", "json")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == DOCUMENT
     sdk.client.workflows.flows.retrieve_document.assert_called_once_with(FLOW_ID)
@@ -212,16 +212,16 @@ def test_pull_writes_file_and_refuses_overwrite(sdk, tmp_path):  # noqa: F811
     retrieve = sdk.client.workflows.flows.retrieve_document
     retrieve.return_value = SimpleNamespace(data=DOCUMENT)
     target = tmp_path / "out.json"
-    first = invoke("pull", FLOW_ID, "-o", target)
+    first = invoke("pull", FLOW_ID, "--format", "json", "-o", target)
     first_bytes = target.read_bytes()
     assert first.exit_code == 0, first.output
     assert json.loads(first_bytes) == DOCUMENT
     retrieve.return_value = SimpleNamespace(data={**DOCUMENT, "name": "Changed"})
-    second = invoke("pull", FLOW_ID, "-o", target)
+    second = invoke("pull", FLOW_ID, "--format", "json", "-o", target)
     assert second.exit_code == 1, second.output
     assert "already exists; use --force" in second.stderr
     assert target.read_bytes() == first_bytes
-    forced = invoke("pull", FLOW_ID, "-o", target, "--force")
+    forced = invoke("pull", FLOW_ID, "--format", "json", "-o", target, "--force")
     assert forced.exit_code == 0, forced.output
     assert json.loads(target.read_bytes()) == {**DOCUMENT, "name": "Changed"}
 
@@ -266,3 +266,215 @@ def test_api_errors_use_the_shared_converter(sdk, status, message):  # noqa: F81
     assert result.exit_code == 1, result.output
     assert f"(HTTP {status})" in result.stderr
     assert message in result.stderr
+
+
+def test_yaml_12_values_are_sent_as_json(sdk, tmp_path):  # noqa: F811
+    from mobilerun_sdk.types.workflows.flow_validate_document_response import (
+        FlowValidateDocumentResponse,
+    )
+
+    path = tmp_path / "routine.yaml"
+    path.write_text(
+        "name: demo\non: {custom: {}}\nvalues: {switch: on, answer: yes, date: 2026-11-24, count: 012, exponent: 1e3, octal: 0o12, enabled: true}\nsteps: []\n"
+    )
+    sdk.client.workflows.flows.validate_document.return_value = (
+        FlowValidateDocumentResponse(data={"valid": True, "errors": [], "warnings": []})
+    )
+    result = invoke("check", path, "-j")
+    assert result.exit_code == 0, result.output
+    sdk.client.workflows.flows.validate_document.assert_called_once_with(
+        document={
+            "name": "demo",
+            "on": {"custom": {}},
+            "steps": [],
+            "values": {
+                "switch": "on",
+                "answer": "yes",
+                "date": "2026-11-24",
+                "count": 12,
+                "exponent": 1000.0,
+                "octal": 10,
+                "enabled": True,
+            },
+        }
+    )
+
+
+def test_document_yaml_json_roundtrip_and_schema_first(sdk, tmp_path):  # noqa: F811
+    document = {
+        "name": "demo",
+        "on": {"custom": {}},
+        "$schema": "https://example.test/schema",
+        "values": {"number": "1e3", "date": "2026-11-24", "enabled": "on", "count": 12},
+        "steps": [],
+    }
+    sdk.client.workflows.flows.retrieve_document.return_value.data = document
+    target = tmp_path / "routine.yaml"
+    pulled = invoke("pull", FLOW_ID, "-o", target)
+    assert pulled.exit_code == 0, pulled.output
+    assert (
+        target.read_text().splitlines()[0] == '"$schema": "https://example.test/schema"'
+    )
+    sdk.client.workflows.flows.create_from_document.return_value = written(flow())
+    pushed = invoke("push", target, "-j")
+    assert pushed.exit_code == 0, pushed.output
+    sdk.client.workflows.flows.create_from_document.assert_called_once_with(
+        document=document
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "values: {bad: .nan}",
+        "1: value",
+        "- one\n- two",
+        "name: [",
+        "name: first\nname: second",
+    ],
+)
+def test_yaml_non_json_values_fail_before_network(sdk, tmp_path, source):  # noqa: F811
+    path = tmp_path / "bad.yaml"
+    path.write_text(source)
+    result = invoke("check", path)
+    assert result.exit_code == 1
+    assert "Cannot read" in result.stderr
+    sdk.factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "verb,status", [("enable", "enabled"), ("disable", "disabled")]
+)
+def test_lifecycle_is_decided_by_api(sdk, verb, status):  # noqa: F811
+    from mobilerun_sdk.types.workflows.flow_update_response import FlowUpdateResponse
+
+    sdk.client.workflows.flows.update.return_value = FlowUpdateResponse.model_construct(
+        data=flow()
+    )
+    result = invoke(verb, FLOW_ID, "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["id"] == FLOW_ID
+    sdk.client.workflows.flows.update.assert_called_once_with(
+        FLOW_ID, lifecycle_status=status
+    )
+
+
+def test_show_routine_metadata(sdk):  # noqa: F811
+    from mobilerun_sdk.types.workflows.flow_retrieve_response import (
+        FlowRetrieveResponse,
+    )
+
+    sdk.client.workflows.flows.retrieve.return_value = (
+        FlowRetrieveResponse.model_construct(data=flow())
+    )
+    result = invoke("show", FLOW_ID, "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["id"] == FLOW_ID
+    sdk.client.workflows.flows.retrieve.assert_called_once_with(FLOW_ID)
+
+
+def test_run_sends_payload_and_prints_execution_ids(sdk):  # noqa: F811
+    from mobilerun_sdk.types.workflows.flow_run_response import FlowRunResponse
+
+    sdk.client.workflows.flows.run.return_value = FlowRunResponse(
+        data={"enqueuedCount": 1, "executionIds": ["execution-1"]}
+    )
+    result = invoke("run", FLOW_ID, "--input", '{"name":"Ada"}', "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["executionIds"] == ["execution-1"]
+    sdk.client.workflows.flows.run.assert_called_once_with(
+        FLOW_ID, payload={"name": "Ada"}
+    )
+
+
+def test_run_skipped_is_a_failure(sdk):  # noqa: F811
+    from mobilerun_sdk.types.workflows.flow_run_response import FlowRunResponse
+
+    sdk.client.workflows.flows.run.return_value = FlowRunResponse(
+        data={
+            "enqueuedCount": 0,
+            "executionIds": [],
+            "skipped": {"reason": "flow_disabled"},
+        }
+    )
+    result = invoke("run", FLOW_ID, "-j")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["skipped"]["reason"] == "flow_disabled"
+    assert "flow_disabled" in result.stderr
+
+
+@pytest.mark.parametrize("input_json", ["{", "[]"])
+def test_run_rejects_non_object_payload(sdk, input_json):  # noqa: F811
+    result = invoke("run", FLOW_ID, "--input", input_json)
+    assert result.exit_code == 2
+    sdk.factory.assert_not_called()
+
+
+def test_runs_paginates(sdk):  # noqa: F811
+    from mobilerun_sdk.types.workflows.execution_list_response import (
+        ExecutionListResponse,
+        Item,
+    )
+
+    item = Item.model_construct(id="execution-1", status="success", started_at=None)
+    sdk.client.workflows.executions.list.side_effect = [
+        ExecutionListResponse.model_construct(
+            items=[item], pagination=SimpleNamespace(has_next=True)
+        ),
+        ExecutionListResponse.model_construct(
+            items=[], pagination=SimpleNamespace(has_next=False)
+        ),
+    ]
+    result = invoke("runs", FLOW_ID, "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)[0]["status"] == "success"
+    assert sdk.client.workflows.executions.list.call_args_list == [
+        call(flow_id=FLOW_ID, page=1),
+        call(flow_id=FLOW_ID, page=2),
+    ]
+
+
+def test_delete_requires_confirmation_then_deletes(sdk):  # noqa: F811
+    denied = invoke("delete", FLOW_ID)
+    assert denied.exit_code == 2
+    sdk.factory.assert_not_called()
+    result = invoke("delete", FLOW_ID, "--yes", "-j")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"id": FLOW_ID, "deleted": True}
+    sdk.client.workflows.flows.delete.assert_called_once_with(FLOW_ID)
+
+
+@pytest.mark.parametrize(
+    "verb,args,method,status",
+    [
+        ("schema", [], "flows.document_schema", 403),
+        ("list", [], "flows.list", 429),
+        ("show", [FLOW_ID], "flows.retrieve", 404),
+        ("runs", [FLOW_ID], "executions.list", 404),
+        ("enable", [FLOW_ID], "flows.update", 409),
+        ("disable", [FLOW_ID], "flows.update", 404),
+        ("delete", [FLOW_ID, "--yes"], "flows.delete", 404),
+    ],
+)
+def test_routine_failures_propagate(sdk, verb, args, method, status):  # noqa: F811
+    from operator import attrgetter
+
+    attrgetter(method)(sdk.client.workflows).side_effect = status_error(
+        status, {"message": "Request failed"}
+    )
+    result = invoke(verb, *args, "-j")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["status"] == status
+    assert f"(HTTP {status})" in result.stderr
+
+
+def test_run_enqueue_failure_is_not_success(sdk):  # noqa: F811
+    from mobilerun_sdk.types.workflows.flow_run_response import FlowRunResponse
+
+    sdk.client.workflows.flows.run.return_value = FlowRunResponse(
+        data={"enqueuedCount": 0, "executionIds": [], "enqueueFailed": True}
+    )
+    result = invoke("run", FLOW_ID, "-j")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["enqueueFailed"] is True
+    assert "could not enqueue" in result.stderr

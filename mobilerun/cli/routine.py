@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from mobilerun.cli.documents import read_document, render_document
 from mobilerun.cli.options import (
     INVALID_EXIT_CODE,
     Group,
@@ -34,13 +35,6 @@ def routine_cli(verbose):
     """Validate and push routine documents."""
 
 
-def _read_document(file):
-    try:
-        return json.loads(file.read_bytes())
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(f"Cannot read {file} as JSON: {exc}") from None
-
-
 def _push_document(client, flow_id, document, json_output):
     """Create or replace a routine; render a rejected document as issues."""
     from mobilerun_sdk import APIStatusError
@@ -62,12 +56,15 @@ def _push_document(client, flow_id, document, json_output):
         raise click.exceptions.Exit(INVALID_EXIT_CODE) from None
 
 
-def _emit_or_write(document, output, force, json_output):
-    text = json.dumps(document, indent=2)
+def _emit_or_write(document, output, force, json_output, format="json"):
+    text = render_document(document, "json" if json_output else format)
     if output is None:
-        emit(document if json_output else text, json_output=json_output)
+        emit(
+            json.loads(text) if json_output else text.rstrip("\n"),
+            json_output=json_output,
+        )
         return
-    write_file(output, (text + "\n").encode("utf-8"), force=force)
+    write_file(output, text.encode("utf-8"), force=force)
     emit({"path": str(output)} if json_output else str(output), json_output=json_output)
 
 
@@ -100,7 +97,7 @@ def routine_schema(output, force, api_url, json_output, verbose):
 @verbose_option
 def check_routine(file, api_url, json_output, verbose):
     """Validate a routine document in Mobilerun Cloud."""
-    document = _read_document(file)
+    document = read_document(file)
     with cloud_client(api_url) as client:
         result = client.workflows.flows.validate_document(document=document).data
     verdict = result.model_dump(mode="json", by_alias=True)
@@ -127,7 +124,7 @@ def check_routine(file, api_url, json_output, verbose):
 @verbose_option
 def push_routine(file, flow_id, api_url, json_output, verbose):
     """Create a routine from a document, or replace one with --id."""
-    document = _read_document(file)
+    document = read_document(file)
     with cloud_client(api_url) as client:
         result = _push_document(client, flow_id, document, json_output)
     flow = result.flow
@@ -137,12 +134,13 @@ def push_routine(file, flow_id, api_url, json_output, verbose):
     emit_rows(("ID", "NAME", "STATUS"), [(flow.id, flow.name, flow.lifecycle_status)])
     if flow_id is None:
         click.echo(
-            "The routine is created disabled; activate it in Mobilerun Cloud.", err=True
+            "The routine is created disabled; enable it with `mobilerun routine enable ID`.",
+            err=True,
         )
 
 
 @routine_cli.command(
-    "pull", epilog=examples("mobilerun routine pull ID -o routine.json")
+    "pull", epilog=examples("mobilerun routine pull ID -o routine.yaml")
 )
 @click.argument("flow_id", metavar="ID")
 @click.option(
@@ -152,14 +150,20 @@ def push_routine(file, flow_id, api_url, json_output, verbose):
     help="Write the document to this file instead of stdout.",
 )
 @click.option("--force", is_flag=True, help="Overwrite the output file if it exists.")
+@click.option(
+    "--format",
+    type=click.Choice(["yaml", "json"]),
+    default="yaml",
+    help="Document output format (--json overrides this).",
+)
 @api_url_option
 @json_option
 @verbose_option
-def pull_routine(flow_id, output, force, api_url, json_output, verbose):
+def pull_routine(flow_id, output, force, format, api_url, json_output, verbose):
     """Download a routine as a document."""
     with cloud_client(api_url) as client:
         document = client.workflows.flows.retrieve_document(flow_id).data
-    _emit_or_write(document, output, force, json_output)
+    _emit_or_write(document, output, force, json_output, format)
 
 
 def _routines(client):
@@ -198,4 +202,131 @@ def list_routines(api_url, json_output, verbose):
             )
             for item in items
         ),
+    )
+
+
+def _print_model(item, json_output):
+    document = item.model_dump(mode="json", by_alias=True)
+    if json_output:
+        emit(document, json_output=True)
+    else:
+        emit_rows(
+            ("FIELD", "VALUE"),
+            (
+                (key, json.dumps(value) if isinstance(value, (dict, list)) else value)
+                for key, value in document.items()
+            ),
+        )
+
+
+@routine_cli.command("show", epilog=examples("mobilerun routine show ID -j"))
+@click.argument("flow_id", metavar="ID")
+@api_url_option
+@json_option
+@verbose_option
+def show_routine(flow_id, api_url, json_output, verbose):
+    """Show routine metadata."""
+    with cloud_client(api_url) as client:
+        item = client.workflows.flows.retrieve(flow_id).data
+    _print_model(item, json_output)
+
+
+@routine_cli.command("run", epilog=examples("mobilerun routine run ID --input '{}'"))
+@click.argument("flow_id", metavar="ID")
+@click.option(
+    "--input", "input_json", default="{}", help="Event payload as a JSON object."
+)
+@api_url_option
+@json_option
+@verbose_option
+def run_routine(flow_id, input_json, api_url, json_output, verbose):
+    """Run an enabled routine immediately, bypassing trigger conditions."""
+    try:
+        payload = json.loads(input_json)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--input") from None
+    if not isinstance(payload, dict):
+        raise click.BadParameter("Expected a JSON object.", param_hint="--input")
+    with cloud_client(api_url) as client:
+        result = client.workflows.flows.run(flow_id, payload=payload).data
+    _print_model(result, json_output)
+    if result.skipped:
+        click.echo(
+            f"Run skipped: {result.skipped.reason}; check `mobilerun routine show {flow_id}`.",
+            err=True,
+        )
+        raise click.exceptions.Exit(1)
+    if result.enqueue_failed:
+        raise click.ClickException(
+            "The API could not enqueue all executions; check `mobilerun routine runs ID`."
+        )
+
+
+@routine_cli.command("runs", epilog=examples("mobilerun routine runs ID -j"))
+@click.argument("flow_id", metavar="ID")
+@api_url_option
+@json_option
+@verbose_option
+def routine_runs(flow_id, api_url, json_output, verbose):
+    """List a routine's executions."""
+    items = []
+    with cloud_client(api_url) as client:
+        page = 1
+        while True:
+            result = client.workflows.executions.list(flow_id=flow_id, page=page)
+            items.extend(result.items)
+            if not result.pagination.has_next:
+                break
+            page += 1
+    if json_output:
+        emit(
+            [item.model_dump(mode="json", by_alias=True) for item in items],
+            json_output=True,
+        )
+    else:
+        emit_rows(
+            ("ID", "STATUS", "STARTED"),
+            ((item.id, item.status, item.started_at) for item in items),
+        )
+
+
+@routine_cli.command("enable", epilog=examples("mobilerun routine enable ID"))
+@click.argument("flow_id", metavar="ID")
+@api_url_option
+@json_option
+@verbose_option
+def enable_routine(flow_id, api_url, json_output, verbose):
+    """Enable a routine; the API decides whether activation is allowed."""
+    with cloud_client(api_url) as client:
+        item = client.workflows.flows.update(flow_id, lifecycle_status="enabled").data
+    _print_model(item, json_output)
+
+
+@routine_cli.command("disable", epilog=examples("mobilerun routine disable ID"))
+@click.argument("flow_id", metavar="ID")
+@api_url_option
+@json_option
+@verbose_option
+def disable_routine(flow_id, api_url, json_output, verbose):
+    """Disable a routine."""
+    with cloud_client(api_url) as client:
+        item = client.workflows.flows.update(flow_id, lifecycle_status="disabled").data
+    _print_model(item, json_output)
+
+
+@routine_cli.command("delete", epilog=examples("mobilerun routine delete ID --yes"))
+@click.argument("flow_id", metavar="ID")
+@click.option("--yes", is_flag=True, help="Confirm deletion without prompting.")
+@api_url_option
+@json_option
+@verbose_option
+def delete_routine(flow_id, yes, api_url, json_output, verbose):
+    """Delete a routine."""
+    if not yes:
+        raise click.UsageError("Deletion requires --yes.")
+    with cloud_client(api_url) as client:
+        client.workflows.flows.delete(flow_id)
+    emit(
+        {"id": flow_id, "deleted": True} if json_output else f"Deleted {flow_id}",
+        json_output=json_output,
     )

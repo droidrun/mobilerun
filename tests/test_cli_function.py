@@ -184,7 +184,7 @@ def test_check_error_passthrough(monkeypatch, source, stdout, expected_stdout):
 @pytest.mark.parametrize(
     "args,message",
     [
-        (["--input", "{}"], "--local"),
+        (["--local", "--input", "{}", "--version", "1"], "cloud runs only"),
         (["--local"], "exactly one"),
         (["--local", "--input", "{"], "--input"),
     ],

@@ -186,12 +186,23 @@ mobilerun
 ├── function
 │   ├── init PATH
 │   ├── check PATH
-│   ├── run PATH --local
+│   ├── run NAME|ID|FILE [--local]
 │   ├── push FILE
 │   ├── list
 │   ├── show NAME|ID
+│   ├── versions NAME|ID
+│   ├── logs RUN_ID
 │   ├── pull NAME|ID
 │   └── delete NAME|ID
+├── routine
+│   ├── schema / check FILE / push FILE / pull ID
+│   ├── list / show ID / run ID / runs ID
+│   └── enable ID / disable ID / delete ID
+├── sandbox
+│   ├── create / list / show ID
+│   ├── exec ID COMMAND
+│   ├── files upload ID FILE PATH / download ID PATH -o FILE
+│   └── stop ID / delete ID
 ├── configure
 ├── auth
 │   ├── login [SERVICE]
@@ -344,74 +355,142 @@ Check the command's exit status as well as its JSON.
 
 ### Serverless Functions
 
-Install the functions extra to create, check, and run functions locally:
+Install the functions extra to scaffold, inspect, and run Python files locally:
 
 ```bash
 pip install "mobilerun[functions]"
 mobilerun function init hello.py
 mobilerun function check hello.py
-mobilerun function run hello.py --local -d emulator-5554 --input '{}'
-mobilerun function run hello.py --local -P ios -d http://127.0.0.1:6643 --input '{}'
-mobilerun function run hello.py --local -t cloud -d CLOUD_DEVICE_ID --input '{}'
+mobilerun function run hello.py --local --input '{"name":"Ada"}'
 ```
 
-`--local` runs the function in your Python environment. Device options select its
-`ctx.device`: an ADB serial, a Portal URL, or a cloud device id.
-`-P` overrides the platform from your config. `MOBILERUN_DEVICE` and `MOBILERUN_TARGET` also work.
-Cloud devices use `MOBILERUN_API_KEY` or your saved `mobilerun auth login` session;
-`--api-url` or `MOBILERUN_API_BASE_URL` selects the cloud API endpoint.
-A local run against a cloud device passes your real key/session to the function's
-environment; on the platform, the function only sees a placeholder.
-Without a device, the function runs with no device flags (local target only).
+The scaffold accepts `name` and an optional `greeting`. Local runs can select
+`ctx.device` with `-d SERIAL_OR_URL`, `-P ios`, or `-t cloud -d CLOUD_DEVICE_ID`.
+`--python` selects the interpreter, and `--state-file` persists local function state.
+A local run with a cloud device uses your API credential in its environment.
 
-Upload immutable versions of a Python function, inspect them, and download their
-source. Names default to the uploaded file's basename, including `.py`.
-`push` waits up to 60 seconds for inspection by default; use `--no-wait` to
-return immediately. A rejected version exits 1; a pending version exits 0 with
-a hint to check it later. All five commands support `-j` for one JSON document.
+Set `MOBILERUN_API_KEY` (or run `mobilerun auth login`) for cloud commands:
 
 ```bash
-mobilerun function push hello.py --manifest manifest.json
-mobilerun function list --name hello.py
+export MOBILERUN_API_KEY="your-api-key"
+mobilerun function check hello.py --remote
+mobilerun function push hello.py
+mobilerun function list
 mobilerun function show hello.py
-mobilerun function pull hello.py --version 1 -o out.py
+mobilerun function versions hello.py
+mobilerun function pull hello.py --version 1 -o downloaded.py
+mobilerun function run hello.py --input '{"name":"Ada"}' --wait -j
+mobilerun function logs RUN_ID
 mobilerun function delete hello.py --version 1 --yes
+mobilerun function delete hello.py --all --yes
 ```
 
-Without `--name`, `list` shows one row per name with the latest version and
-active version count; `--name` shows every active version, newest first.
-`show` and `pull` accept an id or a name (latest by default). `pull` writes to
-`-o` or the argument plus `.py` if missing, checks SHA-256, and requires `--force`
-to overwrite a file. `delete NAME` requires `--version N` or `--all`; an id deletes
-that version directly. Interactive deletion asks once; automation requires `--yes`.
+`push` creates a function named after the file, including `.py`, or appends an
+immutable version when that name exists. `--name` overrides the name;
+`--description` applies to a new function, and `--manifest` reads manifest JSON.
+It waits up to 60 seconds for inspection; `--no-wait` returns immediately.
+A rejected version exits 1; a pending upload exits 0 and explains how to check it.
+`list --name NAME` filters by exact name; `versions NAME_OR_ID` lists versions.
+`show` and `pull` select the latest version by default, or accept `--version N`.
+`pull` verifies SHA-256 and requires `--force` to overwrite an existing file.
+`delete --version N` removes one version; without it, deletion removes the function
+and all its versions. Deletion requires `--yes`.
 
-`mobilerun function check hello.py --remote` validates a function in the cloud instead
-of locally. It waits up to 60 seconds (`--no-wait` prints the validation id and
-returns), prints the same summary as the local check, and exits 3 with
-`line N: message — hint` issues when the function is invalid. `--remote` cannot be
-combined with `--python`.
+`run` runs a cloud function unless `--local` is specified. Use exactly one of
+`--input JSON` or `--input-file FILE`. Cloud inputs must be objects; `--version N`
+pins a version. Cloud runs do not accept `--device` in SDK 6.3.1.
+`--wait` waits up to 60 seconds for completion and then up to 60 seconds for logs,
+using the SDK's `Run.wait_logs()` before obtaining a download link. JSON output
+includes `logDownload`; human output prints the result and logs URL.
+`logs RUN_ID` also waits for logs to settle. Unavailable or expired logs give an
+actionable error. Failed runs and waits exit nonzero.
 
-Routine documents are checked and stored through the cloud API, which decides
-whether a document is valid:
+`check --remote` validates in the cloud instead of locally. It waits up to 60
+seconds (`--no-wait` returns the validation id). Invalid functions exit 3 with
+`line N: message — hint` diagnostics. `--remote` cannot be combined with `--python`.
+
+### Routines
+
+Routine documents use YAML 1.2 or JSON. The API validates their trigger and steps;
+use `routine schema` to discover the current document contract. For example,
+replace `FUNCTION_ID` with the id from `function push`:
+
+```yaml
+$schema: https://api.mobilerun.ai/v1/flows/document-schema
+version: 1
+name: Daily greeting
+on:
+  schedule:
+    cron: "0 9 * * *"
+    timezone: UTC
+steps:
+  - id: greet
+    uses: functions.run
+    with:
+      functionId: FUNCTION_ID
+      input:
+        name: Ada
+```
 
 ```bash
 mobilerun routine schema -o routine.schema.json
-mobilerun routine check routine.json
-mobilerun routine push routine.json
-mobilerun routine pull ROUTINE_ID -o routine.json
+mobilerun routine check routine.yaml
+mobilerun routine push routine.yaml
+mobilerun routine pull ROUTINE_ID -o exported.yaml
+mobilerun routine pull ROUTINE_ID --format json -o exported.json
+mobilerun routine push exported.yaml --id ROUTINE_ID
 mobilerun routine list
+mobilerun routine show ROUTINE_ID
+mobilerun routine enable ROUTINE_ID
+mobilerun routine run ROUTINE_ID --input '{}'
+mobilerun routine runs ROUTINE_ID
+mobilerun routine disable ROUTINE_ID
+mobilerun routine delete ROUTINE_ID --yes
 ```
 
-`routine push` creates the routine disabled; activate it in Mobilerun Cloud.
-`routine push routine.json --id ROUTINE_ID` replaces an existing routine. Invalid
-documents exit 3 with `FIELD: message — hint` issues. `pull` prints to stdout
-without `-o` and requires `--force` to overwrite a file. All routine commands
-support `-j`.
+New routines are disabled. Enable a routine before running it; the API decides
+whether activation is allowed. `run` prints the admitted execution ids and exits
+nonzero when the API skips the run or fails to enqueue it. `runs` shows execution
+status. A function step can run without a device.
 
-Serverless Functions use `MOBILERUN_API_KEY` or a saved `mobilerun auth login` sign-in
-(the legacy `MOBILERUN_CLOUD_API_KEY` also works), and `MOBILERUN_API_BASE_URL`
-(or `--api-url`) selects the endpoint. Until the functions API is public on production,
-set `MOBILERUN_API_BASE_URL` to the dev API's `/v1` URL for cloud function commands.
+`push --id` replaces an existing routine. Invalid documents exit 3 with
+`FIELD: message — hint` diagnostics. `pull` defaults to YAML with `$schema` first;
+`--format json` selects JSON, and `--json` always prints JSON. Without `-o`, the
+document goes to stdout; file overwrites require `--force`.
+YAML `on`, `yes`, dates, and quoted numbers stay strings, while YAML 1.2 numeric
+scalars become JSON numbers. Non-JSON values such as NaN are rejected locally.
+
+### Sandboxes
+
+```bash
+mobilerun sandbox create --name demo --timeout 300 --idle-timeout 60 --env MODE=test
+mobilerun sandbox list
+mobilerun sandbox show SANDBOX_ID
+mobilerun sandbox exec SANDBOX_ID "python -c 'print(1)'"
+mobilerun sandbox exec SANDBOX_ID "exit 7"  # CLI exits 7
+mobilerun sandbox files upload SANDBOX_ID local.txt remote.txt
+mobilerun sandbox files download SANDBOX_ID remote.txt -o downloaded.txt
+mobilerun sandbox stop SANDBOX_ID --yes
+mobilerun sandbox delete SANDBOX_ID --yes
+```
+
+`create --timeout` limits lifetime in seconds; `--idle-timeout` stops idle sandboxes.
+Repeat `--env NAME=VALUE` for environment variables. `exec` accepts one shell
+command string, prints stdout and stderr separately, and returns the remote exit
+code. It waits for completion; `--timeout` limits command execution (default 60
+seconds), `--cwd` selects a directory, and `--env` adds command variables.
+File transfer paths must stay inside the sandbox's `/work` directory; relative
+paths work. Downloads require `--force` to overwrite a local file. The API has no
+file listing endpoint. Both `stop` and `delete` use the API's delete operation;
+deleted sandboxes may still be listed as stopped.
+
+All three groups use the published SDK 6.3.1 and support `--json` (`-j`) on their
+commands. The singular group names are `function`, `routine`, and `sandbox`.
+`--api-url` overrides the API endpoint; `MOBILERUN_BASE_URL` and the existing
+`MOBILERUN_API_BASE_URL` are also accepted, in that order. The default is the public
+production API. Missing credentials explain how to set `MOBILERUN_API_KEY`;
+authentication, permission, missing resource, conflict, validation, and rate-limit
+errors include recovery hints. No API key is printed in diagnostics.
 
 ### Non-interactive use and secrets
 
