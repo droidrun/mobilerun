@@ -3,6 +3,7 @@ import click
 from mobilerun.cli.base.menu import MenuGroup
 
 from .reboot import reboot
+from .rename import rename
 from .resume import resume
 from .status import status
 from .stop import stop
@@ -14,5 +15,5 @@ def cloud():
     """Manage cloud phone lifecycle without connecting to the phone."""
 
 
-for command in (status, resume, stop, reboot, terminate):
+for command in (status, resume, stop, reboot, terminate, rename):
     cloud.add_command(command)
