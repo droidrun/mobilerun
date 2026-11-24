@@ -78,3 +78,17 @@ def test_click_failure_is_one_line():
     result = CliRunner().invoke(sample, ["click-failure"])
     assert result.exit_code == 1
     assert result.output.splitlines() == ["Error: first second"]
+
+
+def test_exception_group_with_auth_cause_renders_only_auth_message(capsys):
+    from mobilerun.cli.base.errors import render_error
+    from mobilerun.errors.cloud import CloudAuthRequired
+
+    error = ExceptionGroup("group", [RuntimeError("private")])
+    error.__cause__ = CloudAuthRequired("not logged in")
+    render_error(error)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "Error: Not logged in. Run `mobilerun account login` or set MOBILERUN_API_KEY.\n"
+    )

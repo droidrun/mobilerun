@@ -16,6 +16,7 @@ from mobilerun.errors import (
     CloudValidationError,
     InvalidCloudDeviceId,
 )
+from mobilerun.errors.cloud import NumberNotCancellable
 
 
 def cloud_error(
@@ -40,6 +41,13 @@ def cloud_error(
         kind = CloudDeviceNotFound if device else CloudResourceNotFound
     elif status == 409:
         kind = CloudConflict
+        body = getattr(exc, "body", None)
+        if (
+            operation == "Release number"
+            and isinstance(body, dict)
+            and body.get("code") == "not_cancellable"
+        ):
+            kind = NumberNotCancellable
     elif status in {400, 422}:
         kind = CloudValidationError
         body = getattr(exc, "body", None)

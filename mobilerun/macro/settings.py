@@ -1,6 +1,9 @@
 """Environment-backed defaults for macro replay."""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from mobilerun.config.settings import get_settings
 
 
 class MacroSettings(BaseSettings):
@@ -26,8 +29,20 @@ class MacroSettings(BaseSettings):
     MOBILERUN_MACRO_POLL_INTERVAL: float = 0.5
     """Seconds between state guard checks."""
 
-    MOBILERUN_MACRO_DIRECTORY: str = "trajectories"
-    """Default directory for the macro list command."""
+    MOBILERUN_MACRO_DIRECTORY: str | None = None
+    """Optional directory override for the macro list command."""
+
+    @field_validator("MOBILERUN_MACRO_DIRECTORY", mode="before")
+    @classmethod
+    def _empty_macro_directory_uses_default(cls, value: str | None) -> str | None:
+        return None if value == "" else value
+
+    @property
+    def macro_directory(self) -> str:
+        """Return the configured directory or the user config default."""
+        return self.MOBILERUN_MACRO_DIRECTORY or str(
+            get_settings().MOBILERUN_USER_CONFIG_DIR / "macros"
+        )
 
 
 def get_macro_settings() -> MacroSettings:

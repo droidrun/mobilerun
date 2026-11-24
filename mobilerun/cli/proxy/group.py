@@ -10,6 +10,7 @@ from mobilerun.cli.base import menu, render
 from mobilerun.cli.base.billing import billing_option
 from mobilerun.cli.base.checkout import complete_checkout
 from mobilerun.cli.base.choices import cloud_devices, proxies
+from mobilerun.cli.base.cleanup import cleanup
 from mobilerun.cli.base.menu import MenuGroup, PromptingArgument
 from mobilerun.cli.base.prompts import confirm_prompt_async
 from mobilerun.cli.base.run import coro
@@ -32,24 +33,34 @@ def proxy() -> None:
 
 
 @proxy.command("release", help="Release a proxy; phones using this proxy lose it.")
-@click.argument("proxy_id", cls=PromptingArgument, choices=proxies)
+@click.argument(
+    "proxy_id", cls=PromptingArgument, choices=proxies, nargs=-1, required=True
+)
 @click.option("--yes", "-y", is_flag=True, help="Confirm without prompting.")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON.")
 @billing_option
 @coro
-async def proxy_release(proxy_id: str, yes: bool, as_json: bool, billing: str) -> None:
-    await confirm_action_async(
-        "release proxy",
-        billing,
-        f"Release {proxy_id}; phones using this proxy lose it.",
+async def proxy_release(
+    proxy_id: tuple[str, ...], yes: bool, as_json: bool, billing: str
+) -> None:
+    async def release(item_id: str) -> str:
+        await cancel_proxy(item_id, billing=Billing(billing))
+        return "released"
+
+    await cleanup(
+        proxy_id,
+        action="Release",
+        noun="proxy",
+        billing=billing,
         yes=yes,
-        err=True,
+        as_json=as_json,
+        operation=release,
+        warning=(
+            "; phones using it lose it"
+            if len(set(proxy_id)) == 1
+            else "; phones using them lose them"
+        ),
     )
-    await cancel_proxy(proxy_id, billing=Billing(billing))
-    if as_json:
-        click.echo(json.dumps({"id": proxy_id, "status": "released"}))
-    else:
-        render.success(f"Released proxy {proxy_id}")
 
 
 @proxy.command("bind", help="Bind an existing Connect proxy to a cloud phone.")

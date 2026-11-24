@@ -66,7 +66,7 @@ Core resources snapshot `MOBILERUN_BILLING` (default `paid`) at construction unl
 | `devices.list_devices`, `retrieve`, `wait_ready`, `terminate`, `resume`, `stop`, `reboot`, `reset`, `number`, `bind_number`, `unbind_number` | `NO_COMMERCE` |
 | `numbers.create`, `mailboxes.create` | `INCLUDED` |
 | `numbers.list_numbers`, `retrieve`, `delete`, `countries`, `capacity`, `messages`, `send` | `NO_COMMERCE` |
-| `mailboxes.list_mailboxes`, `retrieve`, `delete`, `capacity`, `otp` | `NO_COMMERCE` |
+| `mailboxes.list_mailboxes`, `retrieve`, `delete`, `capacity`, `messages`, `otp` | `NO_COMMERCE` |
 | `proxies.connect_device` | `NO_COMMERCE` for an existing Connect ID or SOCKS5; `PAID` for country Connect |
 | `proxies.buy_proxy` | `PAID` |
 | `proxies.disconnect_device`, `device_status`, `list_proxies`, `get_proxy` | `NO_COMMERCE` |

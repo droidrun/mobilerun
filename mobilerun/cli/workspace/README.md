@@ -15,3 +15,5 @@ Cloud storage and devices can incur charges. See the [CLI overview](../README.md
 File upload accepts multiple paths; with `--json` it returns an array of uploaded
 files. File download and removal, and app upload and removal, also accept `--json`.
 Progress and confirmations are written to stderr.
+
+`workspace files rm ID...` (also `remove`) and `workspace apps remove ID...` accept multiple IDs and return arrays of per-ID results with `--json`.

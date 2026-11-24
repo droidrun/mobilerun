@@ -2,6 +2,7 @@
 
 import sys
 from collections.abc import Callable, Sequence
+from contextlib import redirect_stdout
 from difflib import get_close_matches
 from typing import Any
 
@@ -71,7 +72,8 @@ class PromptingParameter(click.Parameter):
                     ]
                 if choices is not None:
                     if self.nargs == -1:
-                        selected = multi_select_prompt(label, choices)
+                        with redirect_stdout(sys.stderr):
+                            selected = multi_select_prompt(label, choices)
                         value = tuple(selected) if selected else None
                     else:
                         value = select_prompt(label, choices)
@@ -82,19 +84,19 @@ class PromptingParameter(click.Parameter):
                         if not item:
                             if entries:
                                 break
-                            click.echo("Cancelled.")
+                            click.echo("Cancelled.", err=True)
                             ctx.exit(0)
                         entries.append(item)
                     value = tuple(entries)
                 else:
                     value = text_prompt(label).strip()
                     if not value:
-                        click.echo("Cancelled.")
+                        click.echo("Cancelled.", err=True)
                         ctx.exit(0)
             except (KeyboardInterrupt, click.Abort, EOFError):
                 ctx.exit(130)
             if value is None:
-                click.echo("Cancelled.")
+                click.echo("Cancelled.", err=True)
                 ctx.exit(0)
         return super().process_value(ctx, value)
 

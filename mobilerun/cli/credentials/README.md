@@ -13,6 +13,7 @@ mobilerun credentials list                    # vault and local metadata
 mobilerun credentials list --vault --json
 mobilerun credentials list --local
 mobilerun credentials path
+mobilerun credentials path --json
 mobilerun credentials save                    # interactive store, app and fields
 mobilerun credentials save com.example.app default --field username --field password
 mobilerun credentials save com.example.app default --local --from-json credentials.json
@@ -28,6 +29,10 @@ mapping supported field names to string values. Prompts hide input. Save confirm
 before modifying an existing credential; deletion also requires confirmation
 unless `--yes` is supplied. Interactive update and delete can select missing
 identifiers. Protect any secret input files and remove them when no longer needed.
+
+`credentials path` shows the resolved local file and whether it exists. Its JSON
+output also reports whether the path source is `env` or `default`. Relative
+overrides resolve from the current working directory; `~` is expanded.
 
 Cloud stores dotted package names as dashed identifiers. Some existing dashed
 names cannot be reversed unambiguously, so they may be shown as stored. Dotted

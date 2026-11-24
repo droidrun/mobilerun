@@ -7,14 +7,17 @@ import click
 from mobilerun.cli.base import render
 from mobilerun.macro import MacroPlayer
 from mobilerun.macro.settings import get_macro_settings
-from mobilerun.utils.paths import PathResolver
+from mobilerun.utils.paths import PathResolver, local_store_path
 
 
 @click.command("list")
 @click.argument(
     "directory",
     type=click.Path(),
-    default=lambda: get_macro_settings().MOBILERUN_MACRO_DIRECTORY,
+    default=lambda: local_store_path(
+        get_macro_settings().macro_directory,
+        overridden=False,
+    ).path,
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging", default=False)
 @click.option("--json", "as_json", is_flag=True, help="Output JSON.")

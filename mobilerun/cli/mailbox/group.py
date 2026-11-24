@@ -14,6 +14,7 @@ from mobilerun.cli.base.billing import (
 )
 from mobilerun.cli.base.checkout import complete_checkout
 from mobilerun.cli.base.choices import mailboxes
+from mobilerun.cli.base.cleanup import cleanup
 from mobilerun.cli.base.menu import MenuGroup, PromptingArgument
 from mobilerun.cli.base.run import coro
 from mobilerun.cli.base.safety import confirm_action_async
@@ -28,6 +29,36 @@ from mobilerun.models.billing import Billing
 @click.group(cls=MenuGroup)
 def mailbox() -> None:
     """Manage cloud email mailboxes."""
+
+
+@mailbox.command("messages", help="List email message history.")
+@click.argument(
+    "mailbox_id", cls=PromptingArgument, choices=mailboxes, metavar="MAILBOX"
+)
+@click.option("--json", "as_json", is_flag=True, help="Output JSON.")
+@billing_option
+@coro
+async def mailbox_messages(mailbox_id: str, as_json: bool, billing: str) -> None:
+    items = await cloud_mailboxes.messages(mailbox_id, billing=Billing(billing))
+    entries = [item.model_dump(mode="json") for item in items]
+    if as_json:
+        click.echo(json.dumps(entries, ensure_ascii=False))
+    elif not entries:
+        render.empty("messages")
+    else:
+        render.heading(len(entries), "message")
+        render.table(
+            [
+                [
+                    entry["received_at"],
+                    entry.get("from_address") or "",
+                    entry.get("subject") or "",
+                    "OTP available" if entry.get("has_otp") else "",
+                    (entry.get("preview") or "")[:100],
+                ]
+                for entry in entries
+            ]
+        )
 
 
 @mailbox.command("status", help="Show a mailbox's lifecycle state.")
@@ -152,29 +183,35 @@ async def mailbox_included(as_json: bool, billing: str) -> None:
         render.kv([("Included mailboxes", f"{remaining} remaining")])
 
 
-@mailbox.command("release", help="Release MAILBOX, the mailbox ID.")
+@mailbox.command("release", help="Release mailbox IDs.")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--yes", "-y", is_flag=True, help="Confirm without prompting.")
 @click.argument(
-    "mailbox_id", cls=PromptingArgument, choices=mailboxes, metavar="MAILBOX"
+    "mailbox_id",
+    cls=PromptingArgument,
+    choices=mailboxes,
+    metavar="MAILBOX...",
+    nargs=-1,
+    required=True,
 )
 @billing_option
 @coro
 async def mailbox_release(
-    mailbox_id: str, billing: str, yes: bool, as_json: bool
+    mailbox_id: tuple[str, ...], billing: str, yes: bool, as_json: bool
 ) -> None:
-    await confirm_action_async(
-        "release mailbox",
-        billing,
-        f"This will release {mailbox_id}.",
+    async def release(item_id: str) -> str:
+        result = await Mailbox(item_id, billing=Billing(billing)).release()
+        return result.data.status
+
+    await cleanup(
+        mailbox_id,
+        action="Release",
+        noun="mailbox",
+        billing=billing,
         yes=yes,
-        err=True,
+        as_json=as_json,
+        operation=release,
     )
-    result = await Mailbox(mailbox_id, billing=Billing(billing)).release()
-    if as_json:
-        click.echo(json.dumps({"id": mailbox_id, "status": result.data.status}))
-    else:
-        render.success(f"Mailbox {mailbox_id}: {result.data.status}")
 
 
 @mailbox.command(

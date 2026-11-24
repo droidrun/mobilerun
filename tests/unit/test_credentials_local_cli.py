@@ -37,7 +37,11 @@ def test_local_cli_and_merged_list(tmp_path, monkeypatch):
 
     path = tmp_path / "credentials.yaml"
     monkeypatch.setattr(
-        group, "get_settings", lambda: SimpleNamespace(local_credentials_path=path)
+        group,
+        "get_settings",
+        lambda: SimpleNamespace(
+            local_credentials_path=path, MOBILERUN_CREDENTIALS_FILE=path
+        ),
     )
 
     class Vault:

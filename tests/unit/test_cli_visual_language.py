@@ -376,9 +376,9 @@ def test_workspace_delete_acknowledges_and_preserves_json(monkeypatch):
     result = runner.invoke(
         module.workspace, ["files", "rm", "file-1", "--yes"], env={"NO_COLOR": "1"}
     )
-    assert result.stdout == "✓ Deleted workspace file file-1\n"
+    assert result.stdout == "✓ Workspace file file-1: deleted\n"
     assert json.loads(
         runner.invoke(
             module.workspace, ["files", "rm", "file-1", "--yes", "--json"]
         ).stdout
-    ) == {"id": "file-1", "status": "deleted"}
+    ) == [{"id": "file-1", "status": "deleted"}]

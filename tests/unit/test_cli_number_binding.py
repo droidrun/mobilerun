@@ -87,15 +87,11 @@ def test_bind_rejects_existing_device_binding(cloud):
 
 def test_unbind_resolves_number_and_outputs_json(cloud):
     result = CliRunner().invoke(
-        cli, ["number", "unbind", "num-1", "--billing", "no_commerce", "--json"]
+        cli,
+        ["number", "unbind", "num-1", "--billing", "no_commerce", "--json", "--yes"],
     )
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output) == {
-        "id": "num-1",
-        "status": "unbound",
-        "number_id": "num-1",
-        "device_id": "dev-1",
-    }
+    assert json.loads(result.output) == [{"id": "num-1", "status": "unbound"}]
     cloud.retrieve.assert_awaited_once_with(
         "num-1", billing=Billing.NO_COMMERCE, client=cloud.client
     )
@@ -107,7 +103,7 @@ def test_unbind_resolves_number_and_outputs_json(cloud):
 
 def test_unbind_unbound_number_reports_error(cloud):
     cloud.retrieve.return_value.data.device_binding = None
-    result = CliRunner().invoke(cli, ["number", "unbind", "num-1"])
+    result = CliRunner().invoke(cli, ["number", "unbind", "num-1", "--yes"])
     assert result.exit_code == 1
     assert "not bound" in result.output
     cloud.unbind.assert_not_awaited()

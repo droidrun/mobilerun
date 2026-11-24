@@ -41,7 +41,7 @@ def test_proxy_release_confirmation_and_json(monkeypatch):
     cancel.assert_not_awaited()
     result = runner.invoke(proxy.proxy, ["release", "p1", "--yes", "--json"])
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == {"id": "p1", "status": "released"}
+    assert json.loads(result.stdout) == [{"id": "p1", "status": "released"}]
     cancel.assert_awaited_once()
 
 
@@ -223,10 +223,12 @@ def test_release_json(monkeypatch):
         )
         result = CliRunner().invoke(group, ["release", resource, "--yes", "--json"])
         assert result.exit_code == 0, result.output
-        assert json.loads(result.stdout) == {
-            "id": resource,
-            "status": "cancel_scheduled",
-        }
+        assert json.loads(result.stdout) == [
+            {
+                "id": resource,
+                "status": "cancel_scheduled",
+            }
+        ]
 
 
 def test_workspace_json_operations_and_interactive_confirmation(monkeypatch, tmp_path):
@@ -266,7 +268,9 @@ def test_workspace_json_operations_and_interactive_confirmation(monkeypatch, tmp
         )
         assert result.exit_code == 0, result.output
         payload = json.loads(result.stdout)
-        assert (payload[0] if status == "uploaded" else payload)["status"] == status
+        assert (payload[0] if status in {"uploaded", "deleted"} else payload)[
+            "status"
+        ] == status
         if status == "deleted":
             assert "Continue?" in result.stderr
 
@@ -436,7 +440,7 @@ def test_confirmed_number_and_mailbox_release_json_is_clean(monkeypatch):
         )
         result = CliRunner().invoke(group, ["release", "r1", "--json"], input="y\n")
         assert result.exit_code == 0, result.output
-        assert json.loads(result.stdout) == {"id": "r1", "status": "cancel_scheduled"}
+        assert json.loads(result.stdout) == [{"id": "r1", "status": "cancel_scheduled"}]
         assert "Continue?" in result.stderr
 
 
@@ -470,7 +474,7 @@ def test_workspace_apps_mutation_json(monkeypatch, tmp_path):
         workspace.workspace, ["apps", "remove", "a1", "--json"], input="y\n"
     )
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == {"id": "a1", "status": "deleted"}
+    assert json.loads(result.stdout) == [{"id": "a1", "status": "deleted"}]
     assert "Continue?" in result.stderr
 
 

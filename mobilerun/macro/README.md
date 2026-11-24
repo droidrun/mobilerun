@@ -64,7 +64,13 @@ mobilerun macro replay macro.json emulator-5554
 See [macro_demo.py](../../tests/demos/macro_demo.py) and [CLI commands](cli/README.md).
 Cloud devices can incur charges.
 
-`mobilerun macro list` uses `trajectories` by default. If that default directory
+`mobilerun macro list` uses `<MOBILERUN_USER_CONFIG_DIR>/macros` by default.
+This replaces the previous `./trajectories` default; set
+`MOBILERUN_MACRO_DIRECTORY=trajectories` to keep using that directory. Relative
+overrides resolve from the current working directory; `~` is expanded.
+Run `mobilerun macro path` to see the resolved directory and whether it exists,
+or add `--json` for its path, existence and source (`env` or `default`).
+If the default directory
 does not exist, it reports no macros (or `[]` with `--json`) and exits successfully.
 An explicitly supplied missing directory exits with code 1 and reports
 `Macro directory not found: <path>`.

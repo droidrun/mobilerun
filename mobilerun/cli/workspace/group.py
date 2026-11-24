@@ -8,10 +8,10 @@ from dataclasses import asdict
 import click
 
 from mobilerun.cli.base import render
+from mobilerun.cli.base.cleanup import cleanup
 from mobilerun.cli.base.menu import MenuGroup, PromptingArgument
 from mobilerun.cli.base.prompts import SelectChoice
 from mobilerun.cli.base.run import coro
-from mobilerun.cli.base.safety import confirm_action_async
 from mobilerun.core.workspace import Workspace
 
 
@@ -99,23 +99,27 @@ async def download_file(file_id: str, dest: str, as_json: bool) -> None:
 
 @files.command("rm")
 @click.option("--json", "as_json", is_flag=True)
-@click.argument("file_id", cls=PromptingArgument, choices=file_choices)
+@click.argument(
+    "file_id", cls=PromptingArgument, choices=file_choices, nargs=-1, required=True
+)
 @click.option("--yes", "-y", is_flag=True)
 @coro
-async def delete_file(file_id: str, yes: bool, as_json: bool) -> None:
-    """Delete a workspace file."""
-    await confirm_action_async(
-        "delete file",
-        "no_commerce",
-        f"Delete workspace file {file_id}.",
+async def delete_file(file_id: tuple[str, ...], yes: bool, as_json: bool) -> None:
+    """Delete workspace files."""
+
+    async def remove(item_id: str) -> str:
+        await Workspace.delete_file(item_id)
+        return "deleted"
+
+    await cleanup(
+        file_id,
+        action="Delete",
+        noun="workspace file",
+        billing="no_commerce",
         yes=yes,
-        err=True,
+        as_json=as_json,
+        operation=remove,
     )
-    await Workspace.delete_file(file_id)
-    if as_json:
-        click.echo(json.dumps({"id": file_id, "status": "deleted"}))
-    else:
-        render.success(f"Deleted workspace file {file_id}")
 
 
 _remove_file = copy.copy(delete_file)
@@ -188,20 +192,24 @@ async def upload_app(apk: str, as_json: bool) -> None:
 
 @apps.command("remove")
 @click.option("--json", "as_json", is_flag=True)
-@click.argument("app_id", cls=PromptingArgument, choices=app_choices)
+@click.argument(
+    "app_id", cls=PromptingArgument, choices=app_choices, nargs=-1, required=True
+)
 @click.option("--yes", "-y", is_flag=True)
 @coro
-async def delete_app(app_id: str, yes: bool, as_json: bool) -> None:
-    """Delete an app from the workspace."""
-    await confirm_action_async(
-        "delete app",
-        "no_commerce",
-        f"Delete workspace app {app_id}.",
+async def delete_app(app_id: tuple[str, ...], yes: bool, as_json: bool) -> None:
+    """Delete apps from the workspace."""
+
+    async def remove(item_id: str) -> str:
+        await Workspace.delete_app(item_id)
+        return "deleted"
+
+    await cleanup(
+        app_id,
+        action="Delete",
+        noun="workspace app",
+        billing="no_commerce",
         yes=yes,
-        err=True,
+        as_json=as_json,
+        operation=remove,
     )
-    await Workspace.delete_app(app_id)
-    if as_json:
-        click.echo(json.dumps({"id": app_id, "status": "deleted"}))
-    else:
-        render.success(f"Deleted workspace app {app_id}")

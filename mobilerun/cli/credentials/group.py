@@ -21,6 +21,7 @@ from mobilerun.config.settings import get_settings
 from mobilerun.core.credentials.cloud import FIELD_ORDER, FIELD_TYPES, CloudCredentials
 from mobilerun.core.credentials.file import FileCredentials
 from mobilerun.models.billing import Billing
+from mobilerun.utils.paths import local_store_path
 
 
 def _run(operation, *, read=True, local=False):
@@ -148,10 +149,15 @@ def credentials():
 
 
 @credentials.command("path")
-def path():
+@click.option("--json", "as_json", is_flag=True, help="Output JSON.")
+def path(as_json):
     """Show the local credentials file path."""
-    path = get_settings().local_credentials_path
-    click.echo(f"{path} ({'exists' if path.exists() else 'not found'})")
+    settings = get_settings()
+    info = local_store_path(
+        settings.local_credentials_path,
+        overridden=settings.MOBILERUN_CREDENTIALS_FILE is not None,
+    )
+    click.echo(info.format(as_json))
 
 
 @credentials.command("list")

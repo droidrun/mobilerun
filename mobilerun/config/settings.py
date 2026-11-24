@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     MOBILERUN_CLOUD_API_TIMEOUT: float = 10.0
     """Cloud api timeout."""
 
+    MOBILERUN_CLOUD_NUMBER_CAPACITY_CONCURRENCY: int = Field(10, ge=1)
+    """Maximum concurrent country capacity lookups for the CLI."""
+
     MOBILERUN_CLOUD_NUMBER_READY_TIMEOUT_SECONDS: float = Field(600.0, gt=0)
     """Max seconds to wait for a new cloud number to become active."""
 
@@ -161,6 +164,11 @@ class Settings(BaseSettings):
         if value == "":
             return cls.model_fields[info.field_name].default
         return value
+
+    @field_validator("MOBILERUN_CREDENTIALS_FILE", mode="before")
+    @classmethod
+    def _empty_credentials_uses_default(cls, value):
+        return None if value == "" else value
 
     @property
     def local_credentials_path(self) -> Path:

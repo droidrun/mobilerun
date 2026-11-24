@@ -37,6 +37,15 @@ class CloudConflict(CloudAPIError):
     _hint: ClassVar[str] = "Wait for the current operation to finish and retry."
 
 
+class NumberNotCancellable(CloudConflict):
+    """The number cannot be cancelled in its current state."""
+
+    _hint: ClassVar[str] = (
+        "This number can't be released: only unpaid pending purchases and "
+        "active rented numbers can be cancelled."
+    )
+
+
 class CloudValidationError(CloudAPIError):
     """The cloud rejected invalid parameters."""
 

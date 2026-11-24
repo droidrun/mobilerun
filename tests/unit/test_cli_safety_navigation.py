@@ -268,7 +268,7 @@ def test_release_warns_and_yes_skips_confirmation(
     monkeypatch.setattr(safety, "confirm_prompt_async", prompt)
     denied = CliRunner().invoke(group.mailbox, ["release", "id1"], input="\n")
     assert denied.exit_code == 0, denied.output
-    assert "This will release id1." in denied.output
+    assert "Release 1 mailbox: id1." in denied.output
     release.assert_not_awaited()
     accepted = CliRunner().invoke(group.mailbox, ["release", "id1", "--yes"])
     assert accepted.exit_code == 0, accepted.output

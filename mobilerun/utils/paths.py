@@ -5,8 +5,34 @@ This module provides a single path resolver that handles all file path resolutio
 with consistent priority: working directory first, then package directory.
 """
 
+import json
+import os
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Union
+from typing import Literal, Union
+
+
+@dataclass(frozen=True)
+class LocalStorePath:
+    """Resolved local path and its availability and origin."""
+
+    path: str
+    exists: bool
+    source: Literal["env", "default"]
+
+    def format(self, as_json: bool) -> str:
+        """Format the path for CLI output."""
+        if as_json:
+            return json.dumps(asdict(self))
+        return f"{self.path} ({'exists' if self.exists else 'not found'})"
+
+
+def local_store_path(path: Union[str, Path], *, overridden: bool) -> LocalStorePath:
+    """Describe a local store without creating it."""
+    resolved = Path(os.path.abspath(Path(path).expanduser()))
+    return LocalStorePath(
+        str(resolved), resolved.exists(), "env" if overridden else "default"
+    )
 
 
 class PathResolver:

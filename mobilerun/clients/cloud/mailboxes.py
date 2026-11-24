@@ -12,6 +12,7 @@ from mobilerun_sdk.types.mailbox_list_response import Item
 from mobilerun_sdk.types.mailbox_otp_params import MailboxOtpParams
 from mobilerun_sdk.types.mailbox_otp_response import MailboxOtpResponse
 from mobilerun_sdk.types.mailbox_retrieve_response import MailboxRetrieveResponse
+from mobilerun_sdk.types.mailboxes.message_list_response import Item as MessageItem
 
 from mobilerun.clients.cloud.billing import (
     _billing_preference,
@@ -241,3 +242,33 @@ async def otp(
             return None
         except APIError as exc:
             raise cloud_error(exc, "Retrieve mailbox OTP") from exc
+
+
+@requires(Billing.NO_COMMERCE)
+async def messages(
+    mailbox_id: str,
+    *,
+    billing: Billing,
+    client: AsyncMobilerun | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> list[MessageItem]:
+    """List all mailbox message pages."""
+    async with (
+        nullcontext(client)
+        if client is not None
+        else cloud_client(api_key, base_url, billing=billing)
+    ) as sdk:
+        items: list[MessageItem] = []
+        cursor = None
+        try:
+            while True:
+                response = await sdk.mailboxes.messages.list(
+                    mailbox_id, **({"cursor": cursor} if cursor else {})
+                )
+                items.extend(response.items)
+                cursor = response.next_cursor
+                if not cursor:
+                    return items
+        except APIError as exc:
+            raise cloud_error(exc, "List mailbox messages") from exc

@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -88,6 +89,11 @@ def test_noninteractive_create_forwards_missing_country(monkeypatch):
 
 
 def test_number_create_prompts_for_supported_country(monkeypatch):
+    @asynccontextmanager
+    async def client(**kwargs):
+        yield object()
+
+    monkeypatch.setattr(group, "cloud_client", client)
     monkeypatch.setattr(group, "is_interactive", lambda: True)
     monkeypatch.setattr(
         group.cloud_numbers,
@@ -104,9 +110,7 @@ def test_number_create_prompts_for_supported_country(monkeypatch):
             )
         ),
     )
-    monkeypatch.setattr(
-        group, "select_prompt", lambda message, choices: choices[0].value
-    )
+    monkeypatch.setattr(group, "select_prompt", AsyncMock(return_value="US"))
     monkeypatch.setattr(group, "confirm_action_async", AsyncMock())
     created = []
 
@@ -114,6 +118,7 @@ def test_number_create_prompts_for_supported_country(monkeypatch):
         created.append(kwargs)
         return SimpleNamespace(id="n1")
 
+    phone.included_available = AsyncMock(return_value=1)
     monkeypatch.setattr(group, "PhoneNumber", phone)
     monkeypatch.setattr(
         group.cloud_numbers,

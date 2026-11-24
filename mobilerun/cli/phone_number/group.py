@@ -1,5 +1,6 @@
 """Explicit communications commands; only these commands display codes."""
 
+import asyncio
 import json
 import sys
 from contextlib import redirect_stdout
@@ -15,6 +16,7 @@ from mobilerun.cli.base.billing import (
 )
 from mobilerun.cli.base.checkout import complete_checkout
 from mobilerun.cli.base.choices import cloud_devices, numbers
+from mobilerun.cli.base.cleanup import cleanup
 from mobilerun.cli.base.menu import MenuGroup, PromptingArgument, is_interactive
 from mobilerun.cli.base.prompts import (
     SelectChoice,
@@ -28,8 +30,13 @@ from mobilerun.clients.cloud import devices
 from mobilerun.clients.cloud import numbers as cloud_numbers
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.clients.cloud.numbers import list_numbers
+from mobilerun.config.settings import get_settings
 from mobilerun.core.phone_number import CloudPhoneNumber as PhoneNumber
-from mobilerun.errors import ExtensionActionError
+from mobilerun.errors import (
+    CloudAuthenticationError,
+    CloudPermissionDenied,
+    ExtensionActionError,
+)
 from mobilerun.errors.base import MobilerunError
 from mobilerun.models.billing import Billing
 
@@ -37,6 +44,40 @@ from mobilerun.models.billing import Billing
 @click.group(cls=MenuGroup)
 def number() -> None:
     """Manage cloud phone numbers."""
+
+
+async def _included_counts(countries: list[str], billing: str) -> list[int | None]:
+    if not countries:
+        return []
+    semaphore = asyncio.Semaphore(
+        get_settings().MOBILERUN_CLOUD_NUMBER_CAPACITY_CONCURRENCY
+    )
+    async with cloud_client(billing=Billing(billing)) as client:
+
+        async def lookup(country: str) -> int:
+            async with semaphore:
+                return await PhoneNumber.included_available(
+                    country, billing=billing, client=client
+                )
+
+        results = await asyncio.gather(
+            *(lookup(country) for country in countries), return_exceptions=True
+        )
+    for result in results:
+        if isinstance(result, (CloudAuthenticationError, CloudPermissionDenied)):
+            raise result
+        if isinstance(result, BaseException) and not isinstance(result, Exception):
+            raise result
+    failed = [
+        country
+        for country, result in zip(countries, results, strict=True)
+        if isinstance(result, Exception)
+    ]
+    if failed:
+        click.echo(
+            f"Warning: included count unavailable for {', '.join(failed)}.", err=True
+        )
+    return [result if isinstance(result, int) else None for result in results]
 
 
 @number.command("messages", help="List SMS message history.")
@@ -210,10 +251,19 @@ async def number_create(
 ) -> None:
     if not country and is_interactive():
         available = await cloud_numbers.countries(billing=Billing(billing))
+        in_stock = [item for item in available.data.items if item.in_stock]
+        remaining = await _included_counts([item.country for item in in_stock], billing)
         choices = [
-            SelectChoice(item.country, item.name, item.country)
-            for item in available.data.items
-            if item.in_stock
+            SelectChoice(
+                item.country,
+                f"{item.name} ({item.country}) · "
+                + (
+                    "included count unavailable"
+                    if count is None
+                    else f"{count} included" + (" left" if count else "")
+                ),
+            )
+            for item, count in zip(in_stock, remaining, strict=True)
         ]
         if not choices:
             raise click.ClickException(
@@ -261,11 +311,35 @@ async def number_create(
 
 
 @number.command("included", help="Show remaining included numbers.")
-@click.option("--country", required=True, help="Country code for the number.")
+@click.option("--country", default=None, help="Country code for the number.")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON.")
 @billing_option
 @coro
-async def number_included(country: str, as_json: bool, billing: str) -> None:
+async def number_included(country: str | None, as_json: bool, billing: str) -> None:
+    if country is None:
+        countries = (await cloud_numbers.countries(billing=Billing(billing))).data.items
+        counts = await _included_counts([item.country for item in countries], billing)
+        entries = [
+            {"country": item.country, "remaining": count}
+            for item, count in zip(countries, counts, strict=True)
+        ]
+        if as_json:
+            click.echo(json.dumps(entries, ensure_ascii=False))
+        elif not entries:
+            render.empty("countries")
+        else:
+            render.heading(len(entries), "country")
+            render.table(
+                [
+                    [
+                        item.name,
+                        item.country,
+                        "unavailable" if count is None else f"{count} remaining",
+                    ]
+                    for item, count in zip(countries, counts, strict=True)
+                ]
+            )
+        return
     remaining = await PhoneNumber.included_available(country, billing=billing)
     if as_json:
         click.echo(json.dumps({"country": country, "remaining": remaining}))
@@ -273,23 +347,35 @@ async def number_included(country: str, as_json: bool, billing: str) -> None:
         render.kv([(f"Included numbers ({country})", f"{remaining} remaining")])
 
 
-@number.command("release", help="Release NUMBER, the phone number ID.")
+@number.command("release", help="Release phone number IDs.")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--yes", "-y", is_flag=True, help="Confirm without prompting.")
-@click.argument("number_id", cls=PromptingArgument, choices=numbers, metavar="NUMBER")
+@click.argument(
+    "number_id",
+    cls=PromptingArgument,
+    choices=numbers,
+    metavar="NUMBER...",
+    nargs=-1,
+    required=True,
+)
 @billing_option
 @coro
 async def number_release(
-    number_id: str, billing: str, yes: bool, as_json: bool
+    number_id: tuple[str, ...], billing: str, yes: bool, as_json: bool
 ) -> None:
-    await confirm_action_async(
-        "release number", billing, f"This will release {number_id}.", yes=yes, err=True
+    async def release(item_id: str) -> str:
+        result = await PhoneNumber(item_id, billing=Billing(billing)).release()
+        return result.data.state
+
+    await cleanup(
+        number_id,
+        action="Release",
+        noun="number",
+        billing=billing,
+        yes=yes,
+        as_json=as_json,
+        operation=release,
     )
-    result = await PhoneNumber(number_id, billing=Billing(billing)).release()
-    if as_json:
-        click.echo(json.dumps({"id": number_id, "status": result.data.state}))
-    else:
-        render.success(f"Number {number_id}: {result.data.state}")
 
 
 @number.command("bind", help="Bind NUMBER to cloud phone DEVICE.")
@@ -329,33 +415,43 @@ async def number_bind(
         render.success(f"Bound number {number_id} to device {device_id}")
 
 
-@number.command("unbind", help="Unbind NUMBER from its cloud phone.")
-@click.argument("number_id", cls=PromptingArgument, choices=numbers, metavar="NUMBER")
+@number.command("unbind", help="Unbind numbers from their cloud phones.")
+@click.argument(
+    "number_id",
+    cls=PromptingArgument,
+    choices=numbers,
+    metavar="NUMBER...",
+    nargs=-1,
+    required=True,
+)
 @click.option("--json", "as_json", is_flag=True, help="Output JSON.")
+@click.option("--yes", "-y", is_flag=True, help="Confirm without prompting.")
 @billing_option
 @coro
-async def number_unbind(number_id: str, as_json: bool, billing: str) -> None:
-    mode = Billing(billing)
-    async with cloud_client(billing=mode) as client:
-        result = await cloud_numbers.retrieve(number_id, billing=mode, client=client)
-        binding = result.data.device_binding
-        if binding is None:
-            raise click.ClickException(f"Number {number_id} is not bound to a device.")
-        device_id = binding.device_id
-        await devices.unbind_number(device_id, billing=mode, client=client)
-    if as_json:
-        click.echo(
-            json.dumps(
-                {
-                    "id": number_id,
-                    "status": "unbound",
-                    "number_id": number_id,
-                    "device_id": device_id,
-                }
-            )
-        )
-    else:
-        render.success(f"Unbound number {number_id} from device {device_id}")
+async def number_unbind(
+    number_id: tuple[str, ...], as_json: bool, billing: str, yes: bool
+) -> None:
+    async def unbind(item_id: str) -> str:
+        mode = Billing(billing)
+        async with cloud_client(billing=mode) as client:
+            result = await cloud_numbers.retrieve(item_id, billing=mode, client=client)
+            binding = result.data.device_binding
+            if binding is None:
+                raise click.ClickException(
+                    f"Number {item_id} is not bound to a device."
+                )
+            await devices.unbind_number(binding.device_id, billing=mode, client=client)
+        return "unbound"
+
+    await cleanup(
+        number_id,
+        action="Unbind",
+        noun="number",
+        billing=billing,
+        yes=yes,
+        as_json=as_json,
+        operation=unbind,
+    )
 
 
 @number.command("code", help="Wait for an SMS code from NUMBER, the phone number ID.")
