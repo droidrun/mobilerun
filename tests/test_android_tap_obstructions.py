@@ -150,13 +150,13 @@ def test_drawing_order_is_not_compared_across_different_parents():
     assert ctx.ui.get_element_coords(element(ctx, "target")["index"]) == (500, 200)
 
 
-def test_stealth_jitter_cannot_reenter_known_obstructions(monkeypatch):
+def test_humanize_jitter_cannot_reenter_known_obstructions(monkeypatch):
     monkeypatch.setattr(
-        "mobilerun.tools.ui.stealth_state.random.randint", lambda a, b: 0
+        "mobilerun.tools.ui.humanize_state.random.randint", lambda a, b: 0
     )
     ctx = context(
         [node("target"), node("overlay", (300, 0, 700, 400), drawingOrder=2)],
-        stealth=True,
+        humanize=True,
     )
     result = asyncio.run(click(element(ctx, "target")["index"], ctx=ctx))
     assert result.success
@@ -205,7 +205,7 @@ def test_multiple_siblings_can_collectively_cover_target():
             node("left", (0, 0, 500, 400), drawingOrder=2),
             node("right", (500, 0, 1000, 400), drawingOrder=3),
         ],
-        stealth=True,
+        humanize=True,
     )
     result = asyncio.run(click(element(ctx, "target")["index"], ctx=ctx))
     assert not result.success
@@ -227,14 +227,14 @@ def test_normalized_mode_shows_normalized_bounds_but_taps_device_pixels():
     assert not 300 <= x < 700
 
 
-@pytest.mark.parametrize("stealth", [False, True])
+@pytest.mark.parametrize("humanize", [False, True])
 @pytest.mark.parametrize("action", ["click", "long_press", "type", "type_secret"])
-def test_normalized_indexed_actions_tap_device_pixels(action, stealth):
+def test_normalized_indexed_actions_tap_device_pixels(action, humanize):
     ctx = context(
         [node("send", (930, 2150, 1050, 2270))],
         screen=(1080, 2400),
         use_normalized=True,
-        stealth=stealth,
+        humanize=humanize,
     )
     assert "(861,895,972,945)" in ctx.ui.formatted_text
     index = element(ctx, "send")["index"]
@@ -255,7 +255,7 @@ def test_normalized_indexed_actions_tap_device_pixels(action, stealth):
     operation = ctx.driver.swipe if action == "long_press" else ctx.driver.tap
     x, y = operation.await_args.args[:2]
     assert 930 <= x < 1050 and 2150 <= y < 2270
-    if not stealth:
+    if not humanize:
         assert (x, y) == (990, 2210)
         if action == "click":
             assert result.summary.endswith("Coordinates: (916, 920)")
@@ -263,8 +263,8 @@ def test_normalized_indexed_actions_tap_device_pixels(action, stealth):
             assert result.summary.endswith("at (916, 920)")
 
 
-@pytest.mark.parametrize("stealth", [False, True])
-def test_normalized_blocker_avoidance_uses_device_pixels(stealth):
+@pytest.mark.parametrize("humanize", [False, True])
+def test_normalized_blocker_avoidance_uses_device_pixels(humanize):
     ctx = context(
         [
             node("row", (0, 1800, 1080, 2000)),
@@ -274,7 +274,7 @@ def test_normalized_blocker_avoidance_uses_device_pixels(stealth):
         ],
         screen=(1080, 2400),
         use_normalized=True,
-        stealth=stealth,
+        humanize=humanize,
     )
     x, y = ctx.ui.get_element_coords(element(ctx, "row")["index"])
     assert 1800 <= y < 2000 and not 300 <= x < 800

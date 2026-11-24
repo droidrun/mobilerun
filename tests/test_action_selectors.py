@@ -46,7 +46,7 @@ from mobilerun.config_manager import AgentConfig
 from mobilerun.tools.formatters import IndexedFormatter
 from mobilerun.tools.ui.provider import StateProvider
 from mobilerun.tools.ui.state import UIState
-from mobilerun.tools.ui.stealth_state import StealthUIState
+from mobilerun.tools.ui.humanize_state import HumanizeUIState
 
 
 def _state(elements=None, cls=UIState):
@@ -1201,11 +1201,11 @@ def test_provider_candidates_are_deterministic_and_respect_element_flags():
             {"index": 6, "bounds": "200,200,240,240"},
             {"index": 7, "bounds": "0,0,0,0"},
         ],
-        cls=StealthUIState,
+        cls=HumanizeUIState,
     )
     provider = _Provider(state)
     with patch.object(
-        StealthUIState,
+        HumanizeUIState,
         "get_element_coords",
         side_effect=AssertionError("Random geometry"),
     ):

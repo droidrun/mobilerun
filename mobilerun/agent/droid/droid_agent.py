@@ -27,7 +27,7 @@ from mobilerun_core_local.driver.ios import (
     discover_ios_device,
 )
 from mobilerun_core_local.driver.recording import RecordingDriver
-from mobilerun_core_local.driver.stealth import StealthDriver
+from mobilerun_core_local.driver import HumanizeDriver
 from mobilerun_core_local.driver.visual_remote import (
     VISUAL_REMOTE_CONNECTION,
     VISUAL_REMOTE_DEFAULT_URL,
@@ -915,21 +915,21 @@ class MobileAgent(Workflow):
             )
             await driver.connect()
 
-        # Captured before the Stealth/Recording wraps: the provider pairing
+        # Captured before the Humanize/Recording wraps: the provider pairing
         # below must see the concrete driver class.
         is_ios_portal_http = isinstance(driver, IOSPortalHttpDriver)
 
-        # Wrap with StealthDriver if stealth mode enabled
-        stealth_enabled = self.config.tools and self.config.tools.stealth
-        if stealth_enabled and not is_ios and not is_visual_remote:
-            driver = StealthDriver(driver)
+        # Wrap with HumanizeDriver if humanize mode enabled
+        humanize_enabled = self.config.tools and self.config.tools.humanize
+        if humanize_enabled and not is_ios and not is_visual_remote:
+            driver = HumanizeDriver(driver)
 
         # Wrap with RecordingDriver if trajectory saving enabled
         if self.config.logging.save_trajectory != "none":
             if not isinstance(driver, RecordingDriver):
                 driver = RecordingDriver(driver)
 
-        # Outermost: Recording/Stealth only act on input, so observations that
+        # Outermost: Recording/Humanize only act on input, so observations that
         # pass through them are still masked here, and secrets typed through
         # the wrapper are kept out of the recording log.
         if self.credential_manager is not None:
@@ -957,7 +957,7 @@ class MobileAgent(Workflow):
                 tree_filter=tree_filter,
                 tree_formatter=IndexedFormatter(),
                 use_normalized=use_normalized,
-                stealth=False,
+                humanize=False,
                 vision_enabled=vision_enabled,
                 vision_resize_policy=vision_resize_policy,
             )
@@ -976,7 +976,7 @@ class MobileAgent(Workflow):
                 tree_filter=tree_filter,
                 tree_formatter=tree_formatter,
                 use_normalized=use_normalized,
-                stealth=stealth_enabled,
+                humanize=humanize_enabled,
                 vision_enabled=vision_enabled,
                 vision_resize_policy=vision_resize_policy,
             )

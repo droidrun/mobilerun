@@ -11,7 +11,7 @@ from mobilerun_core_local.driver.base import DeviceDisconnectedError, DeviceDriv
 from mobilerun_core_local.driver.cloud import CloudDriver
 from mobilerun_core_local.driver.ios import IOSDriver
 from mobilerun_core_local.driver.recording import RecordingDriver
-from mobilerun_core_local.driver.stealth import StealthDriver
+from mobilerun_core_local.driver import HumanizeDriver
 from mobilerun_core_local.driver.visual_remote import VisualRemoteDriver
 
 __all__ = [
@@ -21,6 +21,6 @@ __all__ = [
     "CloudDriver",
     "IOSDriver",
     "RecordingDriver",
-    "StealthDriver",
+    "HumanizeDriver",
     "VisualRemoteDriver",
 ]

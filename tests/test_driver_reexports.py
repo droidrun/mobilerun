@@ -15,7 +15,7 @@ import mobilerun_core_local.driver.cloud
 import mobilerun_core_local.driver.ios
 import mobilerun_core_local.driver.recording
 import mobilerun_core_local.driver.visual_remote
-from mobilerun_core_local.driver.stealth import StealthDriver as CoreStealthDriver
+from mobilerun_core_local.driver.humanize import HumanizeDriver as CoreHumanizeDriver
 
 import mobilerun.tools
 from mobilerun.tools.driver import (
@@ -25,7 +25,7 @@ from mobilerun.tools.driver import (
     DeviceDriver,
     IOSDriver,
     RecordingDriver,
-    StealthDriver,
+    HumanizeDriver,
     VisualRemoteDriver,
 )
 
@@ -63,11 +63,16 @@ class DriverCompatIdentityTest(unittest.TestCase):
             mobilerun_core_local.driver.recording.RecordingDriver,
         )
 
-    def test_stealth_driver_is_core_local_implementation(self):
+    def test_humanize_driver_is_core_local_implementation(self):
         self.assertIs(
-            StealthDriver,
-            CoreStealthDriver,
+            HumanizeDriver,
+            CoreHumanizeDriver,
         )
+
+    def test_stealth_driver_is_no_longer_exported(self):
+        import mobilerun.tools.driver as driver_pkg
+
+        self.assertFalse(hasattr(driver_pkg, "StealthDriver"))
 
     def test_visual_remote_driver_is_core_local_implementation(self):
         self.assertIs(
@@ -93,11 +98,11 @@ class DriverCompatPackageLevelTest(unittest.TestCase):
             mobilerun_core_local.driver.recording.RecordingDriver,
         )
 
-    def test_stealth_driver_not_reexported_from_tools_package(self):
-        # mobilerun/tools/__init__.py does not re-export StealthDriver; only
+    def test_humanize_driver_not_reexported_from_tools_package(self):
+        # mobilerun/tools/__init__.py does not re-export HumanizeDriver; only
         # mobilerun.tools.driver does. Documented here so this doesn't
         # silently regress if someone assumes otherwise.
-        self.assertFalse(hasattr(mobilerun.tools, "StealthDriver"))
+        self.assertFalse(hasattr(mobilerun.tools, "HumanizeDriver"))
 
     def test_visual_remote_driver_not_reexported_from_tools_package(self):
         self.assertFalse(hasattr(mobilerun.tools, "VisualRemoteDriver"))

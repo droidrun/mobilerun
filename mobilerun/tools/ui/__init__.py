@@ -4,11 +4,11 @@ from mobilerun.tools.ui.ios_provider import IOSStateProvider
 from mobilerun.tools.ui.provider import AndroidStateProvider, StateProvider
 from mobilerun.tools.ui.screenshot_provider import ScreenshotOnlyStateProvider
 from mobilerun.tools.ui.state import UIState
-from mobilerun.tools.ui.stealth_state import StealthUIState
+from mobilerun.tools.ui.humanize_state import HumanizeUIState
 
 __all__ = [
     "UIState",
-    "StealthUIState",
+    "HumanizeUIState",
     "StateProvider",
     "AndroidStateProvider",
     "IOSStateProvider",
