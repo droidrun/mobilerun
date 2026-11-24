@@ -25,7 +25,7 @@ dependencies = [
     "llama-index-llms-google-genai>=0.8.5",
     "llama-index-llms-ollama>=0.7.2",
     "llama-index-llms-openrouter>=0.4.2",
-    "mobilerun-sdk>=6.1.1",
+    "mobilerun-sdk>=6.3.2,<7",
     "mobilerun-core[local]>=1.12.0",
     "mobilerun-core-local[cloud]>=0.7.2",
     # Security floors also protect installations from the published wheel.
@@ -70,6 +70,7 @@ anthropic = [
     "llama-index-llms-anthropic>=0.8.6,<0.9.0",
 ]
 deepseek = []
+functions = ["mobilerun-functions[device,local]>=0.1.0"]
 typesafe = ["typesafe-sdk>=0.7.5,<0.8.0"]
 dev = [
     "black==26.10.1",

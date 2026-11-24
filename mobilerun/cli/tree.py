@@ -46,6 +46,9 @@ from mobilerun.cli.configure import configure  # noqa: E402
 from mobilerun.cli.device_lifecycle import device_cli  # noqa: E402
 from mobilerun.cli.doctor_command import doctor  # noqa: E402
 from mobilerun.cli.env import env  # noqa: E402
+from mobilerun.cli.function import function_cli  # noqa: E402
+from mobilerun.cli.routine import routine_cli  # noqa: E402
+from mobilerun.cli.sandbox import sandbox_cli  # noqa: E402
 from mobilerun.macro.cli import macro_cli  # noqa: E402
 
 cli.add_command(run)
@@ -55,5 +58,8 @@ cli.add_command(configure)
 cli.add_command(macro_cli, "macro")
 cli.add_command(doctor)
 cli.add_command(env)
+cli.add_command(function_cli, "function")
+cli.add_command(routine_cli, "routine")
+cli.add_command(sandbox_cli, "sandbox")
 
 cli.add_command(completion)

@@ -76,6 +76,9 @@ def test_tree_and_short_options():
         "doctor",
         "env",
         "completion",
+        "function",
+        "routine",
+        "sandbox",
     }
     assert set(cli.commands["device"].commands) == {
         "list",
@@ -107,6 +110,7 @@ def test_tree_and_short_options():
         "-c": "--config",
         "-v": "--verbose",
         "-j": "--json",
+        "-o": "--output",
         "-p": "--provider",
         "-m": "--model",
         "-u": "--llm-url",

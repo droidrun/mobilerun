@@ -8,10 +8,13 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import traceback
 import unicodedata
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
+from datetime import datetime
 from functools import wraps
+from pathlib import Path
 
 import click
 
@@ -22,6 +25,12 @@ SECRETS_KEY = "cli_secrets"
 INPUT_CLOSED = "Input closed; run the command again in a terminal."
 # Short secrets would also redact ordinary words in diagnostics.
 MIN_REDACTABLE_SECRET = 8
+# Exit code when a validator rejects a script or routine document (as in mobilerun_routines inspect).
+INVALID_EXIT_CODE = 3
+# POSIX `timeout` exit code for a wait or execution that ran out of time.
+TIMEOUT_EXIT_CODE = 124
+MAX_DETAIL_LINES = 10
+MAX_DETAIL_CHARS = 200
 NO_LOCAL_DEVICES_HINT = (
     "Connect a device over USB or run `mobilerun device pair`; "
     "use `-t cloud` for cloud devices."
@@ -153,6 +162,33 @@ def _sdk_error(exc):
     return None
 
 
+def _detail_lines(entries):
+    """Render structured error details as bounded single-line JSON entries."""
+    if isinstance(entries, dict):
+        entries = [{key: value} for key, value in entries.items()]
+    elif not isinstance(entries, list):
+        entries = [entries]
+    lines = [
+        json.dumps(entry, ensure_ascii=False) for entry in entries[:MAX_DETAIL_LINES]
+    ]
+    lines = [
+        line if len(line) <= MAX_DETAIL_CHARS else line[: MAX_DETAIL_CHARS - 1] + "…"
+        for line in lines
+    ]
+    if len(entries) > MAX_DETAIL_LINES:
+        lines.append(f"… {len(entries) - MAX_DETAIL_LINES} more")
+    return lines
+
+
+# Hints for statuses that need no credential or request lookup.
+_STATUS_HINTS = {
+    404: "Check the resource id with the corresponding list command.",
+    409: "Check the resource state and resolve the conflict before retrying.",
+    422: "Check the input fields and validation details.",
+    429: "Wait before retrying; follow Retry-After when provided.",
+}
+
+
 def convert_api_error(exc):
     """Return safe text, JSON and method/path diagnostics for an SDK error."""
     from mobilerun_sdk import APIStatusError, APITimeoutError
@@ -183,7 +219,9 @@ def convert_api_error(exc):
         if isinstance(body.get("errors"), list)
         else None
     )
-    fields = (body, first) if isinstance(first, dict) else (body,)
+    fields = tuple(
+        entry for entry in (body, body.get("error"), first) if isinstance(entry, dict)
+    )
     message = next(
         (
             entry[key]
@@ -215,6 +253,22 @@ def convert_api_error(exc):
         "code": clean(code) if code is not None else None,
     }
     text = f"{message} (HTTP {status})" if status is not None else message
+    details = next((entry["details"] for entry in fields if "details" in entry), None)
+    if details is not None:
+        # Keep structured details usable in JSON while applying the same secret
+        # redaction as the top-level message to every nested string.
+        def clean_details(value):
+            if isinstance(value, dict):
+                return {clean(key): clean_details(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [clean_details(item) for item in value]
+            return clean(value) if isinstance(value, str) else value
+
+        document["details"] = clean_details(details)
+        text += "\nDetails:\n" + "\n".join(_detail_lines(document["details"]))
+    if status is not None and exc.response.headers.get("retry-after"):
+        document["retryAfter"] = clean(exc.response.headers["retry-after"])
+        text += f"\nRetry-After: {document['retryAfter']}"
     hint = None
     if status in {401, 403}:
         from mobilerun.cli.selection import (
@@ -249,7 +303,12 @@ def convert_api_error(exc):
         origin = f"{request.url.scheme}://{host}"
         if request.url.port is not None:
             origin += f":{request.url.port}"
-        hint = f"Check the API URL from --api-url or MOBILERUN_API_BASE_URL: {clean(origin)}."
+        hint = (
+            "Check the API URL from --api-url, MOBILERUN_BASE_URL or "
+            f"MOBILERUN_API_BASE_URL: {clean(origin)}."
+        )
+    else:
+        hint = _STATUS_HINTS.get(status)
     if hint:
         text += f"\n{hint}"
     diagnostic = f"{request.method} {clean(request.url.path)}"
@@ -538,7 +597,7 @@ platform_option = click.option(
 api_url_option = click.option(
     "--api-url",
     default=DEFAULT_API_URL,
-    envvar="MOBILERUN_API_BASE_URL",
+    envvar=["MOBILERUN_BASE_URL", "MOBILERUN_API_BASE_URL"],
     show_envvar=True,
     show_default=True,
     help="Cloud API URL.",
@@ -590,6 +649,8 @@ def emit(value, *, json_output=False):
 
 
 def _ui_cell(value):
+    if isinstance(value, datetime):
+        value = value.isoformat()
     return "".join(
         " " if unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} else char
         for char in str(value if value is not None else "")
@@ -617,3 +678,145 @@ def stdout():
 def examples(*lines, docs=None):
     text = "\b\nExamples:\n" + "\n".join("  " + line for line in lines)
     return text + (f"\n\nDocs: {docs}" if docs else "")
+
+
+@contextmanager
+def cloud_client(api_url):
+    # Keep the SDK and core imports out of help, completion, and version startup.
+    from mobilerun_core.connection.cloud import make_sdk_client
+
+    from mobilerun.cli.selection import require_cloud_api_key
+
+    client = make_sdk_client(require_cloud_api_key(), api_url)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+def _issue_line(issue, prefix=""):
+    message = issue.get("message", "")
+    if issue.get("line") is not None:
+        message = f"line {issue['line']}: {message}"
+    elif isinstance(issue.get("field"), str):
+        message = f"{issue['field'] or '(document)'}: {message}"
+    repair = issue.get("repair")
+    hint = repair.get("hint") if isinstance(repair, dict) else None
+    if hint:
+        message += f" — {hint}"
+    return prefix + message
+
+
+def print_issues(document):
+    """Render a validation document: errors as lines, warnings with a prefix."""
+    errors = document.get("errors")
+    if isinstance(errors, list) and errors:
+        for issue in errors:
+            if isinstance(issue, dict):
+                click.echo(_issue_line(issue), err=True)
+    else:
+        code = document.get("code")
+        message = document.get("message", "")
+        if code or message:
+            click.echo(f"{code}: {message}" if code else message, err=True)
+    warnings = document.get("warnings")
+    for issue in warnings if isinstance(warnings, list) else []:
+        if isinstance(issue, dict):
+            click.echo(_issue_line(issue, "warning: "), err=True)
+
+
+def refuse_existing(path, force):
+    """Fail before any network call when the destination is taken."""
+    if path.exists() and not force:
+        raise click.ClickException(
+            f"{path} already exists; use --force to overwrite it."
+        )
+
+
+def write_file(path, data, *, force):
+    """Publish a complete file; without `force` only if the destination is free."""
+    refuse_existing(path, force)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=".mobilerun-pull-", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if force:
+            os.replace(temporary, path)
+        else:
+            # Linking publishes the complete file only if the destination is free.
+            os.link(temporary, path)
+    except FileExistsError:  # lost the race after the pre-check
+        raise click.ClickException(
+            f"{path} already exists; use --force to overwrite it."
+        ) from None
+    except OSError as exc:
+        raise click.ClickException(f"Cannot write {path}: {exc}") from None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def all_pages(fetch):
+    """Collect raw SDK response pages with the API's shared pagination shape."""
+    items = []
+    page = 1
+    while True:
+        result = fetch(page=page)
+        items.extend(item for item in result.items if item is not None)
+        if not result.pagination.has_next:
+            return items
+        page += 1
+
+
+def _json_default(value):
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+def print_model(item, json_output):
+    """Render a response model as JSON or field/value rows."""
+    document = item.model_dump(mode="json" if json_output else "python", by_alias=True)
+    if json_output:
+        emit(document, json_output=True)
+        return
+    emit_rows(
+        ("FIELD", "VALUE"),
+        (
+            (
+                key,
+                (
+                    json.dumps(value, default=_json_default)
+                    if isinstance(value, (dict, list))
+                    else value
+                ),
+            )
+            for key, value in document.items()
+        ),
+    )
+
+
+def print_models(items, json_output, headers, row):
+    """Render response models as one JSON array or as rows."""
+    if json_output:
+        emit(
+            [item.model_dump(mode="json", by_alias=True) for item in items],
+            json_output=True,
+        )
+    else:
+        emit_rows(headers, (row(item) for item in items))
+
+
+def confirm_destructive(message, *, yes, no_input):
+    """Use the same prompt and automation policy for every destructive command."""
+    if yes:
+        return
+    if not input_allowed(no_input):
+        raise click.UsageError(
+            "This action requires --yes when input is unavailable or --no-input is set."
+        )
+    if not click.confirm(message, err=True):
+        raise click.ClickException("Action cancelled.")

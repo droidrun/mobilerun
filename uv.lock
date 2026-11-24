@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -1489,6 +1489,9 @@ dev = [
     { name = "ruff" },
     { name = "safety" },
 ]
+functions = [
+    { name = "mobilerun-functions", extra = ["device", "local"] },
+]
 langfuse = [
     { name = "langfuse" },
     { name = "llama-index-instrumentation" },
@@ -1538,7 +1541,8 @@ requires-dist = [
     { name = "mobilerun", extras = ["langfuse"], marker = "extra == 'dev'" },
     { name = "mobilerun-core", extras = ["local"], specifier = ">=1.12.0" },
     { name = "mobilerun-core-local", extras = ["cloud"], specifier = ">=0.7.2" },
-    { name = "mobilerun-sdk", specifier = ">=6.1.1" },
+    { name = "mobilerun-functions", extras = ["device", "local"], marker = "extra == 'functions'", specifier = ">=0.1.0" },
+    { name = "mobilerun-sdk", specifier = ">=6.3.2,<7" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "openinference-instrumentation-llama-index", marker = "extra == 'langfuse'", specifier = ">=3.0.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.40.0" },
@@ -1555,7 +1559,7 @@ requires-dist = [
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.7.5,<0.8.0" },
     { name = "urllib3", specifier = ">=2.8.0" },
 ]
-provides-extras = ["anthropic", "deepseek", "typesafe", "dev", "langfuse"]
+provides-extras = ["anthropic", "deepseek", "functions", "typesafe", "dev", "langfuse"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1606,8 +1610,28 @@ cloud = [
 ]
 
 [[package]]
+name = "mobilerun-functions"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b4/4c/4025cdf4f74a7c1d5b1f644ca0dbaf5907f043208f354db87dcf9da9c947/mobilerun_functions-0.1.0.tar.gz", hash = "sha256:0fc6a8d26b206a58ff786ee049a4e79cb5ddc0fd6c2a71f1e339874410889342", size = 80993, upload-time = "2026-11-24T10:39:09.005Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/c8/01a23a659e19d99f32796fc39ea0848a5c1951c4f8c6b35528976a924488/mobilerun_functions-0.1.0-py3-none-any.whl", hash = "sha256:f0b161f0d060c610945a82fa6298aaa0404585b7bc80f306d9fb5896e1b2d015", size = 35104, upload-time = "2026-11-24T10:39:07.803Z" },
+]
+
+[package.optional-dependencies]
+device = [
+    { name = "mobilerun-core" },
+]
+local = [
+    { name = "mobilerun-core", extra = ["local"] },
+]
+
+[[package]]
 name = "mobilerun-sdk"
-version = "6.1.1"
+version = "6.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1617,9 +1641,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/21/32/d704aec338e7497eb49febbeae3ac9deb63c2eb6ca8c0ded5bbaf3db9501/mobilerun_sdk-6.1.1.tar.gz", hash = "sha256:b3d890788b25175497a71be913a71b000f2cf5285facd338a65a7b7c786cf94c", size = 351426, upload-time = "2026-11-10T17:01:44.02Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/a1/d57c0f12715a4deaa64a949a9fea7abc97ced9f16f6dc7640f1f91048b1b/mobilerun_sdk-6.3.2.tar.gz", hash = "sha256:26ed63019e5ece54ba3fc4dbe5eae586e5417ac574abbdcec1bf3ec58404ce33", size = 541217, upload-time = "2026-11-24T13:43:25.839Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/f3/c3f48b3615635a1e321df4a1fb61a1b7522d6a655ae99ae8c2a06ecb29aa/mobilerun_sdk-6.1.1-py3-none-any.whl", hash = "sha256:2f2858330694283dbe2e814f9232a59b84976b31361e1f260a468eaa3a7d4c3c", size = 573416, upload-time = "2026-11-10T17:01:42.687Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/63/aa83a232ea5847eee5d39ef6deed71f1900e37afa8fef8a2e5d7af97a891/mobilerun_sdk-6.3.2-py3-none-any.whl", hash = "sha256:f88c25281d25f58cff0ccb67ee806fe37151dee3fae6dd6216f4f72a20260707", size = 809581, upload-time = "2026-11-24T13:43:24.306Z" },
 ]
 
 [[package]]
