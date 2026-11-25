@@ -2,32 +2,113 @@
 
 import json
 import logging
+import re
 import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, quote_plus
 
-_active_secrets: ContextVar[tuple[str, ...]] = ContextVar(
-    "mobilerun_input_secrets", default=()
+# A period immediately following a digit only joins another digit, not a new
+# sentence. Possessive runs consume each span of spaces/digits without backtracking.
+_NUMERIC_RUN = re.compile(r"\d++(?:(?: ++(?:[./-] *+)?|[/-] *+|\.)\d++)*")
+
+
+@dataclass(frozen=True, repr=False)
+class _Variants:
+    literals: frozenset[str]
+    digits: frozenset[str]
+
+
+_active_secrets: ContextVar[_Variants | None] = ContextVar(
+    "mobilerun_input_secrets", default=None
 )
 
 
+def _variants(values: tuple[str, ...]) -> _Variants | None:
+    parent = _active_secrets.get()
+    literals = set(parent.literals) if parent else set()
+    numbers = set(parent.digits) if parent else set()
+    for value in filter(None, values):
+        forms = {
+            value,
+            repr(value)[1:-1],
+            json.dumps(value)[1:-1],
+            json.dumps(value, ensure_ascii=False)[1:-1],
+        }
+        try:
+            forms.update((quote(value, safe=""), quote_plus(value, safe="")))
+        except UnicodeEncodeError:
+            pass  # Lone surrogates have no UTF-8 URL encoding.
+        digits = "".join(c for c in value if c.isdecimal())
+        if len(digits) >= 4 and all(c.isdecimal() or c in " ./-" for c in value):
+            numbers.add(digits)
+            if _NUMERIC_RUN.fullmatch(value):
+                # Numeric literals use group boundaries too, e.g. 12/27 in a date.
+                forms.discard(value)
+        literals.update(forms)
+    return (
+        _Variants(frozenset(literals), frozenset(numbers))
+        if literals or numbers
+        else None
+    )
+
+
+def _numeric_spans(text: str, numbers: frozenset[str]) -> Iterator[tuple[int, int]]:
+    lengths = sorted({len(value) for value in numbers})
+    for match in _NUMERIC_RUN.finditer(text):
+        run = match.group()
+        if len(run) < lengths[0]:
+            continue
+        if run.isdecimal():
+            if run in numbers:
+                yield match.span()
+            continue
+        # Only whitespace between groups is a boundary. Spaces surrounding
+        # punctuation belong to the separator and do not delimit a match.
+        digits: list[str] = []
+        starts = [(0, match.start())]
+        ends = {}
+        last_digit = -1
+        for index, char in enumerate(run):
+            if char.isdecimal():
+                if run[last_digit + 1 : index].isspace():
+                    ends[len(digits)] = match.start() + last_digit + 1
+                    starts.append((len(digits), match.start() + index))
+                digits.append(char)
+                last_digit = index
+        ends[len(digits)] = match.end()
+        compact = "".join(digits)
+        for offset, start in starts:
+            for length in lengths:
+                stop = offset + length
+                if stop > len(compact):
+                    break
+                if stop in ends and compact[offset:stop] in numbers:
+                    yield start, ends[stop]
+
+
 def _redact_secrets(text: str) -> str:
-    for secret in _active_secrets.get():
-        if secret:
-            variants = {
-                secret,
-                repr(secret)[1:-1],
-                json.dumps(secret, ensure_ascii=True)[1:-1],
-                json.dumps(secret, ensure_ascii=False)[1:-1],
-                quote(secret, safe=""),
-                quote_plus(secret, safe=""),
-            }
-            for variant in sorted(variants, key=len, reverse=True):
-                text = text.replace(variant, "***")
-    return text
+    variants = _active_secrets.get()
+    if not variants:
+        return text
+    spans = list(_numeric_spans(text, variants.digits)) if variants.digits else []
+    for literal in variants.literals:
+        offset = 0
+        while (start := text.find(literal, offset)) >= 0:
+            spans.append((start, start + len(literal)))
+            offset = start + 1
+    if not spans:
+        return text
+    parts: list[str] = []
+    end = 0
+    for start, stop in sorted(spans):
+        if start >= end:
+            parts.extend((text[end:start], "***"))
+        end = max(end, stop)
+    return "".join([*parts, text[end:]])
 
 
 def _install_secret_factory() -> None:
@@ -103,7 +184,7 @@ def secret_scope(*values: str) -> Iterator[None]:
     """
     _install_secret_factory()
     _install_extra_redaction()
-    token = _active_secrets.set((*_active_secrets.get(), *values))
+    token = _active_secrets.set(_variants(values))
     try:
         yield
     finally:

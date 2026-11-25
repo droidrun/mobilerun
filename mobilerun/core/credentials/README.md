@@ -21,9 +21,12 @@ vault fields. Ordinary fields are resolved only when typed. Masking does not
 change the raw device, screenshots or a caller's own state provider.
 
 Credential input relies on `mobilerun.utils.redaction.secret_scope` to redact
-exact values in logs. Snapshot masking does not apply to logs: a provider that
-reformats a value (for example, by inserting spaces) must not log it.
-Formatted-value log redaction is pending an upstream fix.
+exact values and their escaped forms in logs. For values made only of digits and
+supported separators, with at least four digits (such as PINs and expiries), it
+also masks the same digits separated by spaces, hyphens, periods, or slashes.
+Alphanumeric secrets are literal-only.
+It does not mask a numeric substring inside a longer date or joined ID: `12/27`
+matches `expires 12 / 27.` but not `2026/12/27`. Other reformattings are not covered.
 
 Before typing, the device refreshes its state and requires a focused editable
 field. Providers that cannot report focus and editability, including
