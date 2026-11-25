@@ -10,23 +10,28 @@ The test harness redirects HOME and the config directory before importing applic
 
 TODO: Add local/cloud pool ordering, agent/context provider, skills and remaining CLI/macro coverage.
 
-`test_cloud_lifecycle.py::test_cloud_info_and_wait_ready` and
-`test_cloud_lifecycle.py::test_cloud_rejects_local_secrets` do not create a phone or run a task; check your account pricing before running cloud operations.
-`test_cloud_lifecycle.py::test_paid_cloud_create_lifecycle` creates a billable
+`test_cloud_devices.py::test_cloud_info_and_wait_ready` and
+`test_cloud_devices.py::test_cloud_rejects_local_secrets` do not create a phone or run a task; check your account pricing before running cloud operations.
+`test_cloud_devices.py::test_paid_cloud_create_lifecycle` creates a billable
 phone and resets it; collect only until explicitly approved. The typed-output
 task smoke also checks lazy trajectory and screenshot reads.
 
 ## Sandbox cloud functions
 
 The sandbox endpoint smoke requires the `sandbox` and `dev` extras, a valid
-`MOBILERUN_API_KEY`, and an account authorized for paid functions and workflows.
+`MOBILERUN_API_KEY`, an explicit `MOBILERUN_CLOUD_BASE_URL`, and an account
+authorized for paid functions and workflows.
 It needs no phone, emulator, or LLM credentials. **Device-free is not free:**
 deployment and the function execution may be billed. After explicit approval,
 run only this lifecycle check with:
 
 ```sh
-source ~/.agent-env; .venv/bin/pytest --smoke tests/unit/smoke/test_sandbox_functions.py -v -s
+source ~/.agent-env; .venv/bin/pytest --smoke tests/unit/smoke/test_sandbox_functions.py::test_device_free_sandbox_endpoint -v -s
 ```
+
+`test_device_free_sandbox_webhook` is a separate paid check; it also needs
+`MOBILERUN_SMOKE_WEBHOOK_URL` pointing to a dedicated HTTPS receiver you control.
+Running the whole file runs both.
 
 To check discovery without calling the cloud:
 

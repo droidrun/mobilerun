@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     MOBILERUN_CLOUD_TASK_POLL_INTERVAL_SECONDS: float = 2.0
     """Cloud task poll interval seconds."""
 
+    MOBILERUN_WEBHOOK_PAGE_SIZE: int = Field(100, ge=1, le=100)
+    """Number of webhook endpoints requested per page."""
+
+    MOBILERUN_WEBHOOK_PING_TIMEOUT: float = Field(15.0, gt=0, le=60)
+    """Max seconds to wait for a signed webhook test delivery."""
+
     # ── Device authentication
 
     MOBILERUN_AUTH_URL: str = "https://cloud.mobilerun.ai/api/auth"

@@ -429,9 +429,10 @@ class Cloud:
         schedule: str | None = None,
         device: str | None = None,
         endpoint: bool | None = None,
+        webhook: str | None = None,
     ) -> Callable[[F], F]:
         CloudDeclaration(
-            name, schedule=schedule, device=device, endpoint=endpoint
+            name, schedule=schedule, device=device, endpoint=endpoint, webhook=webhook
         ).validate()
 
         def decorate(func: F) -> F:

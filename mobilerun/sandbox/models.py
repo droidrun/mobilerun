@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, ParamSpec, TypeVar
+from uuid import UUID
 
 from mobilerun.config.settings import get_settings
 from mobilerun.models.billing import Billing
@@ -26,6 +27,19 @@ def routine(func: Callable[P, R]) -> Callable[P, R]:
 
 
 JSON = dict[str, Any]
+WEBHOOK_REGISTER_HINT = "mobilerun webhook register <url>"
+
+
+def webhook_endpoint_id(value: str) -> str:
+    """Return a canonical endpoint ID without exposing invalid input."""
+    if isinstance(value, str):
+        try:
+            return str(UUID(value))
+        except ValueError:
+            pass
+    raise SandboxDeclarationError(
+        f"webhook= takes a webhook endpoint ID. Register one first: {WEBHOOK_REGISTER_HINT}"
+    )
 
 
 def validate_device(device: str | None) -> None:
@@ -39,6 +53,7 @@ class CloudDeclaration:
     schedule: str | None = None
     device: str | None = None
     endpoint: bool | None = None
+    webhook: str | None = field(default=None, repr=False)
 
     @property
     def has_endpoint(self) -> bool:
@@ -56,6 +71,10 @@ class CloudDeclaration:
         ):
             raise SandboxDeclarationError("Schedule must have exactly five cron fields")
         validate_device(self.device)
+        if self.webhook is not None:
+            webhook_endpoint_id(self.webhook)
+            if not self.has_endpoint and self.schedule is None:
+                raise SandboxDeclarationError("A webhook requires a flow trigger")
         if self.endpoint is not None and not isinstance(self.endpoint, bool):
             raise SandboxDeclarationError("Endpoint must be a boolean or None")
         if self.schedule is not None and self.endpoint is True:

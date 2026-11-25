@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 from mobilerun_sdk import APIError, AsyncMobilerun
+from mobilerun_sdk.types.workflows.flow_create_params import Action
 
 from mobilerun.clients.cloud.billing import requires
 from mobilerun.clients.cloud.client import cloud_client
@@ -187,15 +188,21 @@ async def run_logs(
         ) from None
 
 
-async def _catalog(sdk: AsyncMobilerun) -> str:
+async def _catalog_entry_id(sdk: AsyncMobilerun, step_name: str) -> str:
+    """Resolve the unique catalog entry for step_name: workflow actions are created by ID."""
     entries = await _paginate(sdk.workflows.action_catalog.list)
-    matches = [
-        item["id"] for item in entries if item.get("stepName") == "functions.run"
-    ]
+    matches = [item["id"] for item in entries if item.get("stepName") == step_name]
     if len(matches) != 1:
-        raise FlowCapabilityError(
-            operation="Resolve function action", code="request_failed"
+        label = (
+            step_name
+            if step_name in ("functions.run", "webhooks.send")
+            else "sandbox step"
         )
+        count = "no entries" if not matches else "more than one entry"
+        message = f"Workflow action catalog: found {count} for {label}"
+        error = FlowCapabilityError(message, operation=message, code="request_failed")
+        error.value_safe = True  # Both interpolated labels are allowlisted above.
+        raise error
     return matches[0]
 
 
@@ -268,7 +275,10 @@ def _document(document: JSON) -> tuple[JSON, list[JSON], JSON]:
                 isinstance(step, dict) and set(step) == {"id", "name", "uses", "with"}
             ):
                 raise ValueError
-            if not (step["uses"] == "functions.run" and isinstance(step["with"], dict)):
+            if not (
+                step["uses"] in ("functions.run", "webhooks.send")
+                and isinstance(step["with"], dict)
+            ):
                 raise ValueError
             if not (isinstance(step["id"], str) and isinstance(step["name"], str)):
                 raise ValueError
@@ -291,11 +301,33 @@ def _document(document: JSON) -> tuple[JSON, list[JSON], JSON]:
         ) from None
 
 
+@requires(Billing.NO_COMMERCE)
+async def prepare_action_payloads(
+    document: JSON, *, billing: Billing, client: AsyncMobilerun | None = None
+) -> list[JSON]:
+    """Resolve the exact SDK action bodies before the staging intent is journaled."""
+    _, steps, _ = _document(document)
+    async with _sdk(billing, client, "Resolve sandbox actions") as sdk:
+        catalog = {
+            uses: await _catalog_entry_id(sdk, uses)
+            for uses in dict.fromkeys(step["uses"] for step in steps)
+        }
+    return [
+        dict(
+            catalog_entry_id=catalog[step["uses"]],
+            name=step["name"],
+            params=step["with"],
+        )
+        for step in steps
+    ]
+
+
 @requires(Billing.PAID)
 async def create_document(
     document: JSON,
     idempotency_key: str,
     *,
+    action_payloads: list[JSON] | None = None,
     billing: Billing,
     client: AsyncMobilerun | None = None,
 ) -> JSON:
@@ -306,19 +338,22 @@ async def create_document(
     flow_id = None
     async with _sdk(billing, client, "Cloud workflow request") as sdk:
         try:
-            catalog = await _catalog(sdk)
+            if action_payloads is None:
+                action_payloads = await prepare_action_payloads(
+                    document, billing=billing, client=sdk
+                )
+            if len(action_payloads) != len(steps):
+                raise ValueError("Incomplete action payloads")
             trigger_id = _data(
                 await sdk.workflows.triggers.create(
                     **trigger, idempotency_key=idempotency_key + ":trigger"
                 )
             )["id"]
-            refs = []
+            refs: list[Action] = []
             for position, step in enumerate(steps):
                 action = _data(
                     await sdk.workflows.actions.create(
-                        catalog_entry_id=catalog,
-                        name=step["name"],
-                        params=step["with"],
+                        **action_payloads[position],
                         idempotency_key=idempotency_key + f":action:{position}",
                     )
                 )
@@ -425,20 +460,6 @@ async def list_action_definitions(
         billing,
         lambda sdk: sdk.workflows.actions.list,
         "List action definitions",
-    )
-
-
-@requires(Billing.NO_COMMERCE)
-async def get_action(
-    action_id: str, *, billing: Billing, client: AsyncMobilerun | None = None
-) -> JSON:
-    """Retrieve an action."""
-    return await _request(
-        client,
-        billing,
-        lambda sdk: sdk.workflows.actions.retrieve,
-        "Get action",
-        action_id,
     )
 
 

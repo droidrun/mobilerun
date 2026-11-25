@@ -44,7 +44,13 @@ def _parse(source: str, filename: str) -> ast.Module:
     try:
         return ast.parse(source, filename=filename)
     except (SyntaxError, ValueError) as exc:
-        raise SandboxDeclarationError(f"{filename}: invalid Python source") from exc
+        location = (
+            f"{filename}:{exc.lineno}"
+            if isinstance(exc, SyntaxError) and exc.lineno
+            else filename
+        )
+    # SyntaxError retains the offending source line, including any webhook token.
+    raise SandboxDeclarationError(f"{location}: invalid Python source")
 
 
 def _declaration(
@@ -121,7 +127,7 @@ def _declaration(
                     "The manual trigger was removed; use an endpoint with device= to attach a device"
                 )
             if (
-                keyword.arg not in {"name", "schedule", "device", "endpoint"}
+                keyword.arg not in {"name", "schedule", "device", "endpoint", "webhook"}
                 or keyword.arg in values
             ):
                 raise ValueError("unknown or duplicate option")

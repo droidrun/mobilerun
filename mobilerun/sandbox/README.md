@@ -301,6 +301,11 @@ resources based on names. Cleanup checks recorded IDs and relationships and
 preserves foreign/shared resources. Local flow YAML is removed only after
 owned flow removal is confirmed.
 
+If a cutover receipt predates this version and lacks journaled action payloads,
+the CLI cannot resume or clean up that deployment. Keep the receipt and finish
+or clean up the deployment manually in the cloud account. Use the recorded IDs
+to identify resources and verify ownership before changing or deleting them.
+
 ## Files
 
 | File | Responsibility |
@@ -315,3 +320,25 @@ owned flow removal is confirmed.
 
 See the [smoke test instructions](../../tests/unit/smoke/README.md#sandbox-cloud-functions)
 for the paid, device-free lifecycle check and its cleanup procedure.
+
+### Send a function result to a webhook
+
+Register the receiver, then pass the returned endpoint ID:
+
+```sh
+mobilerun webhook register https://…
+```
+
+```python
+@cloud("daily-report", webhook="<id>")
+def report(input: ReportInput) -> ReportOutput:
+    return ReportOutput(count=input.count)
+```
+
+`ReportInput` and `ReportOutput` are your Pydantic models. Deploying a function and running its flow can incur charges. After a successful function step, the flow queues a `workflow.step.emit` event with the return value in `data.result`. Flow success confirms queuing, not HTTP delivery. Failed functions do not emit a result.
+
+The endpoint must be active, not blocked, and subscribed to `workflow.step.emit` (or all events). Changing the ID updates the flow action, not the endpoint.
+
+If `flow.yaml` is missing, enabling a webhook flow checks the live flow against the last completed deployment in the receipt. If that evidence is missing or doesn't match, redeploy before enabling. If cleanup reports an uncertain action create, retry the original deploy before cleaning up so it can recover the action ID.
+
+`run.snapshot.get("webhookStatus")` reports only an observed webhook step: `pending`, `running`, `succeeded`, `failed`, `skipped`, or `cancelled`. No webhook step means no status field. `Run.result()` warns if the webhook failed, was skipped, or was cancelled, but still returns a successful function result. `succeeded` means the event was queued, not that HTTP delivery was confirmed.

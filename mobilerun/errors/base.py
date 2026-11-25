@@ -6,6 +6,9 @@ from typing import ClassVar, Generic, Literal
 
 CloudErrorCode = Literal[
     "request_failed",
+    "webhook_duplicate_url",
+    "webhook_registration_in_progress",
+    "webhook_replay_deleted",
     "missing_token",
     "auth_failed",
     "invalid_billing",
@@ -42,6 +45,11 @@ _OPERATIONS = frozenset(
         "Delete file",
         "Delete vault credential",
         "Delete workspace app",
+        "Delete webhook",
+        "Get webhook",
+        "Ping webhook",
+        "List webhooks",
+        "Register webhook",
         "Disconnect phone proxy",
         "Download device file",
         "Download file",
@@ -134,6 +142,11 @@ _BILLING_OPERATIONS = frozenset(
         "get_proxy",
         "install",
         "list_apps",
+        "get_webhook",
+        "ping_webhook",
+        "list_webhooks",
+        "register_webhook",
+        "delete_webhook",
         "list_device_files",
         "list_devices",
         "list_files",
@@ -264,6 +277,9 @@ class CloudError(MobilerunError):
                     hint = fields["_hint"]
                 break
         hints = {
+            "webhook_duplicate_url": "A webhook already exists for this URL.",
+            "webhook_registration_in_progress": "Webhook registration is still in progress; retry with the same key.",
+            "webhook_replay_deleted": "The webhook created with this key has been deleted.",
             "request_failed": hint,
             "missing_token": "Token response missing access_token; run `mobilerun account login` again.",
             "auth_failed": "Run `mobilerun account login` again.",

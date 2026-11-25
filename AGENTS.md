@@ -26,7 +26,7 @@ examples, and dependency diagram.
 - `skills/`: git submodule; `hatch_build.py` bundles its files in the wheel.
 
 Shared core must not import agents or feature packages. The intended boundaries
-are checked in `tests/unit/test_import_boundaries.py`. The agent-required
+are checked in `tests/unit/architecture/test_layers.py`. The agent-required
 dependency test (`tests/unit/test_agent_required_dependencies.py`) lives in the
 separate `mobilerun-agents` repository. The CLI entry point has a special role; see the boundary tests for exceptions.
 The v008 migration and legacy path resolver locate `mobilerun_agents` assets without importing the add-on.
@@ -40,11 +40,24 @@ may import shared code, core, and clients; core may import clients; clients
 never import core or the root package; shared code never imports features.
 Register feature CLI groups via `mobilerun.cli` entry points in `pyproject.toml`.
 
+Core subpackages (`core/credentials/`, `core/devices/`, `core/webhooks/`, …)
+are part of core, not features: they never get their own `settings.py`,
+`utils.py`, `errors.py` or `models.py`. Their tunables go in
+`config/settings.py`, helpers in `utils/`, errors in `errors/`, models in
+`models/`. Domain constants that callers need (e.g. a default event type) are
+exported from the subpackage's `__init__.py`; backend limits stay private in
+the module that uses them. Only feature packages (`macro/`, `mcp/`, `skills/`,
+`sandbox/`, `addons/`) own a `settings.py`.
+
 | New code | Location |
 | --- | --- |
 | Device error | `errors/device.py` |
 | Macro error | `macro/errors.py` |
+| Core tunable (e.g. webhook page size) | `config/settings.py` |
+| Core helper (e.g. URL masking) | `utils/` (e.g. `utils/redaction.py`) |
+| Core cloud adapter | `clients/cloud/<area>.py` |
 | Proxy CLI command | `cli/proxy/` |
+| Webhook CLI command | `cli/webhook/` |
 | Skills CLI | `skills/cli/` |
 
 ## Setup
@@ -69,8 +82,8 @@ below, or invoke tools directly from `.venv/bin/`.
 pytest tests/unit
 
 # One test file or one test.
-pytest tests/unit/test_agent_config_boundary.py
-pytest tests/unit/test_import_boundaries.py::test_shared_packages_do_not_import_features
+pytest tests/unit/addons/test_plugins.py
+pytest tests/unit/architecture/test_layers.py::test_shared_packages_do_not_import_features
 
 # Ruff lint; Black formatting and the CI formatting check.
 ruff check .

@@ -10,6 +10,7 @@
 - `workspace.py` — Account-wide file and app classmethods; see [Workspace](WORKSPACE.md).
 - `devices/` — Device interfaces, implementations, and wrappers.
 - `credentials/` — Credential providers that bind themselves to devices.
+- [`webhooks/`](webhooks/README.md) — Organization webhook endpoint management.
 - `phone_number/` — Phone number interface and server-bound cloud numbers.
 - `mailbox/` — Mailbox interface and locally associated cloud mailboxes.
 - `proxy/` — Connect/SOCKS5 parameters; selection and switching live on phones.

@@ -35,6 +35,7 @@ _COMMANDS = {
         "Install or print shell completion.",
     ),
     "proxy": ("mobilerun.cli.proxy.group", "proxy", "Manage Connect proxies."),
+    "webhook": ("mobilerun.cli.webhook.group", "webhook", "Manage webhook endpoints."),
     "number": (
         "mobilerun.cli.phone_number.group",
         "number",

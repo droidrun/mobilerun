@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from mobilerun.config.settings import get_settings
 
 RUNTIME_MODULE = "mobilerun_functions"
+WEBHOOK_STEP_ID = "webhook"
 
 
 class SandboxSettings(BaseSettings):
@@ -25,6 +26,7 @@ class SandboxSettings(BaseSettings):
     MOBILERUN_SANDBOX_FUNCTION_TIMEOUT: int = 600
     MOBILERUN_SANDBOX_FLOW_SUFFIX: str = " · flow"
     MOBILERUN_SANDBOX_ACTION_SUFFIX: str = " · function"
+    MOBILERUN_SANDBOX_WEBHOOK_SUFFIX: str = " · webhook"
     MOBILERUN_SANDBOX_DIRECTORY: str | None = None
 
     @field_validator("MOBILERUN_SANDBOX_DIRECTORY", mode="before")

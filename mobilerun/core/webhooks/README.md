@@ -1,0 +1,49 @@
+# Cloud webhook endpoints
+
+Use `CloudWebhooks` to manage the current organization's webhook destinations.
+The service signs HTTP deliveries and returns the signing secret only on initial
+registration. Replaying a create with the same idempotency key does not return it again.
+
+```python
+from mobilerun.core.webhooks import DEFAULT_WEBHOOK_EVENT, CloudWebhooks
+
+hooks = CloudWebhooks(billing="no_commerce")
+endpoint = await hooks.register(
+    "https://receiver.example/results",
+    event_types=[DEFAULT_WEBHOOK_EVENT],
+    idempotency_key="my-deployment-creation-intent",
+)
+assert (await hooks.get(endpoint.id)).id == endpoint.id
+# Explicitly send a service-signed test event (an outbound delivery).
+delivered, http_status = await hooks.ping(endpoint.id)
+# Store endpoint.secret.get_secret_value() securely on first creation; never log it.
+# Only delete an endpoint you created or were explicitly asked to remove.
+await hooks.delete(endpoint.id)
+```
+
+`register` requires an explicit filter. `DEFAULT_WEBHOOK_EVENT` is the flow
+results event (`workflow.step.emit`). Passing `event_types=[]` subscribes the
+endpoint to **every** deliverable platform event. Endpoint management does not
+purchase resources. Registration does not run a flow or send a test delivery; call `ping` explicitly to send one.
+
+`list()` reads every page, including integration destinations (which have no URL).
+`find_by_url(url)` looks for an exact normalized HTTPS URL without sending it as a
+search query. Finding an endpoint does not grant ownership: inspect its `state`,
+`health`, and `event_types` before deciding to reuse it. `register` does not adopt
+an existing endpoint on conflict. URLs and signing secrets are `SecretStr` values;
+reading them in plaintext requires `.get_secret_value()`.
+
+`validate_webhook_url(url)` performs the same validation and canonicalization as registration, without a network request. Registration distinguishes a duplicate URL, an in-progress idempotent request, and a deleted registration on replay through the typed cloud error's `code`.
+
+| File | Purpose |
+| --- | --- |
+| `__init__.py` | Public API, including `DEFAULT_WEBHOOK_EVENT` |
+| `cloud.py` | Endpoint operations, validation, and URL lookup |
+
+See [shared settings](../../config/README.md#settings-overview) for the webhook
+page size and ping timeout environment variables.
+
+`ping` uses the SDK’s `webhooks.test_delivery(id)` (`POST /webhooks/{id}/test`). The service signs and attempts delivery before returning the outcome and HTTP status, so there is no need to poll delivery history. Receiver error text is not returned. The SDK also exposes `deliveries.list_for_webhook` and `deliveries.retrieve_attempts` for history. See the [backend implementation](https://github.com/droidrun/webhooks-api/blob/94783f57f4c7c4e7c014ae3fcaf91c0b39396e09/src/modules/endpoints/service/endpoints.service.ts#L495-L530).
+
+See the [cloud SDK adapter](../../clients/cloud/webhooks.py),
+[endpoint model](../../models/webhooks.py), and [core package map](../README.md).

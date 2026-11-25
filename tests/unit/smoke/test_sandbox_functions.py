@@ -2,7 +2,9 @@
 
 import asyncio
 import os
+from pathlib import Path
 from runpy import run_path
+from tempfile import TemporaryDirectory
 from textwrap import dedent
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -42,20 +44,58 @@ def _verified_smoke_scope():
 
 
 def test_device_free_sandbox_endpoint(real_env, tmp_path, monkeypatch):
+    _exercise_endpoint(tmp_path, monkeypatch, webhook=None)
+
+
+def test_device_free_sandbox_webhook(real_env, tmp_path, monkeypatch):
+    webhook = os.getenv("MOBILERUN_SMOKE_WEBHOOK_URL")
+    if not webhook:
+        pytest.skip(
+            "Set MOBILERUN_SMOKE_WEBHOOK_URL to a dedicated HTTPS receiver you control"
+        )
+    if not os.getenv("MOBILERUN_API_KEY"):
+        pytest.skip("Set MOBILERUN_API_KEY for the sandbox smoke")
+    pytest.importorskip("mobilerun_functions")
+    _verified_smoke_scope()
+    from mobilerun.core.webhooks import DEFAULT_WEBHOOK_EVENT, CloudWebhooks
+    from mobilerun.errors.cloud import CloudResourceNotFound
+    from mobilerun.models.billing import Billing
+
+    hooks = CloudWebhooks(billing=Billing.PAID)
+    endpoint = asyncio.run(hooks.register(webhook, event_types=[DEFAULT_WEBHOOK_EVENT]))
+    try:
+        print(f"smoke webhook endpoint: {endpoint.id}", flush=True)
+        _exercise_endpoint(tmp_path, monkeypatch, webhook=endpoint.id)
+    finally:
+        asyncio.run(hooks.delete(endpoint.id))
+        with pytest.raises(CloudResourceNotFound):
+            asyncio.run(hooks.get(endpoint.id))
+
+
+def _exercise_endpoint(tmp_path, monkeypatch, webhook):
+    with TemporaryDirectory(prefix="mobilerun-smoke-source-") as directory:
+        _run_lifecycle(tmp_path, monkeypatch, webhook, Path(directory) / "ping.py")
+
+
+def _run_lifecycle(tmp_path, monkeypatch, webhook, source):
     if not os.getenv("MOBILERUN_API_KEY"):
         pytest.skip("Set MOBILERUN_API_KEY for the sandbox smoke")
     pytest.importorskip("mobilerun_functions")
     pytest.importorskip("mobilerun_sdk")
 
+    from mobilerun.clients.cloud.client import cloud_client
     from mobilerun.errors.cloud import CloudResourceNotFound
     from mobilerun.models.billing import Billing
     from mobilerun.sandbox import clients, deploy
-    from mobilerun.sandbox.deployment import ReceiptStore, cleanup_owned, current_scope
+    from mobilerun.sandbox.deployment import (
+        ReceiptStore,
+        cleanup_owned,
+        current_scope,
+    )
     from mobilerun.sandbox.errors import SandboxRunError
 
     scope = _verified_smoke_scope()
     name = f"sandbox-smoke-{uuid4().hex}"
-    source = tmp_path / "ping.py"
     source.write_text(
         dedent(f"""\
             from pydantic import BaseModel
@@ -67,7 +107,7 @@ def test_device_free_sandbox_endpoint(real_env, tmp_path, monkeypatch):
             class Pong(BaseModel):
                 reply: str
 
-            @cloud({name!r})
+            @cloud({name!r}, webhook={webhook!r})
             def ping(input: Ping) -> Pong:
                 return Pong(reply=f"pong: {{input.message}}")
             """),
@@ -77,6 +117,7 @@ def test_device_free_sandbox_endpoint(real_env, tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILERUN_SANDBOX_DIRECTORY", str(tmp_path / "sandbox"))
     store = ReceiptStore(scope, name)
     read_mode = Billing.NO_COMMERCE
+
     assert store.read() is None
     print(
         f"sandbox smoke: name={name} source={source} receipt={store.receipt_path}",
@@ -93,9 +134,9 @@ def test_device_free_sandbox_endpoint(real_env, tmp_path, monkeypatch):
         if receipt.trigger_id:
             with pytest.raises(CloudResourceNotFound):
                 await clients.get_trigger(receipt.trigger_id, billing=read_mode)
-        for action_id in receipt.action_ids:
-            with pytest.raises(CloudResourceNotFound):
-                await clients.get_action(action_id, billing=read_mode)
+        if receipt.action_ids:
+            actions = await clients.list_action_definitions(billing=read_mode)
+            assert set(receipt.action_ids).isdisjoint(item["id"] for item in actions)
 
     try:
         assert (
@@ -111,6 +152,8 @@ def test_device_free_sandbox_endpoint(real_env, tmp_path, monkeypatch):
         assert deployed.status == "created"
         assert deployed.endpoint and deployed.trigger_id == deployed.endpoint.trigger_id
         assert deployed.flow_id and deployed.action_ids
+        if webhook:
+            assert len(deployed.action_ids) == 2
         version = asyncio.run(
             clients.get_version(
                 deployed.function_id, deployed.version, billing=read_mode
@@ -133,6 +176,21 @@ def test_device_free_sandbox_endpoint(real_env, tmp_path, monkeypatch):
         assert run.id and run.snapshot["status"] == "success"
         assert type(result) is script["Pong"]
         assert result.reply == "pong: smoke"
+        if webhook:
+            event_id = run.snapshot["result"]["steps"][-1]["body"]["eventId"]
+
+            async def verify_delivery():
+                async with asyncio.timeout(60), cloud_client(billing=read_mode) as sdk:
+                    while True:
+                        feed = await sdk.webhooks.deliveries.list(event_id=event_id)
+                        if any(
+                            item.endpoint_id == webhook and item.status == "success"
+                            for item in feed.items
+                        ):
+                            return
+                        await asyncio.sleep(1)
+
+            asyncio.run(verify_delivery())
         # An identical deploy must preserve the running binding, even when paused.
         script["ping"].remote.disable(billing=read_mode)
         repeated = deploy(source, device_free=True, billing=Billing.PAID, yes=True)

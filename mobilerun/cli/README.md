@@ -35,6 +35,7 @@ mobilerun
 ├── number: bind, code, countries, create, included, list, messages, release, send, status, unbind
 ├── proxy: bind, buy, list, release, status
 ├── skills: install, list, show, uninstall
+├── webhook: delete, get, list, register
 └── workspace: apps (list, remove, upload), files (download, list, rm, upload)
 ```
 
@@ -56,4 +57,5 @@ Overwriting an existing credential requires an interactive confirmation.
 | [devices/](devices/README.md) | Device commands and selection |
 | [mailbox/](mailbox/README.md), [phone_number/](phone_number/README.md), [proxy/](proxy/README.md) | Cloud resources |
 | [workspace/](workspace/README.md) | Workspace files and apps |
+| [webhook/](webhook/README.md) | Cloud webhook endpoints and one-time signing secrets |
 | [macro/](../macro/cli/README.md), [skills/](../skills/cli/README.md) | Macro and skill commands |

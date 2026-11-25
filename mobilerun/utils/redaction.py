@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote, quote_plus
+from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
 
 # A period immediately following a digit only joins another digit, not a new
 # sentence. Possessive runs consume each span of spaces/digits without backtracking.
@@ -189,3 +189,21 @@ def secret_scope(*values: str) -> Iterator[None]:
         yield
     finally:
         _active_secrets.reset(token)
+
+
+def mask_url(url: str) -> str:
+    """Show an HTTP(S) destination without userinfo, query values or fragment."""
+    try:
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return "[redacted]"
+    except ValueError:
+        return "[redacted]"
+    query = "&".join(
+        item.partition("=")[0] + "=•••" if "=" in item else "•••"
+        for item in parts.query.split("&")
+        if item
+    )
+    return urlunsplit(
+        (parts.scheme, parts.netloc.rsplit("@", 1)[-1], parts.path, query, "")
+    )
