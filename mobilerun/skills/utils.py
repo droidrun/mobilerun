@@ -169,7 +169,22 @@ def _managed(
     return actual is not None and actual == _tree(source, legacy=True)
 
 
-def _install_directory(dest: Path, *, source: Path) -> None:
+def _installed_parent(path: Path, fallback: str | None) -> str | None:
+    """Prefer the recorded dependency over a possibly newer release's catalog."""
+    marker = path / _INSTALL_MARKER
+    if path.is_symlink() or marker.is_symlink() or not marker.is_file():
+        return fallback
+    try:
+        manifest = json.loads(marker.read_bytes())
+    except ValueError:
+        return fallback
+    if isinstance(manifest, dict) and isinstance(manifest.get("files"), dict):
+        parent = manifest.get("parent", fallback)
+        return parent if isinstance(parent, str) else None
+    return fallback
+
+
+def _install_directory(dest: Path, *, source: Path, parent: str | None = None) -> None:
     temporary = Path(tempfile.mkdtemp(prefix=".mobilerun-install-", dir=dest.parent))
     backup = dest.parent / (".mobilerun-backup-" + uuid.uuid4().hex)
     moved = False
@@ -179,7 +194,8 @@ def _install_directory(dest: Path, *, source: Path) -> None:
         if files is None or _INSTALL_MARKER in files:
             raise ValueError(f"Cannot create install manifest for {source}")
         (temporary / _INSTALL_MARKER).write_text(
-            json.dumps({"files": files}, sort_keys=True), encoding="utf-8"
+            json.dumps({"files": files, "parent": parent}, sort_keys=True),
+            encoding="utf-8",
         )
         if dest.exists():
             dest.rename(backup)

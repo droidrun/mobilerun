@@ -116,7 +116,9 @@ def test_cloud_only_environment_builds_typed_selected_phone(
     endpoint = AsyncMock(return_value=SimpleNamespace(text="hello"))
     resources = SimpleNamespace(
         retrieve_capabilities=AsyncMock(
-            return_value=SimpleNamespace(capabilities=SimpleNamespace(telephony=False))
+            return_value=SimpleNamespace(
+                capabilities=SimpleNamespace(telephony=False, proxy=True)
+            )
         ),
         number=SimpleNamespace(
             retrieve=AsyncMock(return_value=SimpleNamespace(binding=None))
@@ -157,8 +159,8 @@ def test_location_prompts_for_device_before_coordinates(monkeypatch):
         "discover_devices",
         AsyncMock(
             return_value=[
-                DiscoveredDevice("emulator-5554", "local", None, None, None),
-                DiscoveredDevice("emulator-5556", "local", None, None, None),
+                DiscoveredDevice("emulator-5554", "local", None, "device", None),
+                DiscoveredDevice("emulator-5556", "local", None, "device", None),
             ]
         ),
     )

@@ -14,6 +14,7 @@ import subprocess
 import symtable
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,21 @@ from .models import Artifact, CloudDeclaration
 from .settings import RUNTIME_MODULE, get_sandbox_settings
 
 JSON = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ScheduledArtifact(Artifact):
+    # Keep evidence tied to the exact source even across dataclasses.replace().
+    inspected_source: str
+
+
+def verify_scheduled_artifact(artifact: Artifact) -> None:
+    """Inspect a supplied schedule unless its source already passed the worker check."""
+    if (
+        not isinstance(artifact, _ScheduledArtifact)
+        or artifact.inspected_source != artifact.source
+    ):
+        inspect_source(artifact.source, scheduled=True)
 
 
 def _parse(source: str, filename: str) -> ast.Module:
@@ -514,14 +530,47 @@ def transform(source: str, *, filename: str = "main.py") -> str:
     )
 
 
-def inspect_source(source: str) -> JSON:
+# Use the same loader and inspector as the runtime's `inspect` command. Run in
+# its existing child process: never import the user's original module or call
+# the function. Only scheduled inspections need the additional model check.
+_SCHEDULE_INSPECTOR = f"""\
+import json, sys
+from contextlib import redirect_stdout
+from pydantic import ValidationError
+from {RUNTIME_MODULE}.loader import load_script
+from {RUNTIME_MODULE}._contract import inspect_entry
+
+with redirect_stdout(sys.stderr):
+    entry = load_script(sys.argv[1])
+    document = inspect_entry(entry)
+    try:
+        entry.input_model.model_validate_json('{{}}')
+    except ValidationError as exc:
+        properties = document['inputSchema'].get('properties', {{}})
+        locations = (error['loc'] for error in exc.errors(
+            include_input=False, include_context=False, include_url=False))
+        document['scheduleInputErrors'] = sorted({{
+            loc[0] for loc in locations if loc and loc[0] in properties
+        }})
+    else:
+        document['scheduleInputErrors'] = None
+print(json.dumps(document))
+"""
+
+
+def inspect_source(source: str, *, scheduled: bool = False) -> JSON:
     """Inspect trusted generated source in an isolated temporary directory."""
     try:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "script.py"
             path.write_text(source, encoding="utf-8")
+            args = (
+                ["-c", _SCHEDULE_INSPECTOR]
+                if scheduled
+                else ["-m", RUNTIME_MODULE, "inspect"]
+            )
             result = subprocess.run(
-                [sys.executable, "-m", RUNTIME_MODULE, "inspect", str(path)],
+                [sys.executable, *args, str(path)],
                 capture_output=True,
                 text=True,
                 timeout=get_sandbox_settings().MOBILERUN_SANDBOX_INSPECTION_TIMEOUT,
@@ -539,9 +588,20 @@ def inspect_source(source: str) -> JSON:
                 or isinstance(document.get("outputSchema"), dict)
             )
             or "outputSchema" not in document
+            or (scheduled and "scheduleInputErrors" not in document)
         ):
             raise SandboxPackagingError(
                 "Local sandbox inspection returned an invalid document"
+            )
+        if scheduled and (fields := document["scheduleInputErrors"]) is not None:
+            properties = document["inputSchema"].get("properties", {})
+            if not isinstance(fields, list) or not all(
+                isinstance(field, str) and field in properties for field in fields
+            ):
+                raise SandboxPackagingError("Invalid scheduled input inspection result")
+            raise SandboxDeclarationError(
+                "Scheduled input must accept {}"
+                + (f"; failing fields: {', '.join(fields)}" if fields else "")
             )
         return document
     except (
@@ -561,10 +621,20 @@ def package(path: Path) -> Artifact:
         raise SandboxPackagingError(f"Cannot read source: {path}") from exc
     declaration = _declaration(_parse(source, str(path)), str(path))[0]
     generated = transform(source, filename=str(path))
-    document = inspect_source(generated)
+    scheduled = declaration.schedule is not None
+    document = inspect_source(generated, scheduled=scheduled)
     digest = hashlib.sha256(
         RUNTIME_MODULE.encode("utf-8") + b"\0" + generated.encode("utf-8")
     ).hexdigest()
+    if scheduled:
+        return _ScheduledArtifact(
+            declaration,
+            generated,
+            digest,
+            document["inputSchema"],
+            document["outputSchema"],
+            inspected_source=generated,
+        )
     return Artifact(
         declaration,
         generated,

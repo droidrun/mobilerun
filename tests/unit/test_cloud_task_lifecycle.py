@@ -199,7 +199,9 @@ def test_create_waits_ready_and_resolves_auth(monkeypatch):
         create=AsyncMock(return_value=SimpleNamespace(id="new", name="new")),
         wait_ready=AsyncMock(),
         retrieve_capabilities=AsyncMock(
-            return_value=SimpleNamespace(capabilities=SimpleNamespace(telephony=False))
+            return_value=SimpleNamespace(
+                capabilities=SimpleNamespace(telephony=False, proxy=True)
+            )
         ),
     )
 

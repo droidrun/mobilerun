@@ -283,7 +283,7 @@ def test_device_validates_saved_serial_against_discovery(monkeypatch):
     from mobilerun.cli.devices.base.discovery import DiscoveredDevice
 
     discovery = AsyncMock(
-        return_value=[DiscoveredDevice("saved", "local", None, None, None)]
+        return_value=[DiscoveredDevice("saved", "local", None, "device", None)]
     )
     monkeypatch.setattr(options, "discover_devices", discovery)
     factory = AsyncMock(return_value=AsyncMock())
@@ -307,7 +307,7 @@ def test_multiple_devices_noninteractive_error(monkeypatch):
         "discover_devices",
         AsyncMock(
             return_value=[
-                DiscoveredDevice("a", "local", None, None, None),
+                DiscoveredDevice("a", "local", None, "device", None),
                 DiscoveredDevice("b", "cloud", None, "ready", "android"),
             ]
         ),

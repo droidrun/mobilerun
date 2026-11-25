@@ -38,7 +38,7 @@ def test_list_human_and_json(monkeypatch):
 
     async def discover(**kwargs):
         return [
-            DiscoveredDevice("usb", "local", None, None, None),
+            DiscoveredDevice("usb", "local", None, "device", None),
             DiscoveredDevice("cloud", "cloud", "Phone", "ready", "android"),
         ]
 
@@ -47,7 +47,7 @@ def test_list_human_and_json(monkeypatch):
     result = runner.invoke(listing.devices, ["--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == [
-        {"id": "usb", "source": "local", "default": False},
+        {"id": "usb", "source": "local", "default": False, "state": "device"},
         {
             "id": "cloud",
             "source": "cloud",

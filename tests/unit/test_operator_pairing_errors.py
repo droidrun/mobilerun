@@ -126,11 +126,12 @@ def test_wrappers_validate_inner_device():
         with pytest.raises(OperatorNotSupported):
             wrapper(AndroidDevice("emulator-5554"), operator=CloudTaskOperator())
         device = wrapper(AndroidDevice("emulator-5554"))
-        with pytest.raises(OperatorNotSupported, match=wrapper.__name__):
+        expected = rf"{wrapper.__name__}\(AndroidDevice\)"
+        with pytest.raises(OperatorNotSupported, match=expected):
             asyncio.run(device.do("noop", operator=CloudTaskOperator()))
         device._inner._operator = CloudTaskOperator()
         device._operator = device._inner._operator
-        with pytest.raises(OperatorNotSupported, match="AndroidDevice"):
+        with pytest.raises(OperatorNotSupported, match=expected):
             DevicePool([device])
 
 

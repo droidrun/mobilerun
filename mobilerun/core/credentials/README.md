@@ -9,6 +9,22 @@ and detach it with `await vault.unbind()`. Give multiple vaults distinct `name=`
 values. Metadata contains package names, credential names and field names, never
 values. `type_field` types the value through the device's secret-safe path and
 returns `None`.
+
+Before replay, a host can set `vault.policies` to a tuple of `CredentialPolicy`
+objects. For example, `CredentialPolicy("card", field="number", package="app",
+requires_approval=True, mask_from_start=True)` prevents unattended typing and
+masks the field in macro state guards from the first observation. A recorded
+`protected` marker also prevents replay even if the bound vault has no policy.
+Base replay never asks for or infers approval. `mask_card_numbers=True` masks
+Luhn-valid card numbers in normalized macro snapshots without resolving any
+vault fields. Ordinary fields are resolved only when typed. Masking does not
+change the raw device, screenshots or a caller's own state provider.
+
+Credential input relies on `mobilerun.utils.redaction.secret_scope` to redact
+exact values in logs. Snapshot masking does not apply to logs: a provider that
+reformats a value (for example, by inserting spaces) must not log it.
+Formatted-value log redaction is pending an upstream fix.
+
 Before typing, the device refreshes its state and requires a focused editable
 field. Providers that cannot report focus and editability, including
 screenshot-only providers, reject secret input with `DeviceOperationNotSupported`.

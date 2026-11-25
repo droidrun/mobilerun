@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -241,6 +242,15 @@ def device_options(
         if len(requested) > 1:
             raise click.UsageError("Choose at most one device type flag.")
         kind = requested[0] if requested else None
+        env_serial = os.environ.get("ANDROID_SERIAL", "").strip()
+        if env_serial and kind in (None, "android"):
+            local_devices = asyncio.run(discover_devices(cloud=False))
+            if not any(item.id == env_serial and item.ready for item in local_devices):
+                raise click.ClickException(
+                    f"ANDROID_SERIAL {env_serial} is not available."
+                )
+            ctx.meta["android_env_serial"] = env_serial
+            return env_serial
         if saved and kind and _infer_device_kind(saved, config) != kind:
             saved = None
         if saved and saved.lower().startswith(("http://", "https://")):
@@ -261,6 +271,7 @@ def device_options(
                 base_url=kwargs.get(base_url_name),
             )
         )
+        devices = [item for item in devices if item.source != "local" or item.ready]
         if saved:
             if not any(device.id == saved for device in devices):
                 raise click.ClickException(
@@ -418,7 +429,12 @@ def selected_device_kind(
     ctx = click.get_current_context(silent=True)
     config = ctx.meta.get("device_config") if ctx else None
     try:
-        kind = selected[0] if selected else _infer_device_kind(target, config)
+        if selected:
+            kind = selected[0]
+        elif ctx and ctx.meta.get("android_env_serial") == target:
+            kind = "android"
+        else:
+            kind = _infer_device_kind(target, config)
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
     if tcp is not None and kind != "android":

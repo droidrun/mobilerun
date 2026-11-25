@@ -9,7 +9,7 @@ from async_adbutils import adb
 
 from mobilerun.clients.cloud.devices import list_devices
 from mobilerun.clients.local.login_store import resolve_cloud_api_key
-from mobilerun.errors.base import MobilerunError
+from mobilerun.errors.base import CredentialError, MobilerunError
 from mobilerun.models.billing import Billing
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class DiscoveredDevice:
 
     @property
     def ready(self) -> bool:
-        return self.source == "local" or self.state == "ready"
+        return self.state == ("device" if self.source == "local" else "ready")
 
 
 async def discover_devices(
@@ -46,11 +46,17 @@ async def discover_devices(
             logger.debug("Local discovery failure", exc_info=True)
         else:
             devices.extend(
-                DiscoveredDevice(device.serial, "local", None, None, None)
+                DiscoveredDevice(device.serial, "local", None, device.state, None)
                 for device in local_devices
             )
     if cloud:
-        api_key = resolve_cloud_api_key()
+        try:
+            api_key = resolve_cloud_api_key()
+        except CredentialError as exc:
+            if strict:
+                raise click.ClickException(str(exc)) from exc
+            click.echo(f"Warning: {exc}", err=True)
+            return devices
         if not api_key and strict:
             raise click.ClickException(
                 "No cloud API key found. Set MOBILERUN_API_KEY or run `mobilerun account login`."

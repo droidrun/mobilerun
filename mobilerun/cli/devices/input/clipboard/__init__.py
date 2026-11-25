@@ -8,7 +8,7 @@ from .set import clipboard_set
 
 @click.group(cls=MenuGroup, context_settings={"help_option_names": ["-h", "--help"]})
 def clipboard() -> None:
-    """Read or set the device clipboard."""
+    """Read or set clipboard text on a cloud device."""
 
 
 clipboard.add_command(clipboard_get)

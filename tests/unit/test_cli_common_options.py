@@ -64,8 +64,8 @@ def test_device_target_precedence(monkeypatch, tmp_path):
         "discover_devices",
         AsyncMock(
             return_value=[
-                DiscoveredDevice("discovered", "local", None, None, None),
-                DiscoveredDevice("saved", "local", None, None, None),
+                DiscoveredDevice("discovered", "local", None, "device", None),
+                DiscoveredDevice("saved", "local", None, "device", None),
             ]
         ),
     )
@@ -92,7 +92,7 @@ def test_device_target_precedence(monkeypatch, tmp_path):
         options,
         "discover_devices",
         AsyncMock(
-            return_value=[DiscoveredDevice("discovered", "local", None, None, None)]
+            return_value=[DiscoveredDevice("discovered", "local", None, "device", None)]
         ),
     )
     assert "discovered" in runner.invoke(command, []).output

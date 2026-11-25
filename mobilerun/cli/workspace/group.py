@@ -9,6 +9,7 @@ import click
 
 from mobilerun.cli.base import render
 from mobilerun.cli.base.cleanup import cleanup
+from mobilerun.cli.base.errors import safe_error_message
 from mobilerun.cli.base.menu import MenuGroup, PromptingArgument
 from mobilerun.cli.base.prompts import SelectChoice
 from mobilerun.cli.base.run import coro
@@ -51,13 +52,25 @@ async def upload_files(paths: tuple[str, ...], as_json: bool) -> None:
     entries = []
     for path in paths:
         click.echo(f"Uploading {path}…", err=True)
-        item = await Workspace.upload_file(path)
+        try:
+            item = await Workspace.upload_file(path)
+        except (click.Abort, click.exceptions.Exit):
+            raise
+        except Exception as exc:
+            if not as_json:
+                raise
+            entries.append(
+                {"path": path, "status": "failed", "error": safe_error_message(exc)}
+            )
+            continue
         entries.append({"id": item.id, "status": "uploaded", "name": item.name})
         if not as_json:
             render.success(f"Uploaded {item.name}")
             render.kv([("File ID", render.secondary(item.id))])
     if as_json:
         click.echo(json.dumps(entries))
+        if any(entry["status"] == "failed" for entry in entries):
+            click.get_current_context().exit(1)
 
 
 @files.command("list")

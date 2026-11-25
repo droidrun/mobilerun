@@ -12,6 +12,7 @@ from mobilerun.skills.utils import (
     DiscardChanges,
     _description,
     _install_directory,
+    _installed_parent,
     _managed,
     _reference_description,
 )
@@ -324,7 +325,7 @@ def _install_skills(
             with tempfile.TemporaryDirectory() as temporary:
                 source = Path(temporary)
                 (source / "SKILL.md").write_bytes("".join(lines).encode("utf-8"))
-                _install_directory(dest, source=source)
+                _install_directory(dest, source=source, parent=skill.parent)
         else:
             _install_directory(dest, source=skill.path)
         results.append(InstallResult(skill.name, "installed", dest))
@@ -378,15 +379,32 @@ def uninstall(
     target = _target(agent, scope, dir)
     _protect_bundle(target, skill_names)
     results = []
-    managed_sources = {s.name: s.path for s in list_skills()}
+    skills = list_skills()
+    managed_sources = {s.name: s.path for s in skills}
     managed_sources.update(bundle_folders())
-    for name in skill_names:
+    for name in dict.fromkeys(skill_names):
         dest = target / name
         if not dest.exists() and not dest.is_symlink():
             results.append(InstallResult(name, "not installed", dest))
         elif not _managed(dest, managed_sources, discard_changes):
             results.append(InstallResult(name, "not managed", dest))
         else:
-            shutil.rmtree(dest)
             results.append(InstallResult(name, "removed", dest))
+    removing = {r.name for r in results if r.status == "removed"}
+    catalog_parents = {s.name: s.parent for s in skills if s.parent}
+    dependents = sorted(
+        dest.name
+        for dest in (target.iterdir() if removing else ())
+        if dest.name not in removing
+        and not dest.name.startswith(".")
+        and _installed_parent(dest, catalog_parents.get(dest.name)) in removing
+        and _managed(dest, managed_sources, True)
+    )
+    if dependents:
+        raise ValueError(
+            "Remove dependent skills first or together: " + ", ".join(dependents)
+        )
+    for result in results:
+        if result.status == "removed":
+            shutil.rmtree(result.path)
     return results

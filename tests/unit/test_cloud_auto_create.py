@@ -18,7 +18,9 @@ def cloud(monkeypatch):
 
     devices = SimpleNamespace(
         retrieve_capabilities=AsyncMock(
-            return_value=SimpleNamespace(capabilities=SimpleNamespace(telephony=False))
+            return_value=SimpleNamespace(
+                capabilities=SimpleNamespace(telephony=False, proxy=True)
+            )
         ),
         create=AsyncMock(return_value=SimpleNamespace(id="created", name="created")),
         wait_ready=AsyncMock(),

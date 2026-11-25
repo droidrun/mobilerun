@@ -204,7 +204,9 @@ def test_connect_adopts_number_without_mutation():
         response = SimpleNamespace(
             binding=SimpleNamespace(number_id="number", phone_number="+123")
         )
-        capabilities = SimpleNamespace(capabilities=SimpleNamespace(telephony=True))
+        capabilities = SimpleNamespace(
+            capabilities=SimpleNamespace(telephony=True, proxy=True)
+        )
         with (
             patch(
                 "mobilerun.core.devices.components.cloud_lifecycle.devices.number",

@@ -36,7 +36,7 @@ def _verified_smoke_scope():
 
     scope = current_scope()
     assert (
-        scope.origin == origin
+        scope.origin == origin or scope.origin == origin + "/"
     ), "Sandbox smoke origin differs from the restored explicit origin"
     return scope
 
@@ -133,6 +133,13 @@ def test_device_free_sandbox_endpoint(real_env, tmp_path, monkeypatch):
         assert run.id and run.snapshot["status"] == "success"
         assert type(result) is script["Pong"]
         assert result.reply == "pong: smoke"
+        # An identical deploy must preserve the running binding, even when paused.
+        script["ping"].remote.disable(billing=read_mode)
+        repeated = deploy(source, device_free=True, billing=Billing.PAID, yes=True)
+        assert (
+            repeated.status == "unchanged"
+            and repeated.action_ids == deployed.action_ids
+        )
     finally:
         print("usage/cost: not exposed by the run handle; check billing", flush=True)
         # Read the on-disk journal even when deploy raised before returning. Never

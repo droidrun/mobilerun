@@ -64,12 +64,12 @@ def test_cloud_install_by_path_and_id(monkeypatch, tmp_path):
     asyncio.run(device.install_apk(apk))
     upload.assert_awaited_once()
     device._client.devices.apps.install.assert_awaited_with(
-        "device-id", package_name="org.example", version_code=4
+        "device-id", package_name="org.example", version_code=4, background=True
     )
     asyncio.run(device.install_app(app))
     device._client.apps.retrieve.assert_not_awaited()
     device._client.devices.apps.install.assert_awaited_with(
-        "device-id", package_name="org.example", version_code=4
+        "device-id", package_name="org.example", version_code=4, background=True
     )
     asyncio.run(device.uninstall_app("org.example"))
     device._client.devices.apps.delete.assert_awaited_once_with(

@@ -67,7 +67,11 @@ def test_create_android_url_uses_portal_http_driver(monkeypatch):
         lambda _: type(
             "C",
             (),
-            {"device": type("D", (), {"resolve_auth_token": lambda self: "token"})()},
+            {
+                "device": type(
+                    "D", (), {"resolve_auth_token": lambda self, platform: "token"}
+                )()
+            },
         )(),
     )
     monkeypatch.setattr(
@@ -153,7 +157,9 @@ def test_connect_target_constructs_ios_with_token(monkeypatch):
     driver = SimpleNamespace(connect=AsyncMock())
     create = Mock(return_value=driver)
     monkeypatch.setattr(devices, "IOSDevice", create)
-    config = SimpleNamespace(device=SimpleNamespace(resolve_auth_token=lambda: "token"))
+    config = SimpleNamespace(
+        device=SimpleNamespace(resolve_auth_token=lambda platform: "token")
+    )
     result = asyncio.run(
         devices.connect_target("http://ios", kind="ios", config=config)
     )

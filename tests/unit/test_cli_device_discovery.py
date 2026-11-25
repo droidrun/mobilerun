@@ -10,7 +10,7 @@ def test_discovery_local_and_cloud(monkeypatch):
     from mobilerun.cli.devices.base import discovery
 
     async def local():
-        return [SimpleNamespace(serial="usb-1")]
+        return [SimpleNamespace(serial="usb-1", state="device")]
 
     async def cloud(**kwargs):
         return [
@@ -34,7 +34,7 @@ def test_selection_count(monkeypatch, interactive, count):
     from mobilerun.cli.devices.base.discovery import DiscoveredDevice
 
     devices = [
-        DiscoveredDevice(str(i), "local", None, None, None) for i in range(count)
+        DiscoveredDevice(str(i), "local", None, "device", None) for i in range(count)
     ]
 
     async def discover(**kwargs):
@@ -82,7 +82,7 @@ def test_cloud_error_warns_and_returns_local(monkeypatch, capsys):
     from mobilerun.cli.devices.base import discovery
 
     async def local():
-        return [SimpleNamespace(serial="usb")]
+        return [SimpleNamespace(serial="usb", state="device")]
 
     async def cloud(**kwargs):
         raise RuntimeError("offline")
@@ -104,7 +104,7 @@ def test_explicit_and_default_skip_discovery(monkeypatch, explicit):
             raise AssertionError("discovery called")
         from mobilerun.cli.devices.base.discovery import DiscoveredDevice
 
-        return [DiscoveredDevice("default", "local", None, None, None)]
+        return [DiscoveredDevice("default", "local", None, "device", None)]
 
     monkeypatch.setattr(options, "discover_devices", fail)
     monkeypatch.setattr(
@@ -129,7 +129,7 @@ def test_picker_labels_not_ready(monkeypatch):
 
     async def discover(**kwargs):
         return [
-            DiscoveredDevice("usb", "local", None, None, None),
+            DiscoveredDevice("usb", "local", None, "device", None),
             DiscoveredDevice("cloud", "cloud", "Phone", "stopped", "android"),
         ]
 
@@ -165,8 +165,8 @@ def test_cancel_and_empty_picker(monkeypatch):
 
     async def discover(**kwargs):
         return [
-            DiscoveredDevice("a", "local", None, None, None),
-            DiscoveredDevice("b", "local", None, None, None),
+            DiscoveredDevice("a", "local", None, "device", None),
+            DiscoveredDevice("b", "local", None, "device", None),
         ]
 
     monkeypatch.setattr(options, "discover_devices", discover)

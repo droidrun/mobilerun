@@ -103,7 +103,7 @@ def sdk():
         devices=NS(
             number=binding,
             retrieve_capabilities=AsyncMock(
-                return_value=NS(capabilities=NS(telephony=True))
+                return_value=NS(capabilities=NS(telephony=True, proxy=True))
             ),
         ),
     )
@@ -248,7 +248,7 @@ def test_device_ownership_existing_never_released(sdk, monkeypatch, keep, owned)
     monkeypatch.setattr(
         devices,
         "capabilities",
-        AsyncMock(return_value=NS(capabilities=NS(telephony=True))),
+        AsyncMock(return_value=NS(capabilities=NS(telephony=True, proxy=True))),
     )
     sdk.numbers.retrieve.return_value = NS(
         data=NS(
@@ -319,7 +319,7 @@ def test_binding_capability_and_ownership_errors(
     monkeypatch.setattr(
         devices,
         "capabilities",
-        AsyncMock(return_value=NS(capabilities=NS(telephony=telephony))),
+        AsyncMock(return_value=NS(capabilities=NS(telephony=telephony, proxy=True))),
     )
     sdk.numbers.retrieve.return_value = NS(
         data=NS(
@@ -357,7 +357,7 @@ def test_number_unbind_and_mailbox_detach(sdk, monkeypatch):
     monkeypatch.setattr(
         devices,
         "capabilities",
-        AsyncMock(return_value=NS(capabilities=NS(telephony=True))),
+        AsyncMock(return_value=NS(capabilities=NS(telephony=True, proxy=True))),
     )
     sdk.numbers.retrieve.return_value = NS(
         data=NS(device_binding=None, phone_number=None)

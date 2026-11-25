@@ -6,7 +6,6 @@ from mobilerun.cli.base import render
 from mobilerun.cli.base.billing import billing_option
 from mobilerun.cli.base.run import coro
 from mobilerun.cli.devices.base.discovery import DiscoveredDevice, discover_devices
-from mobilerun.clients.local.login_store import resolve_cloud_api_key
 from mobilerun.config.loader import ConfigLoader
 from mobilerun.config.settings import get_settings
 from mobilerun.errors.base import MobilerunError
@@ -70,7 +69,7 @@ async def devices(
                 **(
                     {"name": item.name, "state": item.state, "type": item.type}
                     if item.source == "cloud"
-                    else {}
+                    else {"state": item.state}
                 ),
             }
             for item in items
@@ -84,13 +83,18 @@ async def devices(
             render.heading(len(local_items), "local device")
             render.table(
                 [
-                    [render.secondary(("★ " if item.id == default else "") + item.id)]
+                    [
+                        render.secondary(
+                            ("★ " if item.id == default else "") + item.id
+                        ),
+                        render.secondary(item.state),
+                    ]
                     for item in local_items
                 ]
             )
         else:
             render.empty("local devices")
-    if cloud or cloud_items or (not as_json and resolve_cloud_api_key()):
+    if cloud or cloud_items:
         if not cloud:
             click.echo()
         _render_cloud(cloud_items, default)

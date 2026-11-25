@@ -85,6 +85,7 @@ class _CloudApps(_CloudLifecycle):
                 await apps.install(
                     self._client,
                     self._require_device_id(),
+                    background=True,
                     billing=self._billing,
                     **params,
                 )

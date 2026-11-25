@@ -24,7 +24,7 @@ CLOUD = "11111111-1111-1111-1111-111111111111"
 def test_interactive_discovery_honors_kind(monkeypatch, kind, expected):
     async def discover(*, local=True, cloud=True, **kwargs):
         return (
-            [DiscoveredDevice("usb", "local", None, None, None)] if local else []
+            [DiscoveredDevice("usb", "local", None, "device", None)] if local else []
         ) + (
             [DiscoveredDevice(CLOUD, "cloud", None, None, None)]
             if cloud and kind != "ios"
@@ -100,7 +100,7 @@ def test_save_to_explicit_config(monkeypatch, tmp_path):
     monkeypatch.setattr(options, "select_prompt", lambda *args: "usb-b")
     monkeypatch.setattr(options, "confirm_prompt", lambda *args, **kwargs: True)
     devices = [
-        DiscoveredDevice(id, "local", None, None, None) for id in ("usb-a", "usb-b")
+        DiscoveredDevice(id, "local", None, "device", None) for id in ("usb-a", "usb-b")
     ]
     monkeypatch.setattr(options, "discover_devices", AsyncMock(return_value=devices))
     monkeypatch.setattr(

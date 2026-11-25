@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
+from mobilerun.core.credentials.masking import CredentialMasks, current_masks
+from mobilerun.core.credentials.policy import CredentialPolicy
 from mobilerun.core.extensions import Extension, action, device_action
 from mobilerun.errors import (
     CredentialFieldNotFound,
@@ -21,6 +23,34 @@ if TYPE_CHECKING:
 
 class CredentialProvider(Extension, ABC):
     default_name = "vault"
+    policies: tuple[CredentialPolicy, ...] = ()
+
+    def requires_approval(
+        self, package: str | None, field: str, name: str | None
+    ) -> bool:
+        """Return whether typing may select a host-protected field."""
+        return any(
+            policy.requires_approval and policy.matches(package, field, name)
+            for policy in self.policies
+        )
+
+    async def prepare_masks(self, masks: CredentialMasks) -> None:
+        """Resolve only explicitly pre-masked fields, before the first observation."""
+        for policy in self.policies:
+            masks.mask_card_numbers |= policy.mask_card_numbers
+            if policy.mask_from_start:
+                matches = [
+                    credential
+                    for credential in await self._list_credentials(policy.package)
+                    if credential.name == policy.name
+                    and policy.field in credential.fields
+                ]
+                if not matches:
+                    raise CredentialFieldNotFound(
+                        "Credential field for masking not found"
+                    )
+                for credential in matches:
+                    masks.register(credential.name, credential.fields[policy.field])
 
     @abstractmethod
     async def _find(
@@ -48,9 +78,19 @@ class CredentialProvider(Extension, ABC):
         self, device: Device, package: str | None, field: str, name: str | None = None
     ) -> None:
         """Type a credential field directly into the bound device."""
-        credential = await self._find(package, field, name)
+        if self.requires_approval(package, field, name):
+            raise ExtensionActionError("Credential input requires host approval")
+        try:
+            credential = await self._find(package, field, name)
+        except Exception:
+            # The resolver can include a value in its exception before the device
+            # has registered it for redaction. Never forward that traceback.
+            raise ExtensionActionError("Credential lookup failed") from None
         if credential is None:
             raise CredentialFieldNotFound("Credential field not found")
+        masks = current_masks.get()
+        if masks is not None:
+            masks.register(credential.name, credential.fields[field])
         if not await device._input_secret(credential.fields[field]):
             raise ExtensionActionError("Device rejected credential input")
 

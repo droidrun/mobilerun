@@ -26,7 +26,6 @@ def mask_key(value: str) -> str:
 @coro
 async def whoami(billing: str, as_json: bool) -> None:
     """Show the currently logged-in Mobilerun cloud user."""
-    creds = credentials.load_credentials()
     env_key = secret_value(get_secrets().MOBILERUN_API_KEY)
     if env_key:
         if as_json:
@@ -43,6 +42,7 @@ async def whoami(billing: str, as_json: bool) -> None:
             ]
         )
         return
+    creds = credentials.load_credentials()
     api_key = (creds or {}).get("api_key")
     if api_key:
         if as_json:

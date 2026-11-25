@@ -30,6 +30,7 @@ from mobilerun.core.state.options import (
 )
 from mobilerun.errors import CloudAuthRequired, ExtensionConflict, ProxyNotActive
 from mobilerun.errors.cloud import CloudAPIError
+from mobilerun.errors.device import DeviceOperationNotSupported
 from mobilerun.models.billing import Billing, Plan
 from mobilerun.models.files import DeviceFile
 from mobilerun.models.location import Location
@@ -96,7 +97,8 @@ class CloudDevice(_CloudApps, _BackendIO, Device):
     def supported_operations(self) -> set[str]:
         return (
             self._driver.supported
-            | {"proxy_switch", "stop_app", "open_url"}
+            | {"stop_app", "open_url"}
+            | ({"proxy_switch"} if self._cloud_proxy is not False else set())
             | ({"cloud_telephony"} if self._cloud_telephony else set())
         )
 
@@ -200,6 +202,7 @@ class CloudDevice(_CloudApps, _BackendIO, Device):
         self._ready = device_id is not None
         self._number_loaded = False
         self._cloud_telephony = False
+        self._cloud_proxy = None
         self._task_started_callback: Callable[[str], None] | None = None
         self._connect_lock = asyncio.Lock()
         operator = kwargs.pop("operator", None)
@@ -231,7 +234,7 @@ class CloudDevice(_CloudApps, _BackendIO, Device):
         proxy = self._creation_proxy
         if proxy is None or self._creation_proxy_published:
             await super().connect()
-            if proxy is None:
+            if proxy is None and self._cloud_proxy is not False:
                 from mobilerun.core.proxy.adoption import _adopt_remote_proxy
 
                 async with self._extension_state.lock:
@@ -243,7 +246,13 @@ class CloudDevice(_CloudApps, _BackendIO, Device):
                     uncertain = any(binding.uncertain for binding in bindings)
                     if not self._remote_proxy_loaded or uncertain:
                         if not bindings or uncertain:
-                            await _adopt_remote_proxy(self)
+                            try:
+                                await _adopt_remote_proxy(self)
+                            except DeviceOperationNotSupported:
+                                if self._cloud_proxy is not None:
+                                    raise
+                                self._cloud_proxy = False
+                                return
                         self._remote_proxy_loaded = True
             return
         from mobilerun.core.extensions.registry import Binding

@@ -36,7 +36,7 @@ async def ping(
 
     try:
         if is_portal_http_url(target.identifier):
-            token = config.device.resolve_auth_token()
+            token = config.device.resolve_auth_token("android")
             driver = create_android_portal_http_driver(target.identifier, token)
             try:
                 await driver.connect()

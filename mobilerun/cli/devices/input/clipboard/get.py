@@ -8,6 +8,6 @@ from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 @device_command
 @coro
 async def clipboard_get(target: DeviceTarget) -> None:
-    """Print clipboard text."""
+    """Print clipboard text from a cloud device."""
     async with target.open() as device:
         click.echo(await device.get_clipboard())

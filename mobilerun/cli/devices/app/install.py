@@ -23,11 +23,18 @@ async def install(
     target: DeviceTarget,
 ) -> None:
     """Install an app on a device."""
+    if app_id and target.kind == "android":
+        raise click.UsageError(
+            "Workspace app IDs cannot be installed on local Android devices. "
+            "Pass a local APK path instead of --app-id."
+        )
     click.echo(f"Installing on {target}…", err=True)
     async with target.open() as device:
         if app_id:
             app = await Workspace.get_app(app_id)
-            result = await device.install_app(app)
+            result = await device.install_app(
+                app, reinstall=reinstall, grant_permissions=grant
+            )
         else:
             assert apk is not None
             result = await device.install_apk(

@@ -38,7 +38,7 @@ def test_scope_uses_cloud_client_key_resolver_and_no_secret(monkeypatch):
         lambda: SimpleNamespace(MOBILERUN_CLOUD_BASE_URL="https://a"),
     )
     s = deploy.current_scope()
-    assert s.origin == "https://a"
+    assert s.origin == "https://a/"
     assert s.account_id == hashlib.sha256(b"sensitive").hexdigest()
     assert "sensitive" not in repr(s)
     monkeypatch.setattr(deploy, "resolve_cloud_api_key", lambda: None)

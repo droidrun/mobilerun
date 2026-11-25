@@ -407,7 +407,7 @@ class Run:
         output_type = self.remote.output_type
         return (
             _validate_typed(
-                TypeAdapter(output_type).validate_python, value, output_type
+                TypeAdapter(output_type).validate_json, json.dumps(value), output_type
             )
             if output_type is not None
             else deepcopy(value)

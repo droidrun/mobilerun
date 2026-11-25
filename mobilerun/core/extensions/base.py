@@ -9,7 +9,9 @@ import re
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
+
+from pydantic import BaseModel
 
 from mobilerun.core.extensions.actions import (
     Action,
@@ -395,22 +397,25 @@ class Extension:
                     for key in entry.sensitive_parameters:
                         for value in _sensitive_values(validated[key]):
                             secrets.enter_context(secret_scope(value))
+                    observers = (
+                        tuple(device._extension_state.observers)
+                        if device is not None and not nested
+                        else ()
+                    )
+                    if observers:
+                        model = cast(type[BaseModel], entry._arguments)
+                        safe = model.model_construct(**validated).model_dump(
+                            mode="json", exclude=set(entry.sensitive_parameters)
+                        )
+                        safe.update(
+                            dict.fromkeys(entry.sensitive_parameters, "<redacted>")
+                        )
                     result = entry.validate_result(
                         await fn(self, device, **validated)
                         if entry.requires_device
                         else await fn(self, **validated)
                     )
-                    safe = {
-                        key: (
-                            "<redacted>" if key in entry.sensitive_parameters else value
-                        )
-                        for key, value in validated.items()
-                    }
-                    for observe in (
-                        ()
-                        if device is None or nested
-                        else tuple(device._extension_state.observers)
-                    ):
+                    for observe in observers:
                         observe(entry.name, safe)
                     return result
             except Exception as error:

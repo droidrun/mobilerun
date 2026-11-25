@@ -297,13 +297,15 @@ def test_device_list_json(monkeypatch):
     from mobilerun.cli.devices.base import discovery
 
     monkeypatch.setattr(
-        discovery.adb, "list", AsyncMock(return_value=[NS(serial="local-1")])
+        discovery.adb,
+        "list",
+        AsyncMock(return_value=[NS(serial="local-1", state="device")]),
     )
     monkeypatch.setattr(discovery, "resolve_cloud_api_key", lambda: None)
     result = CliRunner().invoke(module.devices, ["--json"])
     assert result.exit_code == 0
     assert json.loads(result.stdout) == [
-        {"id": "local-1", "source": "local", "default": False}
+        {"id": "local-1", "source": "local", "default": False, "state": "device"}
     ]
 
 
@@ -379,12 +381,11 @@ def test_device_list_uses_shared_renderer(monkeypatch):
     monkeypatch.setattr(
         discovery.adb,
         "list",
-        AsyncMock(return_value=[SimpleNamespace(serial="serial")]),
+        AsyncMock(return_value=[SimpleNamespace(serial="serial", state="device")]),
     )
     monkeypatch.setattr(discovery, "resolve_cloud_api_key", lambda: None)
-    monkeypatch.setattr(module, "resolve_cloud_api_key", lambda: None)
     result = CliRunner().invoke(module.devices)
-    assert result.stdout == "Local devices · 1\n\nserial\n"
+    assert result.stdout == "Local devices · 1\n\nserial    device\n"
 
 
 def test_doctor_summary_uses_status_lines(capsys):

@@ -31,7 +31,9 @@ def test_cloud_create_uses_setting_and_explicit_override(monkeypatch):
         create=create,
         wait_ready=AsyncMock(),
         retrieve_capabilities=AsyncMock(
-            return_value=SimpleNamespace(capabilities=SimpleNamespace(telephony=False))
+            return_value=SimpleNamespace(
+                capabilities=SimpleNamespace(telephony=False, proxy=True)
+            )
         ),
     )
 

@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
+import httpx
 import yaml
 
 from mobilerun.clients.cloud.billing import requires
@@ -44,7 +45,7 @@ from .models import (
     resolve_billing,
     validate_device,
 )
-from .packaging import package
+from .packaging import package, verify_scheduled_artifact
 from .settings import SandboxSettings, get_sandbox_settings
 
 JSON = dict[str, Any]
@@ -71,7 +72,10 @@ def current_scope() -> Scope:
     key = resolve_cloud_api_key()
     if not key:
         raise SandboxDeploymentError("Sandbox credentials required")
-    return Scope(str(get_settings().MOBILERUN_CLOUD_BASE_URL), _hash(key))
+    base = httpx.URL(str(get_settings().MOBILERUN_CLOUD_BASE_URL))
+    path = base.raw_path
+    base = base.copy_with(raw_path=path if path.endswith(b"/") else path + b"/")
+    return Scope(str(base), _hash(key))
 
 
 def stage_key(scope: Scope, name: str, digest: str, stage: str) -> str:
@@ -115,6 +119,17 @@ class ReceiptStore:
         self.directory = (
             root / _hash(scope.origin + "\0" + scope.account_id) / _hash(name)
         )
+        # Keep a legacy receipt, its authored YAML, lock and retry keys together.
+        if scope.origin.endswith("/") and not scope.origin.endswith("//"):
+            legacy = scope.origin[:-1]
+            prior = root / _hash(legacy + "\0" + scope.account_id) / _hash(name)
+            if (prior / "receipt.json").exists():
+                if (self.directory / "receipt.json").exists():
+                    raise SandboxDeploymentConflict(
+                        "Conflicting sandbox receipt directories"
+                    )
+                self.directory = prior
+                self.scope = replace(scope, origin=legacy)
         self.receipt_path = self.directory / "receipt.json"
         self.yaml_path = self.directory / "flow.yaml"
 
@@ -547,6 +562,8 @@ async def deploy_file(
     validate_device(device)
     if artifact is None:
         artifact = package(path)
+    elif artifact.declaration.schedule is not None:
+        verify_scheduled_artifact(artifact)
     decl = artifact.declaration
     if device is not None and device_free:
         raise SandboxDeclarationError("Choose a device or device-free, not both")
@@ -659,8 +676,9 @@ async def deploy_file(
                 )
                 receipt = _checkpoint(store, receipt, initial)
             if initial.get("activation_pending"):
-                receipt, flow, actual = await _owned_remote(
-                    store, mode, activating=False
+                receipt, flow = await _owned_remote(store, mode, activating=False)
+                actual = await _remote_request(
+                    clients.get_document(flow["id"], billing=mode)
                 )
                 function_id = _identifier(receipt.function_id)
                 desired = build_document(
@@ -1083,8 +1101,15 @@ async def _redeploy(
                 raise SandboxDeploymentConflict(
                     "Sandbox remote document changed", receipt=receipt
                 )
-        version = _version((found.get("latestVersion") or {}).get("version"))
+        pinned = _pinned_version(receipt.function_id, actual)
+        version = pinned
         source = await clients.get_source(receipt.function_id, version, billing=mode)
+        if source != artifact.source:
+            version = _version((found.get("latestVersion") or {}).get("version"))
+            if version != pinned:
+                source = await clients.get_source(
+                    receipt.function_id, version, billing=mode
+                )
         if source == artifact.source:
             await _wait_ready(receipt.function_id, version, mode, receipt)
         desired = build_document(
@@ -1102,7 +1127,10 @@ async def _redeploy(
             )
         if source != artifact.source:
             key = stage_key(
-                store.scope, receipt.name, artifact.digest, "version:create"
+                store.scope,
+                receipt.name,
+                artifact.digest,
+                f"version:create:{receipt.function_id}:{pinned}:{','.join(bindings)}",
             )
             receipt = store.record_stage(receipt, "version:create", key)
             result = await clients.create_version(
@@ -1306,8 +1334,8 @@ async def cleanup_owned(
         stored = store.read()
         if (
             stored != receipt
-            or receipt.origin != scope.origin
-            or receipt.account_id != scope.account_id
+            or receipt.origin != store.scope.origin
+            or receipt.account_id != store.scope.account_id
         ):
             raise SandboxDeploymentConflict(
                 "Sandbox cleanup receipt mismatch", receipt=stored
@@ -1349,7 +1377,7 @@ async def cleanup_owned(
 
         def intent(stage: str, resource_id: str) -> None:
             nonlocal receipt
-            key = stage_key(scope, receipt.name, resource_id, "cleanup:" + stage)
+            key = stage_key(store.scope, receipt.name, resource_id, "cleanup:" + stage)
             receipt = store.record_stage(receipt, "cleanup:" + stage, key)
 
         flow_deleted = receipt.flow_id is None
@@ -1599,7 +1627,7 @@ async def describe_remote(name: str, *, billing: Billing | str | None = None) ->
 
 async def _owned_remote(
     store: ReceiptStore, mode: Billing, *, activating: bool
-) -> tuple[OwnershipReceipt, JSON, JSON]:
+) -> tuple[OwnershipReceipt, JSON]:
     receipt = store.read()
     function, flow = await _find_remote(store.name, mode)
     if flow is None:
@@ -1634,8 +1662,14 @@ async def _owned_remote(
             "Sandbox action bindings changed", receipt=receipt
         )
     await _remote_request(_unshared(receipt, mode))
+    return receipt, flow
+
+
+async def _activation_document(
+    store: ReceiptStore, receipt: OwnershipReceipt, flow: JSON, mode: Billing
+) -> JSON:
     document = await _remote_request(clients.get_document(flow["id"], billing=mode))
-    if activating and store.yaml_path.exists():
+    if store.yaml_path.exists():
         try:
             authored = yaml.safe_load(store.yaml_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, yaml.YAMLError):
@@ -1646,10 +1680,10 @@ async def _owned_remote(
             raise SandboxDeploymentConflict(
                 "Sandbox remote document changed", receipt=receipt
             )
-    return receipt, flow, document
+    return document
 
 
-async def _flow_version(function_id: str, document: JSON, mode: Billing) -> JSON:
+def _pinned_version(function_id: str, document: JSON) -> int:
     steps = document.get("steps", [])
     if (
         not isinstance(steps, list)
@@ -1663,7 +1697,11 @@ async def _flow_version(function_id: str, document: JSON, mode: Billing) -> JSON
     params = steps[0].get("with")
     if not isinstance(params, dict) or params.get("functionId") != function_id:
         raise SandboxDeploymentConflict("Sandbox flow function binding changed")
-    version = _version(params.get("version"))
+    return _version(params.get("version"))
+
+
+async def _flow_version(function_id: str, document: JSON, mode: Billing) -> JSON:
+    version = _pinned_version(function_id, document)
     record = await _remote_request(
         clients.get_version(function_id, version, billing=mode)
     )
@@ -1702,7 +1740,8 @@ async def fire_remote(
     _require_paid(billing=mode)
     store = ReceiptStore(current_scope(), name)
     with store.lock():
-        receipt, flow, document = await _owned_remote(store, mode, activating=True)
+        receipt, flow = await _owned_remote(store, mode, activating=True)
+        document = await _activation_document(store, receipt, flow, mode)
         on = document.get("on", {})
         if "schedule" in on:
             raise SandboxRunError(
@@ -1760,8 +1799,9 @@ async def set_enabled(
         _require_paid(billing=mode)
     store = ReceiptStore(current_scope(), name)
     with store.lock():
-        receipt, flow, document = await _owned_remote(store, mode, activating=enabled)
+        receipt, flow = await _owned_remote(store, mode, activating=enabled)
         if enabled:
+            document = await _activation_document(store, receipt, flow, mode)
             await _flow_version(receipt.function_id, document, mode)
         key = stage_key(
             store.scope,

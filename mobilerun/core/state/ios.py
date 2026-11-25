@@ -102,12 +102,15 @@ class IOSStateProvider(StateProvider):
         # actions._require_active_coordinate_contract.
         self.requires_active_contract_for_coords = vision_enabled
 
-    async def get_state(self) -> UIState:
+    async def get_state(self, *, strict: bool = False) -> UIState:
+        """Read the UI tree, allowing agent fallback unless strict is requested."""
         try:
             raw = await self._device._get_ui_tree()
         except DeviceDisconnectedError:
             raise
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"iOS state retrieval failed, returning empty state: {e}")
             # No contract for this state — agents must not resize the
             # screenshot they attach alongside it.

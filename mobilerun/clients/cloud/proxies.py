@@ -21,6 +21,7 @@ from mobilerun.clients.cloud.payments import (
     wait_until_active,
 )
 from mobilerun.errors.cloud import CloudConflict
+from mobilerun.errors.device import DeviceOperationNotSupported
 from mobilerun.models.billing import Billing
 from mobilerun.models.checkout import PaymentSnapshot
 from mobilerun.utils.redaction import secret_scope
@@ -85,6 +86,15 @@ async def device_status(
         try:
             return await client.devices.proxy.status(device_id)
         except APIError as exc:
+            if (
+                isinstance(exc, APIStatusError)
+                and exc.status_code in {400, 422}
+                and isinstance(exc.body, dict)
+                and exc.body.get("code") == "DEVICE_TOOL_UNSUPPORTED"
+            ):
+                raise DeviceOperationNotSupported(
+                    "This device does not support proxy status"
+                ) from None
             raise cloud_error(exc, "Retrieve phone proxy status", device=True) from exc
 
 

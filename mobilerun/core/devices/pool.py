@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, Unpack
 
 from pydantic import BaseModel
 
-from mobilerun.core.devices.base import Device, InstallOptions, _unwrap_device
+from mobilerun.core.devices.base import Device, InstallOptions
 from mobilerun.core.extensions import Action, Extension
 from mobilerun.core.extensions.actions import Audience
 from mobilerun.core.state.ui_state import UIState
@@ -174,7 +174,7 @@ class DevicePool:
         for device in devices:
             operator = device._operator
             if operator is not None:
-                operator.check(_unwrap_device(device))
+                operator.check(device)
         self.devices = tuple(devices)
         self.state = _PoolState(self)
         self._semaphore = asyncio.Semaphore(concurrency) if concurrency else None

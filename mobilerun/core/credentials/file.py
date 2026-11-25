@@ -4,6 +4,7 @@ import os
 import shlex
 import stat
 import tempfile
+import uuid
 from contextlib import contextmanager
 
 try:
@@ -18,7 +19,74 @@ from mobilerun.core.credentials.base import normalize
 from mobilerun.core.credentials.dict import DictCredentials
 
 
+def _windows_private_temp(parent: Path) -> tuple[int, str]:
+    """Create a new file with a protected owner-only DACL, never an inherited ACL."""
+    import ctypes as c
+    import msvcrt
+    from ctypes import wintypes as w
+
+    class SecurityAttributes(c.Structure):
+        _fields_ = [("length", w.DWORD), ("descriptor", w.LPVOID), ("inherit", w.BOOL)]
+
+    kernel = c.WinDLL("kernel32", use_last_error=True)
+    security = c.WinDLL("advapi32", use_last_error=True)
+    convert = security.ConvertStringSecurityDescriptorToSecurityDescriptorW
+    convert.argtypes = [w.LPCWSTR, w.DWORD, c.POINTER(w.LPVOID), c.POINTER(w.DWORD)]
+    convert.restype = w.BOOL
+    create = kernel.CreateFileW
+    create.argtypes = [
+        w.LPCWSTR,
+        w.DWORD,
+        w.DWORD,
+        c.POINTER(SecurityAttributes),
+        w.DWORD,
+        w.DWORD,
+        w.HANDLE,
+    ]
+    create.restype = w.HANDLE
+    volume = kernel.GetVolumeInformationByHandleW
+    volume.argtypes = [
+        w.HANDLE,
+        w.LPWSTR,
+        w.DWORD,
+        c.POINTER(w.DWORD),
+        c.POINTER(w.DWORD),
+        c.POINTER(w.DWORD),
+        w.LPWSTR,
+        w.DWORD,
+    ]
+    volume.restype = w.BOOL
+    descriptor = w.LPVOID()
+    path = str(parent / f".credentials-{uuid.uuid4().hex}")
+    # P = protected (no inherited ACEs); FA = full access; OW = owner rights.
+    if not convert("D:P(A;;FA;;;OW)", 1, c.byref(descriptor), None):
+        raise c.WinError(c.get_last_error())
+    try:
+        attributes = SecurityAttributes(c.sizeof(SecurityAttributes), descriptor, False)
+        # GENERIC_READ | GENERIC_WRITE, no sharing, CREATE_NEW, FILE_ATTRIBUTE_NORMAL.
+        handle = create(path, 0xC0000000, 0, c.byref(attributes), 1, 0x80, None)
+        if handle == w.HANDLE(-1).value:
+            raise c.WinError(c.get_last_error())
+    finally:
+        kernel.LocalFree(descriptor)
+    try:
+        flags = w.DWORD()
+        if not volume(handle, None, 0, None, None, c.byref(flags), None, 0):
+            raise c.WinError(c.get_last_error())
+        if not flags.value & 0x8:  # FILE_PERSISTENT_ACLS (e.g. not FAT/exFAT)
+            raise PermissionError(
+                "Credentials require a volume supporting private DACLs"
+            )
+        return msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY), path
+    except BaseException:
+        kernel.CloseHandle(w.HANDLE(handle))
+        os.unlink(path)
+        raise
+
+
 class FileCredentials(DictCredentials):
+    """Atomically replace the credential file with a new owner-only file."""
+
     def __init__(self, path: str | Path, *, name: str | None = None) -> None:
         self.path = Path(path).expanduser()
         super().__init__(self._read(), name=name)
@@ -29,7 +97,10 @@ class FileCredentials(DictCredentials):
         except FileNotFoundError:
             return {}
         with os.fdopen(fd, "r", encoding="utf-8") as stream:
-            if stat.S_IMODE(os.fstat(stream.fileno()).st_mode) & 0o077:
+            if (
+                os.name != "nt"
+                and stat.S_IMODE(os.fstat(stream.fileno()).st_mode) & 0o077
+            ):
                 raise PermissionError(
                     f"Credentials file is accessible to others. Run: chmod 600 {shlex.quote(str(self.path))}"
                 )
@@ -67,10 +138,14 @@ class FileCredentials(DictCredentials):
             parent = parent.parent
         for directory in reversed(missing):
             directory.mkdir(mode=0o700, exist_ok=True)
-        fd, path = tempfile.mkstemp(prefix=".credentials-", dir=self.path.parent)
+        if os.name == "nt":
+            fd, path = _windows_private_temp(self.path.parent)
+        else:
+            fd, path = tempfile.mkstemp(prefix=".credentials-", dir=self.path.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                os.fchmod(stream.fileno(), 0o600)
+                if os.name != "nt":
+                    os.fchmod(stream.fileno(), 0o600)
                 yaml.safe_dump(data, stream, sort_keys=False)
             os.replace(path, self.path)
         finally:

@@ -148,6 +148,7 @@ def test_cloud_install_uploads_without_billing_guard(monkeypatch, tmp_path):
         device._client,
         "device",
         package_name="org.example",
+        background=True,
         version_code=3,
         billing="paid",
     )
@@ -196,7 +197,11 @@ def test_cloud_install_app_with_local_path_uploads(monkeypatch, tmp_path):
     assert asyncio.run(device.install_app(local)) == uploaded
     assert upload.await_args.args == (path,)
     install.assert_awaited_once_with(
-        device._client, "device", package_name="example", billing="paid"
+        device._client,
+        "device",
+        package_name="example",
+        background=True,
+        billing="paid",
     )
     with pytest.raises(ValueError, match="This app has no local APK"):
         asyncio.run(device.install_app(App("example", "1", "Example")))

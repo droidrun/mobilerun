@@ -43,6 +43,7 @@ class _CloudLifecycle(Device):
     _connect_lock: asyncio.Lock
     _create_options: dict[str, Any]
     _cloud_telephony: bool
+    _cloud_proxy: bool | None
 
     @property
     def _cloud_client(self) -> AsyncMobilerun:
@@ -95,6 +96,7 @@ class _CloudLifecycle(Device):
                     client=self._client,
                 )
                 self._cloud_telephony = bool(info.capabilities.telephony)
+                self._cloud_proxy = info.capabilities.proxy
                 if not self._number_loaded:
                     if self._cloud_telephony:
                         await self._load_number()
@@ -133,6 +135,7 @@ class _CloudLifecycle(Device):
                     self.device_id, billing=self._billing, client=self._client
                 )
                 self._cloud_telephony = bool(info.capabilities.telephony)
+                self._cloud_proxy = info.capabilities.proxy
                 # Newly created phones cannot have a binding: creation has no number option.
                 self._number_loaded = True
             except BaseException:

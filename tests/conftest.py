@@ -21,7 +21,6 @@ def _isolation_environment(root):
         "APPDATA": str(root / "appdata"),
         "LOCALAPPDATA": str(root / "localappdata"),
         "MOBILERUN_USER_CONFIG_DIR": str(config),
-        "MOBILERUN_CONFIG": str(config / "config.yaml"),
     }
 
 
@@ -37,6 +36,8 @@ def _secret_names():
             "OTEL_EXPORTER_OTLP_HEADERS",
             "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
             "ANDROID_HOME",
+            "ANDROID_SERIAL",
+            "CODEX_HOME",
             "ANDROID_SDK_ROOT",
             "PHOENIX_URL",
             "PHOENIX_PROJECT_NAME",

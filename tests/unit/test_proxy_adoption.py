@@ -22,7 +22,9 @@ def isolated_number_loading(monkeypatch):
         devices,
         "capabilities",
         AsyncMock(
-            return_value=SimpleNamespace(capabilities=SimpleNamespace(telephony=False))
+            return_value=SimpleNamespace(
+                capabilities=SimpleNamespace(telephony=False, proxy=True)
+            )
         ),
     )
     monkeypatch.setattr(CloudDevice, "_load_number", AsyncMock())

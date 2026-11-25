@@ -66,11 +66,13 @@ def test_install_workspace_app(monkeypatch):
     connect = AsyncMock(return_value=device)
     monkeypatch.setattr(module, "connect_target", connect)
     result = CliRunner().invoke(
-        cli, ["device", "app", "install", "--app-id", "app1", "serial", "--android"]
+        cli, ["device", "app", "install", "--app-id", "app1", "phone", "--cloud"]
     )
     assert result.exit_code == 0, result.output
-    assert connect.await_args.args[0] == "serial"
-    device.install_app.assert_awaited_once_with(app)
+    assert connect.await_args.args[0] == "phone"
+    device.install_app.assert_awaited_once_with(
+        app, reinstall=False, grant_permissions=True
+    )
 
 
 def test_device_source_exclusive(monkeypatch, tmp_path):

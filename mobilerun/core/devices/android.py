@@ -122,6 +122,8 @@ class AndroidDevice(_BackendIO, Device):
 
     @property
     def _state_recovery(self) -> Callable[[], Awaitable[None]] | None:
+        if self._driver._portal_mode == "disabled":
+            return None
         return self._recover_portal
 
     async def _recover_portal(self) -> None:
@@ -133,18 +135,25 @@ class AndroidDevice(_BackendIO, Device):
         )
 
         device = self._adb_device
-        if device is None:
+        portal = self._portal
+        if device is None or portal is None:
             return
         logger = logging.getLogger("mobilerun")
         a11y = portal_a11y_service(PORTAL_PACKAGE_NAME)
-        await device.shell("settings put secure accessibility_enabled 0")
-        await asyncio.sleep(0.5)
-        await device.shell(
-            f"settings put secure enabled_accessibility_services {shlex.quote(a11y)}"
+        read = await device.shell2(
+            "settings get secure enabled_accessibility_services", rstrip=True
         )
+        current = read.output
+        if read.returncode or not isinstance(current, str):
+            raise RuntimeError("Could not read Android accessibility services")
+        services = [] if current in ("", "null") else current.split(":")
+        if a11y not in services:
+            services.append(a11y)
+            await device.shell(
+                f"settings put secure enabled_accessibility_services {shlex.quote(':'.join(services))}"
+            )
         await device.shell("settings put secure accessibility_enabled 1")
-        portal = self._portal
-        if portal is not None and portal.tcp_available:
+        if portal.tcp_available:
             toggle_uri = portal_content_uri(PORTAL_PACKAGE_NAME, "toggle_socket_server")
             try:
                 await device.shell(
@@ -219,7 +228,7 @@ class AndroidDevice(_BackendIO, Device):
         )
 
     async def close(self) -> None:
-        async with self._closing_extensions():
+        async with self._closing_extensions(), self._emulator_lock:
             if self._adb_device:
                 from mobilerun_core_local.driver.android.portal import (
                     PORTAL_PACKAGE_NAME,
@@ -322,6 +331,8 @@ class AndroidDevice(_BackendIO, Device):
 
     async def connect(self) -> None:
         async with self._emulator_lock:
+            if self._extension_state.closing:
+                raise RuntimeError("Android device is closed")
             if self._pending_avd:
                 await self._boot()
             try:

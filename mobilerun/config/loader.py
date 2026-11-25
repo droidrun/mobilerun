@@ -53,7 +53,7 @@ class ConfigLoader:
             return cls._load_user_config(Path(config_path))
 
         env_config = get_settings().MOBILERUN_CONFIG
-        if env_config and Path(env_config).exists():
+        if env_config and env_config.strip():
             return cls._load_user_config(Path(env_config))
 
         user_config_path = cls.get_user_config_path()

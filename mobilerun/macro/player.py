@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from mobilerun.core.credentials import CredentialProvider
+from mobilerun.core.credentials.masking import CredentialMasks, masking_scope
 from mobilerun.core.devices import Device
 from mobilerun.core.state.base import StateProvider
 from mobilerun.errors.base import DeviceError, MobilerunError
@@ -121,13 +123,13 @@ class MacroPlayer:
             try:
                 return normalize_ui_state(await self.state_provider.get_state())
             except (DeviceError, OSError, NotImplementedError) as e:
-                logger.debug("Falling back to raw driver state: %s", e)
+                logger.debug("Falling back to raw driver state: %s", type(e).__name__)
         view = driver.state
         if view is not None:
             try:
                 return normalize_ui_state(await view.refresh())
             except (DeviceError, OSError, NotImplementedError) as e:
-                logger.debug("Falling back to raw device state: %s", e)
+                logger.debug("Falling back to raw device state: %s", type(e).__name__)
         raw_state = await driver._get_ui_tree()
         return normalize_ui_state(raw_state)
 
@@ -157,6 +159,48 @@ class MacroPlayer:
 
             await asyncio.sleep(self.state_poll_interval)
 
+    def _credential_reference(
+        self, action: Dict[str, Any]
+    ) -> tuple[CredentialProvider, str | None, str, str | None] | None:
+        """Validate either recording format without observing or mutating the device."""
+        kind = action.get("action_type", action.get("type"))
+        if kind not in ("type_secret", "extension_call"):
+            return None
+        if action.get("protected", False) is not False:
+            raise MacroError("Protected credential replay requires host approval")
+        extensions = self.driver.extensions if self.driver is not None else {}
+        if kind == "extension_call":
+            owner, _, method = str(action.get("name")).partition(".")
+            vault = extensions.get(owner)
+            if method == "type_field" and vault is None:
+                raise MacroError(
+                    f"Extension '{owner}' is not bound for credential replay"
+                )
+            if method != "type_field" or not isinstance(vault, CredentialProvider):
+                return None
+            arguments = action.get("arguments")
+            if not isinstance(arguments, dict):
+                raise MacroError("Invalid extension_call action")
+            name = arguments.get("name")
+        else:
+            arguments = action
+            name = action.get("name", action.get("secret", action.get("secret_id")))
+            vault = extensions.get("vault")
+        package = arguments.get("package")
+        field = arguments.get("field", "password")
+        if not any(isinstance(v, str) and v.strip() for v in (package, name)):
+            raise MacroError("type_secret action requires a package or name")
+        if not isinstance(vault, CredentialProvider):
+            candidates = [
+                v for v in extensions.values() if isinstance(v, CredentialProvider)
+            ]
+            if len(candidates) != 1:
+                raise MacroError("Bind one vault to replay a secret action")
+            vault = candidates[0]
+        if vault.requires_approval(package, field, name):
+            raise MacroError("Protected credential replay requires host approval")
+        return vault, package, field, name
+
     async def replay_action(
         self, action: Dict[str, Any], current_state: Optional[Dict[str, Any]] = None
     ) -> bool:
@@ -171,6 +215,7 @@ class MacroPlayer:
         """
         driver = await self._initialize_driver()
         action_type = action.get("action_type", action.get("type", "unknown"))
+        credential = self._credential_reference(action)
 
         try:
             if action_type == "start_app":
@@ -257,32 +302,14 @@ class MacroPlayer:
             elif action_type == "input_text":
                 text = action.get("text", "")
                 clear = action.get("clear", False)
-                logger.info(f"Inputting text: '{text}'")
+                logger.info("Inputting text")
                 await driver.input_text(text, clear)
                 return True
 
             elif action_type == "type_secret":
-                from mobilerun.core.credentials import CredentialProvider
-
-                package = action.get("package")
-                name = action.get("name", action.get("secret", action.get("secret_id")))
-                if not any(isinstance(v, str) and v.strip() for v in (package, name)):
-                    raise MacroError("type_secret action requires a package or name")
-                vault = driver.extensions.get("vault")
-                if not isinstance(vault, CredentialProvider):
-                    candidates = [
-                        extension
-                        for extension in driver.extensions.values()
-                        if isinstance(extension, CredentialProvider)
-                    ]
-                    if len(candidates) != 1:
-                        raise MacroError("Bind one vault to replay a secret action")
-                    vault = candidates[0]
-                await vault.type_field(
-                    package,
-                    action.get("field", "password"),
-                    name,
-                )
+                assert credential is not None
+                vault, package, field, name = credential
+                await vault.type_field(package, field, name)
                 return True
 
             elif action_type == "key_press":
@@ -337,6 +364,31 @@ class MacroPlayer:
         Returns:
             True if all actions were executed successfully, False otherwise
         """
+        with masking_scope() as masks:
+            return await self._replay_macro(
+                macro_data, start_from_step, max_steps, masks
+            )
+
+    async def _prepare_masks(self, masks: CredentialMasks) -> None:
+        if not isinstance(self.driver, Device):
+            return
+        try:
+            for extension in self.driver.extensions.values():
+                if isinstance(extension, CredentialProvider):
+                    await extension.prepare_masks(masks)
+            return
+        except Exception:
+            pass
+        # A custom provider's error and its traceback can contain plaintext.
+        raise MacroError("Could not prepare credential masking")
+
+    async def _replay_macro(
+        self,
+        macro_data: Dict[str, Any],
+        start_from_step: int,
+        max_steps: int | None,
+        masks: CredentialMasks,
+    ) -> bool:
         if not macro_data or "actions" not in macro_data:
             raise MacroError("Invalid macro data - no actions found")
         if macro_data.get("macro_schema_version") != MACRO_SCHEMA_VERSION:
@@ -348,7 +400,6 @@ class MacroPlayer:
             raise MacroError("Step limits must not be negative")
 
         actions = macro_data["actions"]
-        description = macro_data.get("description", "Unknown macro")
         total_actions = len(actions)
 
         # Apply start_from_step and max_steps filters
@@ -360,7 +411,12 @@ class MacroPlayer:
             actions = actions[:max_steps]
             logger.info(f" Limiting to {max_steps} steps")
 
-        logger.info(f" Starting macro replay: '{description}'")
+        for action in actions:
+            self._credential_reference(action)
+
+        if actions:
+            await self._prepare_masks(masks)
+        logger.info(" Starting macro replay")
         logger.info(f" Total actions to execute: {len(actions)} / {total_actions}")
 
         success_count = 0
@@ -368,11 +424,8 @@ class MacroPlayer:
 
         for i, action in enumerate(actions, start=start_from_step + 1):
             action_type = action.get("action_type", action.get("type", "unknown"))
-            description_text = action.get("description", "")
 
             logger.info(f"\n Step {i}/{total_actions}: {action_type}")
-            if description_text:
-                logger.info(f"   Description: {description_text}")
 
             state_matched, current_state, match_result = await self.wait_for_pre_state(
                 action.get("pre_state"), i
@@ -384,6 +437,11 @@ class MacroPlayer:
                     "reason": match_result.reason if match_result else "state mismatch",
                     "score": match_result.score if match_result else None,
                 }
+                if masks.active:
+                    # An add-on handling MacroMismatch could observe the raw device.
+                    raise MacroError(
+                        "State mismatch during credential replay; handoff refused"
+                    )
                 raise MacroMismatch(
                     i - 1,
                     macro_data["actions"][i - 1 :],

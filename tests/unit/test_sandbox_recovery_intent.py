@@ -21,6 +21,12 @@ from tests.unit.test_sandbox_remote import Input, Output, backend
 __all__ = ["env", "setup_deploy", "changed", "initial_cloud", "backend"]
 
 
+@pytest.fixture(autouse=True)
+def _inspect_synthetic_sources(monkeypatch):
+    # Recovery fixtures use strings like "different" as opaque function sources.
+    monkeypatch.setattr(deploy, "verify_scheduled_artifact", lambda artifact: None)
+
+
 async def interrupt_schedule(e):
     scheduled = replace(
         e.artifact, declaration=CloudDeclaration("demo", schedule="* * * * *")

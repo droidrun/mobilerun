@@ -19,8 +19,8 @@ def test_device_picker_precedes_coordinates(monkeypatch):
         "discover_devices",
         AsyncMock(
             return_value=[
-                DiscoveredDevice("a", "local", None, None, None),
-                DiscoveredDevice("b", "local", None, None, None),
+                DiscoveredDevice("a", "local", None, "device", None),
+                DiscoveredDevice("b", "local", None, "device", None),
             ]
         ),
     )
@@ -52,7 +52,7 @@ def test_list_marks_default(monkeypatch):
         "discover_devices",
         AsyncMock(
             return_value=[
-                DiscoveredDevice("a", "local", None, None, None),
+                DiscoveredDevice("a", "local", None, "device", None),
                 DiscoveredDevice("b", "cloud", "Phone", "ready", "android"),
             ]
         ),
@@ -82,7 +82,9 @@ def test_unavailable_saved_default_errors_without_fallback(monkeypatch):
     monkeypatch.setattr(
         options,
         "discover_devices",
-        AsyncMock(return_value=[DiscoveredDevice("other", "local", None, None, None)]),
+        AsyncMock(
+            return_value=[DiscoveredDevice("other", "local", None, "device", None)]
+        ),
     )
     monkeypatch.setattr(options, "is_interactive", lambda: False)
 
@@ -102,8 +104,8 @@ def test_picker_save_yes_and_no(monkeypatch):
     from mobilerun.cli.devices.base import options
 
     devices = [
-        DiscoveredDevice("a", "local", None, None, None),
-        DiscoveredDevice("b", "local", None, None, None),
+        DiscoveredDevice("a", "local", None, "device", None),
+        DiscoveredDevice("b", "local", None, "device", None),
     ]
     monkeypatch.setattr(
         options.ConfigLoader,
@@ -143,7 +145,7 @@ def test_existing_default_no_save_prompt(monkeypatch):
     monkeypatch.setattr(
         options,
         "discover_devices",
-        AsyncMock(return_value=[DiscoveredDevice("a", "local", None, None, None)]),
+        AsyncMock(return_value=[DiscoveredDevice("a", "local", None, "device", None)]),
     )
     monkeypatch.setattr(options, "is_interactive", lambda: True)
 

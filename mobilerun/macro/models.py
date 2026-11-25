@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple, TypeAlias
 
+from mobilerun.core.credentials.masking import current_masks
+
 if TYPE_CHECKING:
     from mobilerun.core.state.ui_state import UIState
 
@@ -27,7 +29,7 @@ def normalize_ui_state(ui_state: StateInput) -> Dict[str, Any]:
         if node:
             nodes.append(node)
 
-    return {
+    snapshot = {
         "phone_state": {
             "package": _first_present(
                 phone_state, "package", "appPackage", "bundle_id"
@@ -37,6 +39,8 @@ def normalize_ui_state(ui_state: StateInput) -> Dict[str, Any]:
         "screen": screen,
         "nodes": nodes,
     }
+    masks = current_masks.get()
+    return masks.snapshot(snapshot) if masks is not None else snapshot
 
 
 def build_screen_snapshot(ui_state: StateInput) -> Dict[str, Any]:

@@ -1,8 +1,101 @@
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
 from mobilerun.sandbox.packaging import package, read_declaration
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("supplied", ["path", "inspected", "raw", "edited"])
+async def test_before_validator_can_fill_required_schedule_field(
+    tmp_path, supplied, monkeypatch
+):
+    from dataclasses import replace
+    from unittest.mock import Mock
+
+    from mobilerun.sandbox import deployment, packaging
+    from mobilerun.sandbox.errors import SandboxConfirmationRequired
+    from mobilerun.sandbox.models import Artifact
+
+    path = tmp_path / "task.py"
+    path.write_text(dedent("""\
+        from pydantic import BaseModel, model_validator
+        from mobilerun.sandbox import cloud
+        class Input(BaseModel):
+            count: int
+            @model_validator(mode='before')
+            @classmethod
+            def fill_default(cls, data):
+                return {'count': 1, **data}
+        @cloud('demo', schedule='* * * * *')
+        def task(input: Input) -> Input: return input
+    """))
+    inspected = package(path)
+    assert inspected.input_schema["required"] == ["count"]
+    raw = Artifact(
+        inspected.declaration,
+        inspected.source,
+        inspected.digest,
+        inspected.input_schema,
+        inspected.output_schema,
+    )
+    inspect = Mock(wraps=packaging.inspect_source)
+    monkeypatch.setattr(packaging, "inspect_source", inspect)
+    artifact = {
+        "path": None,
+        "inspected": inspected,
+        "raw": raw,
+        "edited": replace(inspected, source=inspected.source + "\n"),
+    }[supplied]
+    with pytest.raises(SandboxConfirmationRequired):
+        await deployment.deploy_file(path, device_free=True, artifact=artifact)
+    assert inspect.call_count == (0 if supplied == "inspected" else 1)
+
+
+def test_schedule_inspects_real_model_before_cloud(tmp_path, monkeypatch):
+    import asyncio
+
+    from jsonschema import validate
+
+    from mobilerun.sandbox import deployment
+    from mobilerun.sandbox.errors import SandboxDeclarationError
+
+    monkeypatch.setattr(
+        deployment, "current_scope", lambda: pytest.fail("cloud access")
+    )
+    source = tmp_path / "main.py"
+    template = dedent("""\
+        from pydantic import BaseModel, Field, field_validator
+        from mobilerun.sandbox import cloud
+
+        raise AssertionError('original module executed')
+
+        class Input(BaseModel):
+            count: int = Field(default=12, validate_default=True)
+
+            @field_validator('count')
+            @classmethod
+            def reject_default(cls, value):
+                raise ValueError('private-validator-detail')
+
+        @cloud('demo'OPTIONS)
+        def task(input: Input) -> Input:
+            raise AssertionError('entry point ran')
+    """)
+    source.write_text(template.replace("OPTIONS", ""))
+    validate({}, package(source).input_schema)
+    source.write_text(template.replace("OPTIONS", ", schedule='* * * * *'"))
+    with pytest.raises(SandboxDeclarationError, match="count") as caught:
+        asyncio.run(deployment.deploy_file(source, device_free=True, yes=True))
+    assert "private-validator-detail" not in str(caught.value)
+    assert "12" not in str(caught.value)
+    source.write_text(
+        source.read_text().replace(
+            "raise ValueError('private-validator-detail')", "return value"
+        )
+    )
+    assert package(source).declaration.schedule == "* * * * *"
 
 
 def test_package_does_not_execute_original_module(tmp_path: Path):
@@ -53,7 +146,7 @@ def test_inspection_failure_stops_package(tmp_path, monkeypatch):
 
     monkeypatch.setattr(functions, "cloud_client", boundary)
 
-    def fail(_source):
+    def fail(_source, *, scheduled):
         calls.append("inspect")
         raise SandboxPackagingError("inspection failed")
 

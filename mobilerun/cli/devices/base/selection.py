@@ -54,7 +54,9 @@ async def connect_target(
     device: Device
     if kind == "android":
         if is_portal_http_url(target):
-            token = (config or ConfigLoader.load(None)).device.resolve_auth_token()
+            token = (config or ConfigLoader.load(None)).device.resolve_auth_token(
+                "android"
+            )
             driver = create_android_portal_http_driver(target, token)
 
             async def close_portal_client() -> None:
@@ -86,7 +88,7 @@ async def connect_target(
                     serial=target, use_tcp=tcp, portal_mode=config.device.portal_mode
                 )
     elif kind == "ios":
-        token = config.device.resolve_auth_token() if config is not None else None
+        token = config.device.resolve_auth_token("ios") if config is not None else None
         device = IOSDevice(target, token=token)
     elif kind == "cloud":
         # lazy: the cloud driver is an optional dependency.

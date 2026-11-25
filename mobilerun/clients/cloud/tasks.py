@@ -230,7 +230,12 @@ async def run_task(
             task_id = response.id
             if on_task_started is not None:
                 on_task_started(task_id)
-            await _progress(client, task_id, device_id, billing=billing)
+            try:
+                await _progress(client, task_id, device_id, billing=billing)
+            except Exception:
+                # Progress is optional; status is authoritative. Cancellation
+                # (including the enclosing deadline) still propagates.
+                logger.warning("Cloud task progress unavailable; polling status")
             while True:
                 state = await status(client, task_id, billing=billing)
                 if state.status in {"completed", "failed", "cancelled"}:

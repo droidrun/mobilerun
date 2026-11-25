@@ -22,8 +22,14 @@ class DeviceConfig:
     auto_setup: bool = True
     auth_token: str | None = None
 
-    def resolve_auth_token(self) -> str | None:
-        return secret_value(get_secrets().MOBILERUN_DEVICE_TOKEN) or self.auth_token
+    def resolve_auth_token(self, platform: str | None = None) -> str | None:
+        """Use the environment override or the selected platform's saved token."""
+        configured = (
+            self.auth_token
+            if platform is None or platform.lower() == self.platform.lower()
+            else None
+        )
+        return secret_value(get_secrets().MOBILERUN_DEVICE_TOKEN) or configured
 
 
 @dataclass

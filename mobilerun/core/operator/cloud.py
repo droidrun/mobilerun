@@ -30,8 +30,12 @@ class CloudTaskOperator(Operator):
 
     def check(self, device: Device) -> None:
         if not device._is_cloud:
+            kind = type(device).__name__
+            inner = device._unwrap()
+            if inner is not device:
+                kind = f"{kind}({type(inner).__name__})"
             raise OperatorNotSupported(
-                f"{type(device).__name__} ({device.identifier or 'unidentified'}) is not a cloud device. Use an operator from mobilerun-agents for local LLM tasks."
+                f"{kind} ({device.identifier or 'unidentified'}) is not a cloud device. Use an operator from mobilerun-agents for local LLM tasks."
             )
         local = [
             extension.name

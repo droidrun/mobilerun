@@ -175,9 +175,12 @@ def test_android_recovery_through_wrapper_restores_declared_keyboard(
     from mobilerun.core.devices import AndroidDevice
 
     device = AndroidDevice("fake")
-    adb = SimpleNamespace(shell=AsyncMock())
+    adb = SimpleNamespace(
+        shell=AsyncMock(),
+        shell2=AsyncMock(return_value=SimpleNamespace(returncode=0, output="null")),
+    )
     monkeypatch.setattr(device, "_adb_device", adb)
-    device._portal = None
+    device._portal = SimpleNamespace(tcp_available=False)
     device._portal_keyboard_available = True
     setup = AsyncMock()
     monkeypatch.setattr(
@@ -188,7 +191,7 @@ def test_android_recovery_through_wrapper_restores_declared_keyboard(
     assert recovery is not None
     asyncio.run(recovery())
     setup.assert_awaited_once_with(device._adb_device)
-    assert adb.shell.await_count == 3
+    assert adb.shell.await_count == 2
 
 
 def test_provider_and_factory_attachment_are_separate_and_lazy():

@@ -56,7 +56,9 @@ def test_auto_create_with_proxy_and_default(monkeypatch):
         create=AsyncMock(return_value=SimpleNamespace(id="one", name="one")),
         wait_ready=AsyncMock(),
         retrieve_capabilities=AsyncMock(
-            return_value=SimpleNamespace(capabilities=SimpleNamespace(telephony=False))
+            return_value=SimpleNamespace(
+                capabilities=SimpleNamespace(telephony=False, proxy=True)
+            )
         ),
     )
     client = SimpleNamespace(devices=devices, with_options=lambda **kw: client)
@@ -100,7 +102,9 @@ def test_concurrent_cloud_creation_publishes_once(monkeypatch):
         create=AsyncMock(side_effect=create),
         wait_ready=AsyncMock(),
         retrieve_capabilities=AsyncMock(
-            return_value=SimpleNamespace(capabilities=SimpleNamespace(telephony=False))
+            return_value=SimpleNamespace(
+                capabilities=SimpleNamespace(telephony=False, proxy=True)
+            )
         ),
     )
     client = SimpleNamespace(devices=devices, with_options=lambda **kw: client)
