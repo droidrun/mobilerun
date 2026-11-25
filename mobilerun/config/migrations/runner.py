@@ -23,8 +23,8 @@ def get_migrations() -> List:
     return sorted(migrations, key=lambda m: m.VERSION)
 
 
-def migrate(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Run all pending migrations on config."""
+def migrate(config: Dict[str, Any], *, for_storage: bool = False) -> Dict[str, Any]:
+    """Upgrade config, omitting cwd-dependent path resolution for stored data."""
     version = config.get("_version", 0)
 
     if version >= CURRENT_VERSION:
@@ -34,7 +34,8 @@ def migrate(config: Dict[str, Any]) -> Dict[str, Any]:
 
     for migration in migrations:
         if migration.VERSION > version:
-            config = migration.migrate(config)
+            if not (for_storage and getattr(migration, "READ_TIME_ONLY", False)):
+                config = migration.migrate(config)
             config["_version"] = migration.VERSION
 
     return config

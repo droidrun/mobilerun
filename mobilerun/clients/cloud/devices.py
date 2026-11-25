@@ -33,6 +33,7 @@ from mobilerun.clients.cloud.billing import (
 )
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.clients.cloud.errors import cloud_error
+from mobilerun.errors.cloud import BillingError
 from mobilerun.models.billing import Billing, Plan
 from mobilerun.utils.redaction import secret_scope
 
@@ -266,7 +267,13 @@ async def resume(
     client: AsyncMobilerun,
     **params: Unpack[RequestOptions],
 ) -> None:
-    """Resume an existing phone."""
+    """Resume an existing phone without starting minute billing unless authorized."""
+    if billing is not Billing.PAID:
+        info = await retrieve(device_id, billing=billing, client=client)
+        if info.billing_strategy != Plan.SUBSCRIPTION:
+            raise BillingError(
+                operation="resume", code="invalid_billing", required_billing="paid"
+            )
     try:
         return await client.devices.resume(device_id, **params)
     except APIError as exc:

@@ -311,7 +311,7 @@ def update(package, name, field, from_stdin, local):
 def delete(package, name, field, yes, local):
     """Delete a credential or one field."""
     package, name, field = _resolve(package, name, field, local=local)
-    if field is None and is_interactive():
+    if field is None and not yes and is_interactive():
         entries = _run(lambda store: store.list(package), local=local)
         fields = [
             f

@@ -25,7 +25,7 @@ def list_plugins(check: bool, as_json: bool) -> None:
     rows = []
     for group in (CLI_ENTRY_POINT_GROUP, OPERATOR_ENTRY_POINT_GROUP):
         entries = sorted(
-            registry.metadata.entry_points(group=group),
+            registry.installed_entries(group),
             key=lambda ep: (ep.name, str(ep.value)),
         )
         selected = registry.discover(group, entries=entries)

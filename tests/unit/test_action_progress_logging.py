@@ -11,7 +11,7 @@ def test_action_logging_accepts_context_without_optional_state_or_ui():
     assert agent_line(ctx, "tap", {"x": 1, "y": 2}) == ("device · step 1  tap (1, 2)")
 
 
-def test_cloud_progress_summarizes_action_without_sensitive_values(caplog):
+def test_cloud_progress_summarizes_action_without_sensitive_values(caplog, monkeypatch):
     class Stream:
         async def __aenter__(self):
             return self
@@ -29,6 +29,8 @@ def test_cloud_progress_summarizes_action_without_sensitive_values(caplog):
             with_streaming_response=SimpleNamespace(attach=lambda *a, **k: Stream())
         )
     )
+    # CLI setup routes mobilerun records to stderr instead of the root logger.
+    monkeypatch.setattr(logging.getLogger("mobilerun"), "propagate", True)
     with caplog.at_level(logging.INFO, logger="mobilerun.actions"):
         asyncio.run(_progress(client, "task", billing="no_commerce"))
     assert [r.message for r in caplog.records] == [

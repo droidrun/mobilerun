@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from mobilerun.clients.cloud import devices, numbers
+from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.core.devices import CloudDevice
 from mobilerun.core.phone_number import CloudPhoneNumber
 from mobilerun.core.proxy import CloudRotatingProxy
@@ -41,6 +42,16 @@ def test_paid_number_bind_unbind_and_release(real_env, record_property):
             await number.bind(phone)
             assert phone.number is number
             assert number.device_id == phone._adb_device_id
+            async with CloudDevice(
+                phone.cloud_id, billing=Billing.NO_COMMERCE
+            ) as observer:
+                assert observer.number.id == number.id
+                assert observer.actions.get("device.open_url")
+            async with cloud_client(billing=Billing.NO_COMMERCE) as client:
+                remote = await devices.number(
+                    phone.cloud_id, billing=Billing.NO_COMMERCE, client=client
+                )
+            assert remote.binding and remote.binding.number_id == number.id
             await number.unbind()
             assert number.device_id is None
             with pytest.raises(DeviceOperationNotSupported):

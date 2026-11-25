@@ -60,9 +60,19 @@ Each selected command accepts `[DEVICE]` or `--device/-d`; conflicting values fa
 
 See the [CLI overview](../README.md).
 
-Only the 0.7 flat commands remain as hidden deprecated aliases:
-`screenshot`, `ui`, `tap`, `swipe`, `long-press`, `type`, `press`, `apps`, `start`.
-They emit a one-line replacement hint on stderr. New commands have no flat aliases.
+The old flat commands are no longer registered. Use their grouped replacements:
+
+| Old command | Current command |
+| --- | --- |
+| `device screenshot` | `device screen screenshot` |
+| `device ui` | `device screen ui` |
+| `device tap` | `device input tap` |
+| `device swipe` | `device input swipe` |
+| `device long-press` | `device input long-press` |
+| `device type` | `device input type` |
+| `device press` | `device input press` |
+| `device apps` | `device app list` |
+| `device start` | `device app start` |
 
 `mobilerun doctor` diagnoses without installing/updating Portal or enabling
 accessibility. Use `mobilerun doctor --fix` to permit repairs. Failed checks exit 1;

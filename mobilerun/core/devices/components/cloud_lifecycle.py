@@ -11,8 +11,7 @@ from mobilerun.clients.cloud import devices
 from mobilerun.clients.cloud.client import AsyncMobilerun
 from mobilerun.config.settings import get_settings
 from mobilerun.core.devices.base import Device
-from mobilerun.core.extensions.registry import Binding
-from mobilerun.core.phone_number.cloud import CloudPhoneNumber
+from mobilerun.core.phone_number.cloud import CloudPhoneNumber, _BorrowedNumberBinding
 from mobilerun.core.proxy import CloudRotatingProxy
 from mobilerun.models.billing import Billing, Plan
 
@@ -82,7 +81,7 @@ class _CloudLifecycle(Device):
             async with self._extension_state.lock:
                 number._check_name(self)
                 number._action_entries()
-                adopted = Binding(number, self, False)
+                adopted = _BorrowedNumberBinding(number, self, False)
                 self._extension_state.bindings[number.name] = adopted
                 number._binding = adopted
         self._number_loaded = True

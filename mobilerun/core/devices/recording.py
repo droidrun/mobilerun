@@ -5,6 +5,7 @@ from typing import Any, Protocol, TypeVar
 
 from mobilerun.core.devices.base import Device
 from mobilerun.core.devices.components.wrapper import DeviceWrapper
+from mobilerun.core.extensions.base import _inside_bound_action
 from mobilerun.core.operator import Operator
 from mobilerun.core.state.base import StateProvider
 from mobilerun.core.state.options import StateProviderFactory, StateProviderOptions
@@ -43,6 +44,10 @@ class RecordingDevice(DeviceWrapper[D]):
             {"action_type": "extension_call", "name": name, "arguments": arguments}
         )
 
+    def _record_primitive(self, action: RecordedAction) -> None:
+        if not _inside_bound_action(self):
+            self._actions.append(action)
+
     async def close(self) -> None:
         observers = self._extension_state.observers
         if self._record_extension in observers:
@@ -59,13 +64,13 @@ class RecordingDevice(DeviceWrapper[D]):
 
     async def tap(self, x: int, y: int) -> None:
         await self._inner.tap(x, y)
-        self._actions.append({"action_type": "tap", "x": x, "y": y})
+        self._record_primitive({"action_type": "tap", "x": x, "y": y})
 
     async def swipe(
         self, x1: int, y1: int, x2: int, y2: int, duration_ms: float = 1000
     ) -> None:
         await self._inner.swipe(x1, y1, x2, y2, duration_ms)
-        self._actions.append(
+        self._record_primitive(
             {
                 "action_type": "swipe",
                 "start_x": x1,
@@ -80,7 +85,7 @@ class RecordingDevice(DeviceWrapper[D]):
         self, x1: int, y1: int, x2: int, y2: int, duration: float = 3.0
     ) -> None:
         await self._inner.drag(x1, y1, x2, y2, duration)
-        self._actions.append(
+        self._record_primitive(
             {
                 "action_type": "drag",
                 "start_x": x1,
@@ -95,7 +100,7 @@ class RecordingDevice(DeviceWrapper[D]):
         self, x1: int, y1: int, x2: int, y2: int, duration_ms: float = 1000
     ) -> None:
         await self._inner._swipe_humanized(x1, y1, x2, y2, duration_ms)
-        self._actions.append(
+        self._record_primitive(
             {
                 "action_type": "swipe",
                 "start_x": x1,
@@ -110,35 +115,35 @@ class RecordingDevice(DeviceWrapper[D]):
         self, text: str, clear: bool = False, stealth: bool = False, wpm: int = 0
     ) -> bool:
         result = await self._inner.input_text(text, clear, stealth, wpm)
-        self._actions.append(
+        self._record_primitive(
             {"action_type": "input_text", "text": text, "clear": clear}
         )
         return result
 
     async def press_button(self, button: str) -> None:
         await self._inner.press_button(button)
-        self._actions.append({"action_type": "button_press", "button": button})
+        self._record_primitive({"action_type": "button_press", "button": button})
 
     async def start_app(self, package: str, activity: str | None = None) -> str:
         result = await self._inner.start_app(package, activity)
-        self._actions.append(
+        self._record_primitive(
             {"action_type": "start_app", "package": package, "activity": activity}
         )
         return result
 
     async def open_url(self, url: str) -> None:
         await self._inner.open_url(url)
-        self._actions.append({"action_type": "open_url", "url": url})
+        self._record_primitive({"action_type": "open_url", "url": url})
 
     async def stop_app(self, package: str) -> str:
         result = await self._inner.stop_app(package)
-        self._actions.append({"action_type": "stop_app", "package": package})
+        self._record_primitive({"action_type": "stop_app", "package": package})
         return result
 
     async def press_key_code(self, key_code: int) -> None:
         await self._inner.press_key_code(key_code)
-        self._actions.append({"action_type": "press_key_code", "key_code": key_code})
+        self._record_primitive({"action_type": "press_key_code", "key_code": key_code})
 
     async def wait(self, seconds: float) -> None:
         await self._inner.wait(seconds)
-        self._actions.append({"action_type": "wait", "duration": seconds})
+        self._record_primitive({"action_type": "wait", "duration": seconds})

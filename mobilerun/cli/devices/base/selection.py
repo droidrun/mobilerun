@@ -55,9 +55,17 @@ async def connect_target(
     if kind == "android":
         if is_portal_http_url(target):
             token = (config or ConfigLoader.load(None)).device.resolve_auth_token()
+            driver = create_android_portal_http_driver(target, token)
+
+            async def close_portal_client() -> None:
+                if driver._client is not None:
+                    await driver._client.aclose()
+                    driver._client = None
+
             device = DriverDevice(
-                create_android_portal_http_driver(target, token),
+                driver,
                 state_provider_factory=android_state_provider,
+                close=close_portal_client,
             )
         else:
             if (

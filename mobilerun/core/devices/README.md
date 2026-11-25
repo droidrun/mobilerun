@@ -52,7 +52,7 @@ explicit provider instance is reused as supplied.
 
 ```python
 from mobilerun import AndroidDevice
-# Install the optional add-on first: pip install mobilerun-agents
+# Requires the unpublished mobilerun-agents add-on.
 from mobilerun.agents import AgentOperator
 
 device = AndroidDevice("emulator-5554", operator=AgentOperator())

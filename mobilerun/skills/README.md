@@ -50,4 +50,11 @@ containing skills. `install bundle FOLDER --agent codex` copies one whole
 folder; `install single NAME --agent codex` copies one skill flat. Existing
 `install NAME` remains supported. Both modes support `--all`.
 
+Forced reinstall and uninstall check installed files against their recorded hashes.
+If a skill contains added or modified files, the CLI lists up to ten changed paths
+and asks before discarding them. No is the default. In scripts, uninstall requires
+`--discard-changes` to remove local edits; reinstall requires both `--force` and
+`--discard-changes` to replace them. `--yes` alone never discards edits. Unmanaged
+skills are not replaced or removed, even with `--discard-changes`.
+
 Concurrent installs into the same skills directory are not supported.

@@ -6,6 +6,7 @@ import pytest
 
 from mobilerun.core.devices.cloud import CloudDevice
 from mobilerun.core.devices.components import cloud_lifecycle as lifecycle
+from mobilerun.errors import CloudValidationError
 
 
 @pytest.mark.parametrize(
@@ -71,7 +72,7 @@ def test_failed_termination_can_retry_with_same_owned_sdk_client(monkeypatch):
     device._owned = True
 
     async def run():
-        with pytest.raises(Exception):
+        with pytest.raises(CloudValidationError):
             await device.close()
         await device.close()
         assert len(attempts) == 2

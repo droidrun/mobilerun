@@ -1,6 +1,7 @@
 """Proxy smoke checks; the paid test owns and terminates its phone."""
 
 import asyncio
+from uuid import uuid4
 
 import pytest
 from conftest import CLOUD_ID, SERIAL
@@ -10,7 +11,8 @@ from mobilerun.clients.cloud.proxies import device_status, list_proxies
 from mobilerun.core.devices import AndroidDevice
 from mobilerun.core.devices.cloud import CloudDevice
 from mobilerun.core.proxy import CloudRotatingProxy
-from mobilerun.models import Billing
+from mobilerun.models import Billing, Plan
+from tests.support.smoke_phone import close_smoke_phone
 
 pytestmark = pytest.mark.smoke
 
@@ -18,7 +20,8 @@ pytestmark = pytest.mark.smoke
 def test_list_and_existing_status(real_env):
     async def run():
         assert (await list_proxies(billing=Billing.INCLUDED)).items is not None
-        assert isinstance((await device_status(CLOUD_ID)).connected, bool)
+        status = await device_status(CLOUD_ID, billing=Billing.INCLUDED)
+        assert isinstance(status.connected, bool)
 
     asyncio.run(run())
 
@@ -56,16 +59,21 @@ def test_paid_create_with_proxy(real_env, record_property):
             for item in before.items
         ):
             pytest.skip("No active German residential proxy available for safe reuse")
+        name = f"proxy smoke {uuid4().hex}"
+        record_property("device_name", name)
         device = CloudDevice(
-            proxy=CloudRotatingProxy(country="DE"), billing="paid", name="proxy smoke"
+            proxy=CloudRotatingProxy(country="DE"),
+            billing=Billing.PAID,
+            plan=Plan.MINUTE,
+            name=name,
         )
         try:
             await device
-            record_property("device_id", device._adb_device_id)
+            record_property("device_id", device.cloud_id)
             assert (await device.proxy.status()).connected
         finally:
-            device_id = device._adb_device_id
-            await device.close()
+            await close_smoke_phone(device, name)
+            device_id = device.cloud_id
             if device_id:
                 for _ in range(30):
                     listed = await list_devices(billing=Billing.INCLUDED)
@@ -73,7 +81,7 @@ def test_paid_create_with_proxy(real_env, record_property):
                         break
                     await asyncio.sleep(1)
                 else:
-                    pytest.fail("Terminated phone is still listed")
+                    pytest.fail(f"Terminated phone {device_id} is still listed")
                 record_property("released_device", device_id)
         before_ids = {item.id for item in before.items}
         new = []

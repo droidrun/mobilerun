@@ -77,7 +77,7 @@ class AndroidDevice(_BackendIO, Device):
 
     @property
     def supported_operations(self) -> set[str]:
-        return self._driver.supported | {"http_proxy"}
+        return self._driver.supported | {"http_proxy", "open_url"}
 
     @property
     def supported_buttons(self) -> set[str]:

@@ -333,6 +333,25 @@ def build_document(
     return result
 
 
+def _same_json(left: Any, right: Any) -> bool:
+    """Compare JSON intent without conflating booleans and numbers."""
+    if isinstance(left, dict):
+        return (
+            isinstance(right, dict)
+            and left.keys() == right.keys()
+            and all(_same_json(value, right[key]) for key, value in left.items())
+        )
+    if isinstance(left, list):
+        return (
+            isinstance(right, list)
+            and len(left) == len(right)
+            and all(_same_json(a, b) for a, b in zip(left, right, strict=True))
+        )
+    if type(left) in (int, float):
+        return type(right) in (int, float) and left == right
+    return type(left) is type(right) and left == right
+
+
 def equivalent_document(actual: JSON, desired: JSON) -> bool:
     """Compare authored fields while detecting removed device/schema settings."""
 
@@ -351,7 +370,7 @@ def equivalent_document(actual: JSON, desired: JSON) -> bool:
             return all(
                 k in a
                 and (
-                    a[k] == v
+                    _same_json(a[k], v)
                     if k in ("on", "devices", "with", "recording")
                     else compare(a[k], v)
                 )
@@ -363,7 +382,7 @@ def equivalent_document(actual: JSON, desired: JSON) -> bool:
                 and len(a) == len(d)
                 and all(compare(x, y) for x, y in zip(a, d, strict=True))
             )
-        return a == d
+        return _same_json(a, d)
 
     return compare(actual, desired)
 
@@ -487,6 +506,33 @@ async def _delete_verified(operation: Awaitable[Any]) -> None:
         pass
 
 
+async def _can_replace_initial_version(
+    state: JSON,
+    receipt: OwnershipReceipt,
+    found: JSON | None,
+    flows: list[JSON],
+    mode: Billing,
+) -> bool:
+    """Only a rejected, receipt-owned version with no staged flow can be superseded."""
+    if flows or receipt.flow_id or receipt.trigger_id or receipt.action_ids:
+        return False
+    if (
+        state["function_pending"]
+        or state["flow_pending"]
+        or state["document"] is not None
+    ):
+        return False
+    if not receipt.function_id or not found or found.get("id") != receipt.function_id:
+        return False
+    version = state["version"]
+    if version is None or (found.get("latestVersion") or {}).get("version") != version:
+        return False
+    record = await clients.get_version(
+        receipt.function_id, _version(version), billing=mode
+    )
+    return record.get("version") == version and record.get("status") == "rejected"
+
+
 async def deploy_file(
     path: Path,
     *,
@@ -510,7 +556,7 @@ async def deploy_file(
             "Select a device or explicitly choose device-free"
         )
     # Validate declaration before any cloud calls or local writes.
-    build_document(artifact, "placeholder", 1, device=selected)
+    preview_document = build_document(artifact, "placeholder", 1, device=selected)
     if decl.has_endpoint and _has_ref(artifact.input_schema):
         raise SandboxDeclarationError("Endpoint schema contains unsupported $ref")
     mode = resolve_billing(billing)
@@ -526,12 +572,6 @@ async def deploy_file(
         if initial and initial.get("creation_resolved"):
             raise SandboxDeploymentConflict(
                 "Finish sandbox cleanup before deploying", receipt=receipt
-            )
-        if initial and (
-            initial["digest"] != artifact.digest or initial["device"] != selected
-        ):
-            raise SandboxDeploymentConflict(
-                "Finish the original initial deployment first", receipt=receipt
             )
         matches = [
             f
@@ -557,6 +597,87 @@ async def deploy_file(
         all_flows = await clients.list_flows(billing=mode)
         flows = [f for f in all_flows if f.get("name") == flow_name]
         if initial:
+            if "preview_document" in initial:
+                matches_document = _same_json(
+                    initial["preview_document"], preview_document
+                )
+            elif (
+                initial.get("document") is not None
+                and receipt.function_id
+                and initial.get("version")
+            ):
+                matches_document = _same_json(
+                    initial["document"],
+                    build_document(
+                        artifact,
+                        receipt.function_id,
+                        initial["version"],
+                        device=selected,
+                    ),
+                )
+            else:
+                if (
+                    initial["function_pending"]
+                    and receipt.function_id is None
+                    and not initial["flow_pending"]
+                    and not (
+                        receipt.flow_id or receipt.trigger_id or receipt.action_ids
+                    )
+                ):
+                    if initial["digest"] != artifact.digest:
+                        raise SandboxDeploymentConflict(
+                            "Retry with the original sandbox source to recover the function ID before cleanup",
+                            receipt=receipt,
+                        )
+                    receipt = await _create_initial_function(
+                        store, receipt, artifact, initial, found, mode
+                    )
+                raise SandboxDeploymentConflict(
+                    "Initial intent evidence is missing; cleanup is required before redeploying",
+                    receipt=receipt,
+                )
+            if (
+                initial["digest"] != artifact.digest
+                or initial["device"] != selected
+                or not matches_document
+            ):
+                if initial[
+                    "digest"
+                ] == artifact.digest or not await _can_replace_initial_version(
+                    initial, receipt, found, flows, mode
+                ):
+                    raise SandboxDeploymentConflict(
+                        "Finish the original initial deployment first", receipt=receipt
+                    )
+                # No flow staging began. Replace only this confirmed terminal version.
+                initial.update(
+                    digest=artifact.digest,
+                    device=selected,
+                    preview_document=preview_document,
+                    version=None,
+                    replacing_rejected=True,
+                )
+                receipt = _checkpoint(store, receipt, initial)
+            if initial.get("activation_pending"):
+                receipt, flow, actual = await _owned_remote(
+                    store, mode, activating=False
+                )
+                function_id = _identifier(receipt.function_id)
+                desired = build_document(
+                    artifact, function_id, initial["version"], device=selected
+                )
+                if (
+                    desired is None
+                    or not _same_json(desired, initial["document"])
+                    or not equivalent_document(actual, desired)
+                ):
+                    raise SandboxDeploymentConflict(
+                        "Initial staging intent changed", receipt=receipt
+                    )
+                await _wait_ready(function_id, initial["version"], mode, receipt)
+                return await _finish_initial_activation(
+                    store, receipt, artifact, initial, mode, flow.get("enabled")
+                )
             if flows and not initial["flow_pending"]:
                 raise SandboxDeploymentConflict(
                     "Sandbox flow is not owned", receipt=receipt
@@ -589,6 +710,42 @@ async def deploy_file(
         )
 
 
+async def _create_initial_function(
+    store: ReceiptStore,
+    receipt: OwnershipReceipt,
+    artifact: Artifact,
+    state: JSON,
+    found: JSON | None,
+    mode: Billing,
+) -> OwnershipReceipt:
+    """Create or replay the journaled function only; never infer its ID from a name."""
+    key = state["function_key"]
+    receipt = store.record_stage(receipt, "function:create", key)
+    try:
+        result = await clients.create_function(
+            receipt.name, artifact.source, key, billing=mode
+        )
+    except Exception:
+        raise SandboxDeploymentError(
+            "Sandbox function creation outcome uncertain; retry the original deployment",
+            receipt=receipt,
+        ) from None
+    function_id = _identifier(result.get("id"))
+    if receipt.function_id and receipt.function_id != function_id:
+        raise SandboxDeploymentConflict(
+            "Idempotent function response conflicts with remote state", receipt=receipt
+        )
+    receipt = store.record_ids(receipt, function_id=function_id)
+    version = _version((result.get("latestVersion") or {}).get("version"))
+    state.update(function_pending=False, version=version)
+    receipt = _checkpoint(store, receipt, state)
+    if found and found.get("id") != function_id:
+        raise SandboxDeploymentConflict(
+            "Idempotent function response conflicts with remote state", receipt=receipt
+        )
+    return receipt
+
+
 async def _first_deploy(
     store: ReceiptStore,
     receipt: OwnershipReceipt,
@@ -612,6 +769,9 @@ async def _first_deploy(
         )
         state = dict(
             stage="initial",
+            preview_document=build_document(
+                artifact, "placeholder", 1, device=selected
+            ),
             digest=artifact.digest,
             device=selected,
             function_pending=found is None,
@@ -625,32 +785,9 @@ async def _first_deploy(
         )
         receipt = _checkpoint(store, receipt, state)
     if state["function_pending"]:
-        key = state["function_key"]
-        receipt = store.record_stage(receipt, "function:create", key)
-        try:
-            result = await clients.create_function(
-                decl.name, artifact.source, key, billing=mode
-            )
-        except Exception:
-            raise SandboxDeploymentError(
-                "Sandbox function creation outcome uncertain; retry the original deployment",
-                receipt=receipt,
-            ) from None
-        function_id = _identifier(result.get("id"))
-        if receipt.function_id and receipt.function_id != function_id:
-            raise SandboxDeploymentConflict(
-                "Idempotent function response conflicts with remote state",
-                receipt=receipt,
-            )
-        receipt = store.record_ids(receipt, function_id=function_id)
-        version = _version((result.get("latestVersion") or {}).get("version"))
-        state.update(function_pending=False, version=version)
-        receipt = _checkpoint(store, receipt, state)
-        if found and found.get("id") != function_id:
-            raise SandboxDeploymentConflict(
-                "Idempotent function response conflicts with remote state",
-                receipt=receipt,
-            )
+        receipt = await _create_initial_function(
+            store, receipt, artifact, state, found, mode
+        )
     elif state["version"] is None:
         if found is None:
             raise SandboxDeploymentConflict(
@@ -658,8 +795,10 @@ async def _first_deploy(
             )
         function_id = _identifier(found.get("id"))
         version = _version((found.get("latestVersion") or {}).get("version"))
-        await _wait_ready(function_id, version, mode, receipt)
-        source = await clients.get_source(function_id, version, billing=mode)
+        source = None
+        if not state.get("replacing_rejected"):
+            await _wait_ready(function_id, version, mode, receipt)
+            source = await clients.get_source(function_id, version, billing=mode)
         if source == artifact.source:
             status = "unchanged"
         else:
@@ -674,13 +813,11 @@ async def _first_deploy(
         receipt = _checkpoint(store, receipt, state)
     function_id = _identifier(receipt.function_id)
     version = _version(state["version"])
-    status = state["status"]
     await _wait_ready(function_id, version, mode, receipt)
     receipt = store.record_ids(receipt, digest=artifact.digest)
     document = build_document(artifact, function_id, version, device=selected)
-    endpoint = None
     if document is not None:
-        if state["flow_pending"] and state["document"] != document:
+        if state["flow_pending"] and not _same_json(state["document"], document):
             raise SandboxDeploymentConflict(
                 "Initial staging intent changed", receipt=receipt
             )
@@ -736,38 +873,45 @@ async def _first_deploy(
                 "Idempotent flow response conflicts with remote state", receipt=receipt
             )
         store.write_yaml(document)
-        state.update(flow_pending=False, complete=True)
+        state.update(flow_pending=False, activation_pending=True)
         receipt = _checkpoint(store, receipt, state)
-        key = stage_key(scope, decl.name, artifact.digest, "flow:enable")
-        receipt = store.record_stage(receipt, "flow:enable", key)
-        try:
-            enabled = await clients.enable_flow(flow_id, billing=mode)
-            if not isinstance(enabled, dict) or enabled.get("enabled") is not True:
-                raise ValueError("Enable not confirmed")
-        except Exception:
-            raise SandboxDeploymentError(
-                "Sandbox flow activation failed or uncertain", receipt=receipt
-            ) from None
-        if decl.has_endpoint:
-            endpoint = Endpoint(
-                scope.origin.rstrip("/") + "/triggers/" + trigger_id + "/fire",
-                trigger_id,
-            )
-    else:
-        state["complete"] = True
-        receipt = _checkpoint(store, receipt, state)
-    return DeploymentReceipt(
-        decl.name,
-        function_id,
-        version,
-        status,
-        receipt.flow_id,
-        receipt.trigger_id,
-        receipt.action_ids,
-        artifact.digest,
-        endpoint,
-        (),
-    )
+        return await _finish_initial_activation(
+            store, receipt, artifact, state, mode, None
+        )
+    state["complete"] = True
+    receipt = _checkpoint(store, receipt, state)
+    return _deployment(receipt, artifact, version, state["status"])
+
+
+async def _finish_initial_activation(
+    store: ReceiptStore,
+    receipt: OwnershipReceipt,
+    artifact: Artifact,
+    state: JSON,
+    mode: Billing,
+    current: bool | None,
+) -> DeploymentReceipt:
+    """Close staging only after the flow reflects the journaled activation intent."""
+    flow_id = _identifier(receipt.flow_id)
+    target = state.get("enabled", True)
+    try:
+        if current is not target:
+            stage = "flow:enable" if target else "flow:disable"
+            key = stage_key(store.scope, receipt.name, artifact.digest, stage)
+            receipt = store.record_stage(receipt, stage, key)
+            operation = clients.enable_flow if target else clients.disable_flow
+            updated = await operation(flow_id, billing=mode)
+            if not isinstance(updated, dict) or updated.get("enabled") is not target:
+                raise ValueError("Activation not confirmed")
+        if (await _flow(flow_id, mode))["enabled"] is not target:
+            raise ValueError("Activation not confirmed")
+    except Exception:
+        raise SandboxDeploymentError(
+            "Sandbox flow activation failed or uncertain", receipt=receipt
+        ) from None
+    state["complete"] = True
+    receipt = _checkpoint(store, receipt, state)
+    return _deployment(receipt, artifact, state["version"], state["status"])
 
 
 def _initial(receipt: OwnershipReceipt) -> JSON | None:
@@ -897,7 +1041,16 @@ async def _redeploy(
         )
     actual = await clients.get_document(receipt.flow_id, billing=mode)
     if state:
-        if state["digest"] != artifact.digest or state["device"] != selected:
+        if (
+            state["digest"] != artifact.digest
+            or state["device"] != selected
+            or not _same_json(
+                build_document(
+                    artifact, receipt.function_id, state["version"], device=selected
+                ),
+                state["desired"],
+            )
+        ):
             raise SandboxDeploymentConflict(
                 "Finish the pending sandbox deployment first", receipt=receipt
             )
@@ -931,8 +1084,9 @@ async def _redeploy(
                     "Sandbox remote document changed", receipt=receipt
                 )
         version = _version((found.get("latestVersion") or {}).get("version"))
-        await _wait_ready(receipt.function_id, version, mode, receipt)
         source = await clients.get_source(receipt.function_id, version, billing=mode)
+        if source == artifact.source:
+            await _wait_ready(receipt.function_id, version, mode, receipt)
         desired = build_document(
             artifact, receipt.function_id, version, device=selected
         )
@@ -1039,7 +1193,10 @@ async def _redeploy(
             ]
             await clients.replace_flow_actions(receipt.flow_id, refs, key, billing=mode)
             done("replace")
-        if state["before"]["on"] != desired["on"] and "trigger" not in state["done"]:
+        if (
+            not _same_json(state["before"]["on"], desired["on"])
+            and "trigger" not in state["done"]
+        ):
             await _unshared(receipt, mode)
             on = desired["on"]
             params = dict(
@@ -1058,7 +1215,9 @@ async def _redeploy(
             await clients.update_trigger(receipt.trigger_id, params, key, billing=mode)
             done("trigger")
         if (
-            state["before"].get("devices", []) != desired.get("devices", [])
+            not _same_json(
+                state["before"].get("devices", []), desired.get("devices", [])
+            )
             and "devices" not in state["done"]
         ):
             key = intent("devices")
@@ -1334,6 +1493,9 @@ async def cleanup_owned(
         if initial:
             initial["complete"] = True
             receipt = _checkpoint(store, receipt, initial)
+        if state:
+            state["complete"] = True
+            _checkpoint(store, receipt, state)
 
 
 T = TypeVar("T")
@@ -1607,6 +1769,11 @@ async def set_enabled(
             receipt.digest or "",
             "flow:enable" if enabled else "flow:disable",
         )
+        if not enabled:
+            pending = _cutover(receipt) or _initial(receipt)
+            if pending:
+                pending["enabled"] = False
+                receipt = _checkpoint(store, receipt, pending)
         store.record_stage(receipt, "flow:enable" if enabled else "flow:disable", key)
         operation = clients.enable_flow if enabled else clients.disable_flow
         await _remote_request(operation(flow["id"], billing=mode))

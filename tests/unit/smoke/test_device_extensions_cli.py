@@ -15,19 +15,19 @@ def test_local_device_actions_and_extensions(local_ready):
     executable = str(Path(sys.executable).with_name("mobilerun"))
     env = os.environ.copy()
     for command in (
-        ["actions", SERIAL],
+        ["list", SERIAL],
         ["extensions", SERIAL, "--json"],
         ["call", "device.wait", SERIAL, "--arg", "seconds=0", "--json"],
     ):
         result = subprocess.run(
-            [executable, "device", *command],
+            [executable, "device", "action", *command],
             capture_output=True,
             text=True,
             timeout=90,
             env=env,
         )
         assert result.returncode == 0, result.stderr
-        if command[0] == "actions":
+        if command[0] == "list":
             assert "device.wait" in result.stdout
         else:
             json.loads(result.stdout)

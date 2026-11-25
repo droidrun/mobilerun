@@ -10,10 +10,13 @@ from mobilerun.cli.base.menu import is_interactive
 from mobilerun.cli.base.prompts import SelectChoice
 from mobilerun.cli.base.prompts import text_prompt_async as text_prompt
 from mobilerun.cli.base.run import coro
+from mobilerun.cli.base.safety import confirm_action_async
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.cli.devices.base.pickers import choose_value_async as choose_value
+from mobilerun.config.settings import get_settings
 from mobilerun.core.extensions import Action
 from mobilerun.errors.base import MobilerunError
+from mobilerun.models.billing import Billing
 from mobilerun.models.context import JSONValue
 
 
@@ -58,12 +61,14 @@ async def _arguments(action: Action, supplied: tuple[str, ...]) -> dict[str, JSO
     help="Action argument as key=value (repeatable).",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output JSON.")
+@click.option("--yes", "-y", is_flag=True, help="Confirm a chargeable action.")
 @device_command
 @coro
 async def call(
     action: str | None,
     arguments: tuple[str, ...],
     json_output: bool,
+    yes: bool,
     target: DeviceTarget,
 ) -> None:
     """Call an action on the selected device."""
@@ -84,6 +89,22 @@ async def call(
             entry = device.actions.get(selected)
             if not entry.public:
                 raise click.ClickException(f"Action {selected} is restricted")
+            if entry.name == "sms.send" or (
+                entry.name.endswith(".send")
+                and device.extensions[entry.owner].role == "phone_number"
+            ):
+                billing = get_settings().MOBILERUN_BILLING
+                if billing is not Billing.PAID:
+                    raise click.ClickException(
+                        "Sending SMS may incur charges; set MOBILERUN_BILLING=paid."
+                    )
+                await confirm_action_async(
+                    "send SMS",
+                    billing.value,
+                    "Sending SMS may incur charges.",
+                    yes=yes,
+                    err=True,
+                )
             result = await device.actions.call(
                 selected, await _arguments(entry, arguments), audience="cli"
             )

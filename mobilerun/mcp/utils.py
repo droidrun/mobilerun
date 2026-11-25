@@ -12,6 +12,13 @@ from typing import Any
 
 import tomlkit
 
+_NEWLINE = re.compile(r"\r\n|[\r\n]")
+
+
+def _line_start(text: str, pos: int) -> int:
+    """Locate the start of the line containing a token."""
+    return max(text.rfind("\n", 0, pos), text.rfind("\r", 0, pos)) + 1
+
 
 @dataclass
 class _Token:
@@ -27,8 +34,8 @@ def _tokens(text: str) -> list[_Token]:
         if text[i].isspace():
             i += 1
         elif text.startswith("//", i):
-            end = text.find("\n", i + 2)
-            i = len(text) if end < 0 else end
+            newline = _NEWLINE.search(text, i + 2)
+            i = newline.end() if newline else len(text)
         elif text.startswith("/*", i):
             end = text.find("*/", i + 2)
             if end < 0:
@@ -59,6 +66,11 @@ def _tokens(text: str) -> list[_Token]:
     return result
 
 
+def _reject_constant(value: str) -> None:
+    """Reject Python's non-standard JSON numeric constants."""
+    raise ValueError(f"Invalid JSON constant: {value}")
+
+
 def _loads(text: str) -> Any:
     ts = _tokens(text)
     parts = []
@@ -68,7 +80,7 @@ def _loads(text: str) -> Any:
                 raise ValueError("trailing comma without a value")
             continue
         parts.append(token.value)
-    return json.loads(" ".join(parts))
+    return json.loads(" ".join(parts), parse_constant=_reject_constant)
 
 
 def _members(
@@ -119,6 +131,8 @@ def check_path(text: str, path: list[str]) -> None:
 def edit(text: str, path: list[str], value: Any = None, *, remove: bool = False) -> str:
     """Edit a member, creating missing parent objects when installing."""
     ts = _tokens(text)
+    first_break = _NEWLINE.search(text)
+    newline = first_break.group() if first_break else "\n"
     index = 0
     for depth, key in enumerate(path):
         items, close = _members(ts, index)
@@ -131,67 +145,51 @@ def edit(text: str, path: list[str], value: Any = None, *, remove: bool = False)
             if not remove:
                 start = ts[key_i + 2].start
                 indent = re.match(
-                    r"[ \t]*", text[text.rfind("\n", 0, ts[key_i].start) + 1 :]
+                    r"[ \t]*", text[_line_start(text, ts[key_i].start) :]
                 ).group()
-                newline = "\r\n" if "\r\n" in text else "\n"
                 replacement = json.dumps(value, indent=2, ensure_ascii=False).replace(
                     "\n", newline + indent
                 )
                 return text[:start] + replacement + text[ts[end_i].end :]
             start, end = ts[key_i].start, ts[end_i].end
             if comma is not None:
-                end = ts[comma].end
+                text = text[: ts[comma].start] + text[ts[comma].end :]
             elif len(items) > 1:
                 previous = items[items.index(found) - 1]
                 comma_pos = ts[previous[3]].start
-                line_start = text.rfind("\n", 0, start) + 1
-                line_end = text.find("\n", end)
-                if (
-                    text[line_start:start].strip() == ""
-                    and line_end >= 0
-                    and text[end:line_end].strip() == ""
-                ):
-                    return (
-                        text[:comma_pos]
-                        + text[comma_pos + 1 : line_start]
-                        + text[line_end + 1 :]
-                    )
-                return text[:comma_pos] + text[comma_pos + 1 : start] + text[end:]
+                text = text[:comma_pos] + text[comma_pos + 1 :]
+                start -= 1
+                end -= 1
             # Remove the whole generated line when no adjacent comments would be lost.
-            line_start = text.rfind("\n", 0, ts[key_i].start) + 1
-            line_end = text.find("\n", end)
+            line_start = _line_start(text, start)
+            line_end = _NEWLINE.search(text, end)
             if (
-                start == ts[key_i].start
-                and text[line_start:start].strip() == ""
-                and line_end >= 0
-                and text[end:line_end].strip() == ""
+                line_end
+                and not text[line_start:start].strip()
+                and not text[end : line_end.start()].strip()
             ):
-                start, end = line_start, line_end + 1
+                start, end = line_start, line_end.end()
             return text[:start] + text[end:]
         if remove:
             return text
         for parent in reversed(path[depth + 1 :]):
             value = {parent: value}
         close_token = ts[close]
-        line_start = text.rfind("\n", 0, close_token.start) + 1
+        line_start = _line_start(text, close_token.start)
         close_indent = text[line_start : close_token.start]
-        multiline = (
-            "\n" in text[ts[index].end : close_token.start] and not close_indent.strip()
-        )
+        multiline = ts[index].end < line_start and not close_indent.strip()
         if multiline:
             if items:
-                member_line = text.rfind("\n", 0, ts[items[0][1]].start) + 1
+                member_line = _line_start(text, ts[items[0][1]].start)
                 indent = text[member_line : ts[items[0][1]].start]
                 if indent.strip():
                     indent = close_indent + "  "
             else:
                 indent = close_indent + "  "
             rendered = json.dumps(value, indent=2, ensure_ascii=False).replace(
-                "\n", "\n" + indent
+                "\n", newline + indent
             )
             trailing = bool(items and items[-1][3] is not None)
-            newline = "\r\n" if "\r\n" in text else "\n"
-            rendered = rendered.replace("\n", newline)
             insertion = (
                 indent
                 + json.dumps(key)
@@ -218,15 +216,30 @@ def edit(text: str, path: list[str], value: Any = None, *, remove: bool = False)
     raise ValueError("empty path")
 
 
-def read_file(path: Path) -> MutableMapping[str, Any]:
-    if not path.exists():
+def read_source(path: Path) -> str | None:
+    """Read a snapshot without normalizing the editor's line endings."""
+    try:
+        with path.open(encoding="utf-8", newline="") as file:
+            return file.read()
+    except FileNotFoundError:
+        return None
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Invalid config {path}: {exc}") from exc
+
+
+def parse_config(path: Path, text: str | None) -> MutableMapping[str, Any]:
+    """Parse exactly the snapshot that will be edited."""
+    if text is None:
         return tomlkit.document() if path.suffix == ".toml" else {}
     try:
-        text = path.read_text(encoding="utf-8")
         data = (
             tomlkit.parse(text)
             if path.suffix == ".toml"
-            else _loads(text) if path.suffix == ".jsonc" else json.loads(text)
+            else (
+                _loads(text)
+                if path.suffix == ".jsonc"
+                else json.loads(text, parse_constant=_reject_constant)
+            )
         )
         if not isinstance(data, MutableMapping):
             raise ValueError("expected an object")
@@ -236,8 +249,12 @@ def read_file(path: Path) -> MutableMapping[str, Any]:
 
 
 def write_file(
-    path: Path, data: MutableMapping[str, Any], content: str | None = None
-) -> None:
+    path: Path,
+    data: MutableMapping[str, Any],
+    content: str | None,
+    snapshot: str | None,
+) -> bool:
+    """Atomically replace the config unless an intervening save is detected."""
     content = (
         content
         if content is not None
@@ -249,20 +266,19 @@ def write_file(
     )
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        mode = 0o600
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as file:
             os.chmod(name, mode)
             file.write(content)
+        if read_source(path) != snapshot:
+            return False
         os.replace(name, path)
+        return True
     finally:
         if os.path.exists(name):
             os.unlink(name)
-
-
-def jsonc_source(path: Path) -> str:
-    if not path.exists():
-        return "{}"
-    with path.open(encoding="utf-8", newline="") as file:
-        return file.read()

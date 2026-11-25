@@ -10,6 +10,7 @@ from mobilerun_sdk import APIError, AsyncMobilerun
 from mobilerun.clients.cloud.billing import requires
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.clients.cloud.errors import cloud_error
+from mobilerun.clients.cloud.signed_http import _signed_client
 from mobilerun.models.billing import Billing
 from mobilerun.sandbox.errors import FlowCapabilityError, FlowStagingError
 
@@ -167,8 +168,8 @@ async def run_logs(
     async with _sdk(billing, client) as sdk:
         url = _data(await sdk.compute.runs.logs(run_id))["url"]
     try:
-        async with httpx.AsyncClient(
-            follow_redirects=True, timeout=30, trust_env=False
+        async with _signed_client(
+            httpx.AsyncClient(follow_redirects=True, timeout=30, trust_env=False)
         ) as downloader:
             response = await downloader.get(url)
             response.raise_for_status()

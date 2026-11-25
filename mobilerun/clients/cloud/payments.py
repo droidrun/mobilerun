@@ -18,14 +18,16 @@ class PaymentAdapter:
     resource: str
     resource_id: str
     retrieve: Callable[[], Awaitable[PaymentSnapshot]]
-    cancel: Callable[[], Awaitable[object]]
+    cancel: Callable[[], Awaitable[object]] | None = None
     awaiting: frozenset[str] = frozenset({"awaiting_payment", "pending_payment"})
     preparing: frozenset[str] = frozenset()
     active: frozenset[str] = frozenset({"active"})
     provisioning: frozenset[str] = frozenset({"provisioning"})
 
 
-async def wait_until_active(adapter: PaymentAdapter, *, timeout: float = 600) -> None:
+async def wait_until_active(
+    adapter: PaymentAdapter, *, timeout: float = 600
+) -> PaymentSnapshot:
     """Wait for payment and provisioning without changing resource ownership."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -37,7 +39,7 @@ async def wait_until_active(adapter: PaymentAdapter, *, timeout: float = 600) ->
             while True:
                 state = await adapter.retrieve()
                 if state.status in adapter.active:
-                    return
+                    return state
                 if (
                     state.status
                     not in adapter.awaiting | adapter.preparing | adapter.provisioning
@@ -66,10 +68,10 @@ async def wait_for_payment(
     on_checkout: CheckoutCallback | None = None,
     timeout: float = 600,
     checkout_timeout: float = 30,
-) -> None:
+) -> PaymentSnapshot:
     """Find checkout and hand presentation to the caller, or expose resumable error."""
     if initial.status not in adapter.awaiting | adapter.preparing:
-        return
+        return initial
     state = initial
     loop = asyncio.get_running_loop()
     deadline = loop.time() + checkout_timeout
@@ -87,22 +89,27 @@ async def wait_for_payment(
                         result = on_checkout(checkout)
                         if inspect.isawaitable(result):
                             await result
+                    except TimeoutError:
+                        raise  # The outer timeout handler cancels once.
                     except Exception as exc:
-                        try:
-                            await adapter.cancel()
-                        except Exception as cleanup_error:
-                            exc.add_note(
-                                f"Could not cancel {adapter.resource} {adapter.resource_id}: {cleanup_error}; check the dashboard."
-                            )
+                        if adapter.cancel is not None:
+                            try:
+                                await adapter.cancel()
+                            except Exception as cleanup_error:
+                                exc.add_note(
+                                    f"Could not cancel {adapter.resource} {adapter.resource_id}: {cleanup_error}; check the dashboard."
+                                )
                         raise
-                    await wait_until_active(adapter, timeout=timeout)
-                return
-            if state.status not in adapter.awaiting | adapter.preparing:
-                if (
-                    initial.status in adapter.preparing
-                    and state.status in adapter.provisioning | adapter.active
-                ):
-                    return
+                    return await wait_until_active(adapter, timeout=timeout)
+            if state.status in adapter.active or (
+                initial.status in adapter.preparing
+                and state.status in adapter.provisioning
+            ):
+                return state
+            if (
+                state.status
+                not in adapter.awaiting | adapter.preparing | adapter.provisioning
+            ):
                 error = CloudAPIError(code="checkout_missing", status=state.status)
                 raise error
             remaining = deadline - loop.time()
@@ -113,7 +120,7 @@ async def wait_for_payment(
                 state = await adapter.retrieve()
             attempt += 1
     except (TimeoutError, asyncio.CancelledError, KeyboardInterrupt) as exc:
-        if on_checkout is not None:
+        if on_checkout is not None and adapter.cancel is not None:
             try:
                 await adapter.cancel()
                 exc.add_note(

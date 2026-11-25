@@ -23,6 +23,7 @@ from mobilerun.clients.cloud.payments import (
 from mobilerun.config.settings import get_settings
 from mobilerun.core.devices.base import Device
 from mobilerun.core.extensions import Extension, action
+from mobilerun.core.extensions.registry import Binding
 from mobilerun.core.phone_number.base import PhoneNumber
 from mobilerun.errors import (
     CloudError,
@@ -43,6 +44,10 @@ logger = logging.getLogger(__name__)
 class _ObservedNumberBinding:
     number_id: str
     phone_number: str | None
+
+
+class _BorrowedNumberBinding(Binding):
+    """An existing server relationship discovered, not made, by this handle."""
 
 
 class CloudPhoneNumber(PhoneNumber):
@@ -170,7 +175,10 @@ class CloudPhoneNumber(PhoneNumber):
         if data.state == "awaiting_payment":
             await wait_for_payment(
                 PaymentAdapter(
-                    "phone number", self.id, self._payment_state, self.release
+                    "phone number",
+                    self.id,
+                    self._payment_state,
+                    self.release if self._owned else None,
                 ),
                 PaymentSnapshot(data.state, data.checkout_url),
                 resume=self.wait_until_paid,
@@ -188,7 +196,7 @@ class CloudPhoneNumber(PhoneNumber):
 
     async def wait_until_paid(self, timeout: float = 600) -> Self:
         await wait_until_active(
-            PaymentAdapter("phone number", self.id, self._payment_state, self.release),
+            PaymentAdapter("phone number", self.id, self._payment_state),
             timeout=timeout,
         )
         return self
@@ -217,13 +225,12 @@ class CloudPhoneNumber(PhoneNumber):
                         )
                     ).data
                     state = data.state
-                    await wait_for_payment(
-                        PaymentAdapter(
-                            "phone number", self.id, self._payment_state, self.release
-                        ),
+                    snapshot = await wait_for_payment(
+                        PaymentAdapter("phone number", self.id, self._payment_state),
                         PaymentSnapshot(data.state, data.checkout_url),
                         resume=self.wait_until_paid,
                     )
+                    state = snapshot.status
                     logger.debug(
                         "Number %s readiness state=%s elapsed=%.1fs",
                         self.id,
@@ -231,7 +238,8 @@ class CloudPhoneNumber(PhoneNumber):
                         loop.time() - started,
                     )
                     if state == "active":
-                        self._phone_number = data.phone_number
+                        if data.state == "active":
+                            self._phone_number = data.phone_number
                         return self
                     if state != "provisioning":
                         raise CloudError(code="number_unready", status=state)
@@ -344,6 +352,10 @@ class CloudPhoneNumber(PhoneNumber):
         self._binding_loaded = True
 
     async def on_unbind(self, device: Device) -> None:
+        if isinstance(self._binding, _BorrowedNumberBinding) and (
+            device._extension_state.closing or self._closing
+        ):
+            return  # Device cleanup must leave a pre-existing server binding intact.
         if device.cloud_id is None:
             raise ExtensionNotSupported("This device does not support cloud telephony")
         client = cast(
@@ -372,8 +384,6 @@ class CloudPhoneNumber(PhoneNumber):
     async def _reconcile_bind_failure(
         self, device: Device, failure: BaseException
     ) -> None:
-        from mobilerun.core.extensions.registry import Binding
-
         registry = device._extension_state
         previous = [
             binding
@@ -418,7 +428,8 @@ class CloudPhoneNumber(PhoneNumber):
                         )
                     )
                     number._check_name(device, tuple(b.extension for b in previous))
-                    selected = Binding(number, device, False)
+                    kind = Binding if number is self else _BorrowedNumberBinding
+                    selected = kind(number, device, False)
                 selected.extension._observe_remote_binding(device, observed)
                 selected.uncertain = False
             for binding in previous:

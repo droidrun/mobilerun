@@ -12,6 +12,7 @@ from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.config.settings import get_settings
 from mobilerun.core.credentials.dict import DictCredentials
 from mobilerun.core.extensions import action
+from mobilerun.errors.base import is_value_safe
 from mobilerun.errors.cloud import CloudConflict, CloudResourceNotFound
 from mobilerun.models.billing import Billing
 from mobilerun.models.cloud_task import CloudCredentialReference, CloudTaskInputs
@@ -33,10 +34,15 @@ async def _write_secret_values(
             return
         except Exception as exc:
             message = _redact_secrets(str(exc))
-            try:
-                sanitized = type(exc)(message)
-            except Exception:
-                sanitized = RuntimeError(message)
+            if is_value_safe(exc) and message == str(exc):
+                sanitized = exc
+                sanitized.__cause__ = sanitized.__context__ = None
+                sanitized.__notes__ = []
+            else:
+                try:
+                    sanitized = type(exc)(message)
+                except Exception:
+                    sanitized = RuntimeError(message)
         raise sanitized from None
 
 

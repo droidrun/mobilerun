@@ -217,6 +217,9 @@ def test_connect_adopts_number_without_mutation():
             patch(
                 "mobilerun.core.phone_number.cloud.devices.bind_number", AsyncMock()
             ) as bind,
+            patch(
+                "mobilerun.core.phone_number.cloud.devices.unbind_number", AsyncMock()
+            ) as unbind,
             patch("mobilerun.core.proxy.adoption._adopt_remote_proxy", AsyncMock()),
         ):
             await phone.connect()
@@ -224,6 +227,12 @@ def test_connect_adopts_number_without_mutation():
             assert phone.number.phone_number == "+123"
             assert "cloud_telephony" in phone.supported_operations
             bind.assert_not_awaited()
+            number = phone.number
+            await phone.close()
+            assert not phone.extensions
+            assert number.device is None
+            assert number.device_id == "device"
+            unbind.assert_not_awaited()
 
     asyncio.run(run())
 

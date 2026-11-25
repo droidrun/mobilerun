@@ -20,25 +20,33 @@ def test_cloud_vault_write_and_cleanup(request, record_property):
             await vault.save(package, name, {"password": "smoke-only-value"})
             items = await vault.list(package)
             assert any(
-                item.name == name and set(item.fields) == {"password"} for item in items
+                item["name"] == name
+                and item["package"] == package
+                and set(item["fields"]) == {"password"}
+                for item in items
             )
-            assert (await vault.find(package, name=name)).package == package
-            assert any(item.name == name for item in await vault.list())
+            assert any(item["name"] == name for item in await vault.list())
             await vault.save(
                 package,
                 name,
                 {"password": "smoke-updated-value", "username": "smoke-user"},
             )
             await vault.update(package, name, "password", "smoke-final-value")
-            item = await vault.find(package, name=name)
+            item = await vault._find(package, name=name)
+            assert item is not None
             assert set(item.fields) == {"password", "username"}
             assert item.fields["password"] == "smoke-final-value"
             await vault.delete(package, name, "username")
-            assert set((await vault.find(package, name=name)).fields) == {"password"}
+            assert any(
+                item["name"] == name and set(item["fields"]) == {"password"}
+                for item in await vault.list(package)
+            )
         finally:
             try:
                 await vault.delete(package, name)
-                assert not any(item.name == name for item in await vault.list(package))
+                assert not any(
+                    item["name"] == name for item in await vault.list(package)
+                )
                 record_property("deleted_vault_credential", f"{package}/{name}")
             finally:
                 await vault.close()

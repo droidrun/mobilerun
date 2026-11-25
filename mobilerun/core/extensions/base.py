@@ -38,6 +38,13 @@ _sensitive_action: ContextVar[bool] = ContextVar(
 )
 
 
+def _inside_bound_action(device: Device) -> bool:
+    """Whether a named action is executing on this device or a sibling facade."""
+    active = _active.get()
+    bound = active.device if active is not None else None
+    return bound is not None and bound._extension_state is device._extension_state
+
+
 def _sanitize_safe_chain(error: MobilerunError) -> None:
     """Keep safe explicit causes only; discard implicit backend contexts."""
     seen: set[int] = set()
@@ -401,7 +408,7 @@ class Extension:
                     }
                     for observe in (
                         ()
-                        if device is None
+                        if device is None or nested
                         else tuple(device._extension_state.observers)
                     ):
                         observe(entry.name, safe)

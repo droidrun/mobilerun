@@ -17,6 +17,7 @@ from mobilerun_sdk.types.devices.app_list_installs_response import (
 from mobilerun.clients.cloud.billing import requires
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.clients.cloud.errors import cloud_error
+from mobilerun.clients.cloud.signed_http import _signed_client
 from mobilerun.clients.local.apk import inspect_apk
 from mobilerun.models.apps import App
 from mobilerun.models.billing import Billing
@@ -125,7 +126,7 @@ async def upload_app(
                 for entry in signed.r2_upload_urls
                 if entry.file_name == path.name
             )
-            async with httpx.AsyncClient() as http:
+            async with _signed_client(httpx.AsyncClient()) as http:
                 response = await http.put(
                     url,
                     content=content,
@@ -139,8 +140,8 @@ async def upload_app(
                 await client.apps.mark_failed(signed.version_id)
             except APIError:
                 pass
-            if isinstance(exc, (APIError, httpx.HTTPError)):
-                raise cloud_error(exc, "Upload cloud app") from exc
+            if isinstance(exc, (APIError, httpx.HTTPError, httpx.InvalidURL)):
+                raise cloud_error(exc, "Upload cloud app") from None
             raise
         return App(
             package, version, name, id=signed.app_id, version_code=code, path=path

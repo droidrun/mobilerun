@@ -103,6 +103,34 @@ def replay(
         run_replay(MacroOperator, **options)
 
 
+def _action_summary(action: dict[str, Any]) -> str:
+    """Preview the operation without displaying snapshots or free-form payloads."""
+    kind = action.get("action_type", action.get("type"))
+    if (
+        not isinstance(kind, str)
+        or len(kind) > 32
+        or not kind.isascii()
+        or not kind.isidentifier()
+    ):
+        return "unknown"
+    if kind in {"type_secret", "input_text", "extension_call", "open_url"}:
+        return f"{kind} [redacted]"
+    fields = {
+        "tap": ("x", "y"),
+        "swipe": ("start_x", "start_y", "end_x", "end_y", "duration_ms"),
+        "drag": ("start_x", "start_y", "end_x", "end_y", "duration", "duration_ms"),
+        "wait": ("duration",),
+        "key_press": ("keycode",),
+        "press_key_code": ("key_code",),
+    }
+    parts = [kind]
+    for key in fields.get(kind, ()):
+        value = action.get(key)
+        if isinstance(value, (int, float)):
+            parts.append(f"{key}={str(value)[:24]}")
+    return " ".join(parts)
+
+
 def run_replay(
     operator_type: Callable[..., MacroOperator],
     *,
@@ -127,7 +155,7 @@ def run_replay(
             if max_steps is not None:
                 actions = actions[:max_steps]
             for index, action in enumerate(actions, start=start_from):
-                click.echo(f"{index}: {action}")
+                click.echo(f"{index}: {_action_summary(action)}")
             return
         config = ConfigLoader.load(config_path)
         operator = operator_type(

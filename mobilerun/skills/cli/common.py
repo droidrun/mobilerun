@@ -6,10 +6,29 @@ from typing import Any, TypeVar
 
 import click
 
+from mobilerun.cli.base import menu, prompts
 from mobilerun.cli.base.menu import ChoiceOption
 from mobilerun.config.settings import get_settings
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def discard_policy(discard_changes: bool, yes: bool) -> bool | Callable[[str], bool]:
+    """Ask separately for each changed skill unless loss was explicitly authorized."""
+    if discard_changes:
+        return True
+
+    def confirm(warning: str) -> bool:
+        if yes or not menu.is_interactive():
+            raise click.ClickException(
+                f"{warning}. To discard them, pass --discard-changes."
+            )
+        click.echo(warning, err=True)
+        if not prompts.confirm_prompt("Discard these local changes?", default=False):
+            raise click.Abort()
+        return True
+
+    return confirm
 
 
 def _skill_agents() -> list[str]:
@@ -35,6 +54,17 @@ class _AgentOption(ChoiceOption):
 
 
 def options(function: F) -> F:
+    function = click.option(
+        "--discard-changes",
+        is_flag=True,
+        help="Discard added or modified files in managed skills.",
+    )(function)
+    function = click.option(
+        "--yes",
+        "-y",
+        is_flag=True,
+        help="Skip confirmation prompts; does not authorize discarding local changes.",
+    )(function)
     function = (
         click.option("--force", is_flag=True, help="Replace existing skills.")(function)
         if function.__name__ == "install_command"
@@ -46,6 +76,7 @@ def options(function: F) -> F:
         type=click.Path(path_type=Path),
         help="Install directory override.",
     )(function)
+
     function = click.option(
         "--project",
         is_flag=True,

@@ -107,6 +107,7 @@ def test_every_free_boundary_accepts_no_commerce(function, monkeypatch, tmp_path
     if function in (
         devices.create,
         numbers.create,
+        numbers.send,
         mailboxes.create,
         tasks.run,
         tasks.run_task,
@@ -133,6 +134,8 @@ def test_every_free_boundary_accepts_no_commerce(function, monkeypatch, tmp_path
         bound.arguments["api_key"] = "fake"
     if "client" in bound.arguments:
         bound.arguments["client"] = _FreeClient()
+    if function is secrets.save:
+        bound.arguments["fields"] = {"username": "test"}
     if "params" in bound.arguments and function is proxies.connect_device:
         bound.arguments["params"] = {}
     if function is apps.upload_app:

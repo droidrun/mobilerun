@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import re
 import shutil
 import tempfile
 import textwrap
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -82,39 +85,88 @@ def _reference_description(text: str, file: Path, parent: Skill) -> str:
 
 
 _INSTALL_MARKER = ".mobilerun-installed"
+DiscardChanges = bool | Callable[[str], bool]
 
 
-def _tree(path: Path) -> dict[Path, bytes | None] | None:
-    entries: dict[Path, bytes | None] = {}
+def _tree(
+    path: Path, *, legacy: bool = False, unsafe: list[str] | None = None
+) -> dict[str, str | None] | None:
+    """Fingerprint regular files and directories without following links."""
+    entries: dict[str, str | None] = {}
     pending = [path]
     while pending:
         for item in pending.pop().iterdir():
-            if item.name == ".DS_Store":
-                continue
-            relative = item.relative_to(path)
-            if item.is_symlink():
-                return None
-            if item.is_dir():
+            relative = item.relative_to(path).as_posix()
+            if not item.is_symlink() and item.is_dir():
                 entries[relative] = None
                 pending.append(item)
-            elif item.is_file():
-                entries[relative] = item.read_bytes()
-            else:
+            elif not item.is_symlink() and item.is_file():
+                if not (legacy and item.name == ".DS_Store"):
+                    with item.open("rb") as stream:
+                        entries[relative] = hashlib.file_digest(
+                            stream, "sha256"
+                        ).hexdigest()
+            elif unsafe is None:
                 return None
+            else:
+                unsafe.append(relative)
     return entries
 
 
-def _managed(path: Path, sources: dict[str, Path]) -> bool:
+def _managed(
+    path: Path, sources: dict[str, Path], discard_changes: DiscardChanges
+) -> bool:
+    """Refuse changed installs unless separately confirmed; never claim foreign trees."""
     if path.is_symlink() or not path.is_dir():
         return False
     marker = path / _INSTALL_MARKER
-    if marker.is_file() and not marker.is_symlink():
-        return True
     source = sources.get(path.name)
+    if marker.is_symlink():
+        return False
+    if marker.is_file():
+        data = marker.read_bytes()
+        if data in (b"mobilerun\n", b"mobilerun\r\n"):
+            expected = (
+                _tree(source)
+                if source and source.is_dir() and not source.is_symlink()
+                else None
+            )
+        else:
+            try:
+                manifest = json.loads(data)
+            except ValueError:
+                return False
+            if not isinstance(manifest, dict) or not isinstance(
+                manifest.get("files"), dict
+            ):
+                return False
+            expected = manifest["files"]
+        if discard_changes is True:
+            return True
+        changes: list[str] = []
+        actual = _tree(path, unsafe=changes)
+        assert actual is not None
+        actual.pop(_INSTALL_MARKER)
+        changes.extend(
+            name
+            for name, digest in actual.items()
+            if expected is None or name not in expected or expected[name] != digest
+        )
+        if not changes:
+            return True
+        summary = ", ".join(ascii(name)[:120] for name in sorted(changes)[:10])
+        if len(changes) > 10:
+            summary += f", … ({len(changes) - 10} more)"
+        warning = f"{path} contains local changes or unverified files: {summary}"
+        if callable(discard_changes) and discard_changes(warning):
+            return True
+        raise ValueError(
+            f"{warning}. Back them up or explicitly allow discarding changes."
+        )
     if source is None or not source.is_dir() or source.is_symlink():
         return False
-    actual = _tree(path)
-    return actual is not None and actual == _tree(source)
+    actual = _tree(path, legacy=True)
+    return actual is not None and actual == _tree(source, legacy=True)
 
 
 def _install_directory(dest: Path, *, source: Path) -> None:
@@ -123,7 +175,12 @@ def _install_directory(dest: Path, *, source: Path) -> None:
     moved = False
     try:
         shutil.copytree(source, temporary, dirs_exist_ok=True)
-        (temporary / _INSTALL_MARKER).write_text("mobilerun\n", encoding="utf-8")
+        files = _tree(temporary)
+        if files is None or _INSTALL_MARKER in files:
+            raise ValueError(f"Cannot create install manifest for {source}")
+        (temporary / _INSTALL_MARKER).write_text(
+            json.dumps({"files": files}, sort_keys=True), encoding="utf-8"
+        )
         if dest.exists():
             dest.rename(backup)
             moved = True

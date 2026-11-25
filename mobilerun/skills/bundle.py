@@ -9,6 +9,7 @@ from pathlib import Path
 
 from mobilerun.config.settings import get_settings
 from mobilerun.skills.utils import (
+    DiscardChanges,
     _description,
     _install_directory,
     _managed,
@@ -208,6 +209,8 @@ def install(
     scope: str = "user",
     dir: Path | None = None,
     force: bool = False,
+    *,
+    discard_changes: DiscardChanges = False,
 ) -> list[InstallResult]:
     _names(skill_names)
     available = {skill.name: skill for skill in list_skills()}
@@ -234,13 +237,17 @@ def install(
         target,
         force,
         {s.parent for s in chosen if s.parent and s.parent not in skill_names},
+        discard_changes,
     )
 
 
 def _install_skills(
-    skills: list[Skill], target: Path, force: bool, parents: set[str] | None = None
+    skills: list[Skill],
+    target: Path,
+    force: bool,
+    parents: set[str],
+    discard_changes: DiscardChanges,
 ) -> list[InstallResult]:
-    parents = parents or set()
     _protect_bundle(target, [skill.name for skill in skills])
     available = {skill.name: skill for skill in list_skills()}
     managed_sources = {name: skill.path for name, skill in available.items()}
@@ -251,7 +258,7 @@ def _install_skills(
             force
             and skill.name not in parents
             and (dest.exists() or dest.is_symlink())
-            and not _managed(dest, managed_sources)
+            and not _managed(dest, managed_sources, discard_changes)
         ):
             raise ValueError(f"Cannot replace {dest}: not managed")
     target.mkdir(parents=True, exist_ok=True)
@@ -330,6 +337,8 @@ def install_bundles(
     scope: str = "user",
     dir: Path | None = None,
     force: bool = False,
+    *,
+    discard_changes: DiscardChanges = False,
 ) -> list[InstallResult]:
     _names(names)
     available = bundle_folders()
@@ -350,7 +359,7 @@ def install_bundles(
                 continue
             sources = {s.name: s.path for s in skills}
             sources.update(available)
-            if not _managed(dest, sources):
+            if not _managed(dest, sources, discard_changes):
                 raise ValueError(f"Cannot replace {dest}: not managed")
         _install_directory(dest, source=folder)
         results.append(InstallResult(name, "installed", dest))
@@ -362,6 +371,8 @@ def uninstall(
     agent: str,
     scope: str = "user",
     dir: Path | None = None,
+    *,
+    discard_changes: DiscardChanges = False,
 ) -> list[InstallResult]:
     _names(skill_names)
     target = _target(agent, scope, dir)
@@ -373,7 +384,7 @@ def uninstall(
         dest = target / name
         if not dest.exists() and not dest.is_symlink():
             results.append(InstallResult(name, "not installed", dest))
-        elif not _managed(dest, managed_sources):
+        elif not _managed(dest, managed_sources, discard_changes):
             results.append(InstallResult(name, "not managed", dest))
         else:
             shutil.rmtree(dest)

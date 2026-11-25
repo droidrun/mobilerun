@@ -18,7 +18,19 @@ async def status(target: DeviceTarget, as_json: bool) -> None:
     async with cloud_client(base_url=target.base_url, billing=billing) as client:
         info = await devices.retrieve(target.identifier, billing=billing, client=client)
     if as_json:
-        click.echo(info.model_dump_json())
+        click.echo(
+            info.model_dump_json(
+                include={
+                    "id",
+                    "name",
+                    "platform",
+                    "type",
+                    "state",
+                    "stop_reason",
+                    "billing_strategy",
+                }
+            )
+        )
     else:
         name = getattr(info, "name", None)
         render.table(

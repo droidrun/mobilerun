@@ -33,7 +33,11 @@ from mobilerun.clients.cloud.payments import (
     wait_for_payment,
     wait_until_active,
 )
-from mobilerun.errors import IncludedCapacityUnavailable, PurchaseInProgress
+from mobilerun.errors import (
+    CloudConflict,
+    IncludedCapacityUnavailable,
+    PurchaseInProgress,
+)
 from mobilerun.models.billing import Billing, ResourcePlan
 from mobilerun.models.checkout import Checkout, PaymentSnapshot
 from mobilerun.utils.timestamps import to_api_timestamp
@@ -162,6 +166,24 @@ async def create(
                 and isinstance(body, dict)
                 and body.get("code") == "purchase_in_progress"
             ):
+                conflict = CloudConflict(
+                    operation="Create number",
+                    status=409,
+                    request_id=exc.response.headers.get("x-request-id"),
+                )
+                conflict.add_note(
+                    "Another number purchase is pending. Check it in the dashboard; checkout was not resumed."
+                )
+                # The listing cannot verify idempotency or opaque request overrides.
+                if (
+                    billing is not Billing.PAID
+                    or _create_params["billing_preference"] == "included_only"
+                    or params.get("idempotency_key") is not None
+                    or params.get("extra_body")
+                    or params.get("extra_query")
+                    or params.get("extra_headers")
+                ):
+                    raise conflict from None
                 pending = []
                 page = 1
                 try:
@@ -179,12 +201,26 @@ async def create(
                     raise cloud_error(exc, "Create number") from None
                 if len(pending) == 1:
                     item = pending[0]
+                    country = params.get("country")
+                    label = params.get("label")
+                    # Only awaiting_payment represents a paid checkout. A
+                    # provisioning number could instead be an included slot.
+                    if (
+                        item.state != "awaiting_payment"
+                        or (
+                            country is not None
+                            and (item.country_code or "").upper() != country.upper()
+                        )
+                        or label != item.label
+                    ):
+                        raise conflict from None
                     pending_checkout = (
                         Checkout(item.checkout_url, None, "phone number", item.id)
                         if item.checkout_url
                         else None
                     )
                     raise PurchaseInProgress(item.id, pending_checkout) from None
+                raise conflict from None
             raise cloud_error(exc, "Create number") from exc
 
 
@@ -332,7 +368,7 @@ async def messages(
             raise cloud_error(exc, "List SMS messages") from exc
 
 
-@requires(Billing.NO_COMMERCE)
+@requires(Billing.PAID)
 async def send(
     number_id: str,
     to: str,

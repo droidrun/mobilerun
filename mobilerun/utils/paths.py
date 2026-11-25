@@ -9,6 +9,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from pkgutil import extend_path
 from typing import Literal, Union
 
 
@@ -128,15 +129,18 @@ class PathResolver:
 
         # Support legacy bundled paths without overriding a user file in CWD.
         if (
-            len(path.parts) >= 2
-            and path.parts[0] == "config"
-            and path.parts[1] in {"prompts", "app_cards"}
+            path.parts[:2] in {("config", "prompts"), ("config", "app_cards")}
+            and ".." not in path.parts
         ):
-            legacy_asset = (
-                PathResolver.get_project_root() / "assets" / Path(*path.parts[1:])
-            )
+            root = PathResolver.get_project_root()
+            legacy_asset = root.joinpath("assets", *path.parts[1:])
             if legacy_asset.exists():
                 return legacy_asset
+            # Search the shared namespace's filesystem roots, without importing an add-on.
+            for location in extend_path([str(root)], "mobilerun"):
+                candidate = Path(location).joinpath("agents", "assets", *path.parts[1:])
+                if candidate.exists():
+                    return candidate
 
         # Not found in either location
         if must_exist:

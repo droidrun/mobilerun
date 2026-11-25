@@ -11,6 +11,7 @@ from mobilerun_sdk.types.file_list_response import File
 
 from mobilerun.clients.cloud.billing import requires
 from mobilerun.clients.cloud.errors import cloud_error
+from mobilerun.clients.cloud.signed_http import _signed_client, _signed_transfer_logs
 from mobilerun.models import Billing, DeviceFile, WorkspaceFile
 
 
@@ -41,7 +42,7 @@ async def upload_file(
     except APIError as exc:
         raise cloud_error(exc, "Prepare file upload") from exc
     try:
-        async with httpx.AsyncClient() as http:
+        async with _signed_client(httpx.AsyncClient()) as http:
             response = await http.put(
                 signed.put_url,
                 content=content,
@@ -55,8 +56,8 @@ async def upload_file(
             await client.files.cancel_pending(signed.file_id)
         except Exception:
             pass
-        if isinstance(exc, (APIError, httpx.HTTPError)):
-            raise cloud_error(exc, "Upload file") from exc
+        if isinstance(exc, (APIError, httpx.HTTPError, httpx.InvalidURL)):
+            raise cloud_error(exc, "Upload file") from None
         raise
 
 
@@ -76,10 +77,11 @@ async def download_file(
     client: AsyncMobilerun, file_id: str, *, billing: Billing
 ) -> bytes:
     try:
-        response = await client.files.with_raw_response.download(file_id)
-        return await response.read()
+        with _signed_transfer_logs():
+            response = await client.files.with_raw_response.download(file_id)
+            return await response.read()
     except (APIError, httpx.HTTPError) as exc:
-        raise cloud_error(exc, "Download file") from exc
+        raise cloud_error(exc, "Download file") from None
 
 
 @requires(Billing.NO_COMMERCE)
@@ -131,12 +133,13 @@ async def download_device_file(
     client: AsyncMobilerun, device_id: str, remote_path: str, *, billing: Billing
 ) -> bytes:
     try:
-        response = await client.devices.files.with_raw_response.download(
-            device_id, path=remote_path
-        )
-        return await response.read()
-    except APIError as exc:
-        raise cloud_error(exc, "Download device file", device=True) from exc
+        with _signed_transfer_logs():
+            response = await client.devices.files.with_raw_response.download(
+                device_id, path=remote_path
+            )
+            return await response.read()
+    except (APIError, httpx.HTTPError) as exc:
+        raise cloud_error(exc, "Download device file", device=True) from None
 
 
 @requires(Billing.NO_COMMERCE)

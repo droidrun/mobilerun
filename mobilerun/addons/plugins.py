@@ -1,6 +1,7 @@
 """Discover optional plugins without importing their implementations."""
 
 import logging
+import re
 from importlib import metadata
 from typing import Any
 
@@ -13,12 +14,35 @@ class MissingPlugin(click.ClickException, ModuleNotFoundError):
     """An optional plugin is not installed."""
 
 
+def installed_entries(group: str) -> list[metadata.EntryPoint]:
+    """Recover healthy distributions if importlib's aggregate scan fails."""
+    try:
+        return list(metadata.entry_points(group=group))
+    except (TypeError, ValueError, OSError):
+        pass
+
+    entries: list[metadata.EntryPoint] = []
+    seen: set[str] = set()
+    for dist in metadata.distributions():
+        try:
+            # Match importlib's sys.path precedence for duplicate installations.
+            name = re.sub(r"[-_.]+", "-", dist.name).lower()
+            if name in seen:
+                continue
+            seen.add(name)
+            entries.extend(dist.entry_points.select(group=group))
+        except (TypeError, ValueError, OSError) as exc:
+            click.echo("Warning: skipping invalid distribution metadata.", err=True)
+            logger.debug("Entry-point discovery failed: %s", type(exc).__name__)
+    return entries
+
+
 def discover(
     group: str, *, entries: list[metadata.EntryPoint] | None = None
 ) -> dict[str, metadata.EntryPoint]:
     """Return entry points in deterministic order; ignore ambiguous duplicates."""
     entries = sorted(
-        metadata.entry_points(group=group) if entries is None else entries,
+        installed_entries(group) if entries is None else entries,
         key=lambda ep: (ep.name, str(ep.value)),
     )
     grouped: dict[str, list[metadata.EntryPoint]] = {}

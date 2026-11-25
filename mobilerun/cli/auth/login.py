@@ -34,7 +34,7 @@ DEFAULT_DEVICE_CLIENT_ID = "mobilerun-cli"
     "--auth-url",
     "auth_url",
     default=None,
-    help=f"Better-auth base URL (default {get_settings().MOBILERUN_AUTH_URL}; or set MOBILERUN_AUTH_URL)",
+    help="Better-auth base URL (overrides MOBILERUN_AUTH_URL)",
 )
 @click.option(
     "--client-id",

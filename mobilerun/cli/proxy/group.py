@@ -95,7 +95,7 @@ async def proxy_bind(
             with redirect_stdout(sys.stderr):
                 replace = await confirm_prompt_async(
                     f"{device_id} already has an active proxy. Replace it?",
-                    default=True,
+                    default=False,
                 )
             if not replace:
                 click.echo("Cancelled.", err=True)

@@ -1,8 +1,6 @@
 """Opt-in Counter APK installation smoke tests; never operate on Portal."""
 
 import asyncio
-import os
-from pathlib import Path
 
 import pytest
 from conftest import CLOUD_ID, SERIAL
@@ -13,8 +11,8 @@ from mobilerun.core.devices.cloud import CloudDevice
 
 
 @pytest.fixture
-def counter_apk():
-    path = Path(os.getenv("MOBILERUN_SMOKE_APK", "/tmp/mobilerun-smoke/counter.apk"))
+def counter_apk(real_smoke_apk):
+    path = real_smoke_apk
     if not path.is_file():
         pytest.skip(f"Counter smoke APK missing: {path}; set MOBILERUN_SMOKE_APK")
     package, _, _, _ = inspect_apk(path)

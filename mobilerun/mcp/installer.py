@@ -6,7 +6,7 @@ from typing import Any
 
 from mobilerun.config.settings import get_settings
 from mobilerun.mcp.settings import DEFAULT_MCP_FORMATS, MCPFormat, get_mcp_settings
-from mobilerun.mcp.utils import check_path, edit, jsonc_source, read_file, write_file
+from mobilerun.mcp.utils import check_path, edit, parse_config, read_source, write_file
 
 
 def config_path(agent: str, scope: str) -> Path:
@@ -94,11 +94,12 @@ def _server_entry(fmt: MCPFormat, scope: str, api_key: bool) -> dict[str, Any]:
 
 def status(agent: str, scope: str) -> str:
     name = get_mcp_settings().MOBILERUN_MCP_SERVER_NAME
+    path = config_path(agent, scope)
     return (
         "installed"
         if name
         in _server_entries(
-            read_file(config_path(agent, scope)), _agent_format(agent), False
+            parse_config(path, read_source(path)), _agent_format(agent), False
         )
         else "not installed"
     )
@@ -107,48 +108,49 @@ def status(agent: str, scope: str) -> str:
 def install(
     agent: str, scope: str, *, api_key: bool = False, force: bool = False
 ) -> str:
-    name = get_mcp_settings().MOBILERUN_MCP_SERVER_NAME
-    path = config_path(agent, scope)
-    entry = _server_entry(_agent_format(agent), scope, api_key)
-    data = read_file(path)
-    servers = _server_entries(data, _agent_format(agent), True)
-    keys = [_agent_format(agent).servers_key]
-    if _agent_format(agent).nested_servers and data[keys[0]] is not servers:
-        keys.append("servers")
-    source = jsonc_source(path) if path.suffix == ".jsonc" else None
-    if source is not None:
-        check_path(source, keys + [name])
-    if name in servers:
-        if servers[name] == entry:
-            return "exists"
-        if not force:
-            raise ValueError(
-                f"{name} exists with different settings; use --force to replace it"
-            )
-    servers[name] = entry
-    content = None
-    if source is not None:
-        content = edit(source, keys + [name], entry)
-    write_file(path, data, content)
-    return "installed"
+    fmt = _agent_format(agent)
+    return _update(
+        config_path(agent, scope), fmt, _server_entry(fmt, scope, api_key), force=force
+    )
 
 
 def uninstall(agent: str, scope: str) -> str:
+    return _update(config_path(agent, scope), _agent_format(agent), None)
+
+
+def _update(
+    path: Path, fmt: MCPFormat, entry: dict[str, Any] | None, *, force: bool = False
+) -> str:
+    """Apply one install or removal, re-evaluating conflicts after an editor save."""
     name = get_mcp_settings().MOBILERUN_MCP_SERVER_NAME
-    path = config_path(agent, scope)
-    data = read_file(path)
-    servers = _server_entries(data, _agent_format(agent), False)
-    keys = [_agent_format(agent).servers_key]
-    if _agent_format(agent).nested_servers and data.get(keys[0]) is not servers:
-        keys.append("servers")
-    source = jsonc_source(path) if path.suffix == ".jsonc" else None
-    if source is not None:
-        check_path(source, keys + [name])
-    if name not in servers:
-        return "not installed"
-    del servers[name]
-    content = None
-    if source is not None:
-        content = edit(source, keys + [name], remove=True)
-    write_file(path, data, content)
-    return "removed"
+    for _ in range(3):
+        snapshot = read_source(path)
+        data = parse_config(path, snapshot)
+        servers = _server_entries(data, fmt, entry is not None)
+        keys = [fmt.servers_key]
+        if fmt.nested_servers and data.get(fmt.servers_key) is not servers:
+            keys.append("servers")
+        keys.append(name)
+        if path.suffix == ".jsonc":
+            check_path(snapshot or "{}", keys)
+        if entry is None:
+            if name not in servers:
+                return "not installed"
+            del servers[name]
+        else:
+            if name in servers:
+                if servers[name] == entry:
+                    return "exists"
+                if not force:
+                    raise ValueError(
+                        f"{name} exists with different settings; use --force to replace it"
+                    )
+            servers[name] = entry
+        content = None
+        if path.suffix == ".jsonc":
+            content = edit(snapshot or "{}", keys, entry, remove=entry is None)
+        if write_file(path, data, content, snapshot):
+            return "removed" if entry is None else "installed"
+    raise ValueError(
+        f"Config {path} changed repeatedly during update; retry the command"
+    )

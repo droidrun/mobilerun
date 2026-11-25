@@ -122,7 +122,12 @@ class CloudMailbox(Mailbox):
             self._address = response.data.address
         if response.data.status in ("awaiting_payment", "pending_payment"):
             await wait_for_payment(
-                PaymentAdapter("mailbox", self.id, self._payment_state, self.release),
+                PaymentAdapter(
+                    "mailbox",
+                    self.id,
+                    self._payment_state,
+                    self.release if self._owned else None,
+                ),
                 PaymentSnapshot(
                     response.data.status,
                     response.data.checkout_url,

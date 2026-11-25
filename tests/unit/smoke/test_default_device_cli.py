@@ -34,7 +34,7 @@ def test_single_adb_device_default(local_ready):
     env = os.environ.copy()
     # This case exercises local-only discovery, not mixed local/cloud selection.
     env.pop("MOBILERUN_API_KEY", None)
-    result = cli("device", "apps", env=env)
+    result = cli("device", "app", "list", env=env)
     assert result.returncode == 0, result.stderr
     assert f"Using {SERIAL}" in result.stderr
     assert result.stdout.strip()
@@ -47,7 +47,7 @@ def test_config_default(local_ready, tmp_path):
     config = tmp_path / "device.yaml"
     config.write_text(f"_version: {CURRENT_VERSION}\ndevice:\n  serial: {SERIAL}\n")
     env = os.environ.copy()
-    result = cli("device", "apps", "--config", str(config), env=env)
+    result = cli("device", "app", "list", "--config", str(config), env=env)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip()
 
@@ -60,7 +60,7 @@ def test_cloud_config_default(cloud_ready, tmp_path):
     config.write_text(f"_version: {CURRENT_VERSION}\ndevice:\n  serial: {CLOUD_ID}\n")
     env = os.environ.copy()
     env["TMPDIR"] = str(tmp_path)
-    result = cli("device", "screenshot", "--config", str(config), env=env)
+    result = cli("device", "screen", "screenshot", "--config", str(config), env=env)
     assert result.returncode == 0, result.stderr
     image = Path(result.stdout.strip())
     assert image.is_relative_to(tmp_path)

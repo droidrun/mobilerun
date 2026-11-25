@@ -110,12 +110,9 @@ class InputOperator(Operator):
 @pytest.mark.parametrize("mode", ["recording", "stealth", "nested"])
 @pytest.mark.parametrize("selection", ["attached", "default", "explicit"])
 def test_wrapper_operators_keep_outer_identity(monkeypatch, method, mode, selection):
-    async def no_sleep(_):
-        pass
-
-    monkeypatch.setattr("mobilerun.core.devices.stealth.asyncio.sleep", no_sleep)
     operator = InputOperator()
     inner = InputDevice()
+    monkeypatch.setattr(inner, "wait", AsyncMock(return_value=None))
     if selection == "attached":
         inner._operator = operator
     elif selection == "default":

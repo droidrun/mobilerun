@@ -53,7 +53,9 @@ def cloud_error(
         body = getattr(exc, "body", None)
         detail = body.get("detail", []) if isinstance(body, dict) else []
         if isinstance(detail, list) and any(
-            isinstance(item, dict) and "deviceId" in item.get("loc", [])
+            isinstance(item, dict)
+            and isinstance(item.get("loc"), (list, tuple))
+            and "deviceId" in item["loc"]
             for item in detail
         ):
             kind = InvalidCloudDeviceId

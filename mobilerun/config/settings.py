@@ -16,6 +16,10 @@ def _user_config_dir() -> Path:
     return Path(platformdirs.user_config_dir(_APP_NAME))
 
 
+def _smoke_apk() -> str:
+    return str(Path(platformdirs.user_cache_dir(_APP_NAME)) / "smoke" / "counter.apk")
+
+
 class AgentPaths(BaseModel):
     """User and project paths for each agent integration."""
 
@@ -80,8 +84,8 @@ class Settings(BaseSettings):
     """Android SDK location."""
     ANDROID_SDK_ROOT: str | None = None
     """Android SDK root directory."""
-    MOBILERUN_SMOKE_APK: str = "/tmp/mobilerun-smoke/counter.apk"
-    """Smoke apk."""
+    MOBILERUN_SMOKE_APK: str = Field(default_factory=_smoke_apk)
+    """Demo APK to install. Defaults to smoke/counter.apk in the user cache."""
 
     # ── Devices
 

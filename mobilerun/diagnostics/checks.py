@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import re
 import shutil
@@ -349,6 +350,50 @@ async def check_content_provider(device: AdbDevice, debug: bool) -> CheckResult:
         return CheckResult("Content Provider", Status.FAIL, f"unreachable: {e}")
 
 
+class ForwardedPortal:
+    """Probe the pinged forward directly, without ADB repair or fallback."""
+
+    def __init__(self, port: int, headers: dict[str, str]):
+        self.url = f"http://localhost:{port}"
+        self.headers = headers
+
+    async def _get(self, path: str) -> httpx.Response:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                self.url + path, headers=self.headers, timeout=10
+            )
+            response.raise_for_status()
+            return response
+
+    async def get_state(self) -> dict:
+        data = (await self._get("/state_full")).json()
+        if data.get("status") == "error":
+            raise ValueError("Portal state request failed")
+        state = data.get("result", data.get("data", data))
+        return json.loads(state) if isinstance(state, str) else state
+
+    async def take_screenshot(self, *, hide_overlay: bool) -> bytes:
+        response = await self._get(
+            "/screenshot" if hide_overlay else "/screenshot?hideOverlay=false"
+        )
+        if response.headers.get("content-type", "").startswith(
+            "image/"
+        ) or response.content.startswith(b"\x89PNG"):
+            return response.content
+        data = response.json()
+        if data.get("status") == "error":
+            raise ValueError("Portal screenshot request failed")
+        return base64.b64decode(data.get("result", data.get("data")))
+
+
+class ReadyTcp(CheckResult):
+    """Successful ping and the exact endpoint to use for subsequent checks."""
+
+    def __init__(self, port: int, headers: dict[str, str], detail: str):
+        super().__init__("TCP Mode", Status.PASS, f"localhost:{port}", detail)
+        self.portal = ForwardedPortal(port, headers)
+
+
 async def check_tcp(
     device: AdbDevice, debug: bool, *, fix: bool = False
 ) -> CheckResult:
@@ -430,12 +475,7 @@ async def check_tcp(
             )
             if resp.status_code == 200:
                 steps.append("ping ok")
-                return CheckResult(
-                    "TCP Mode",
-                    Status.PASS,
-                    f"localhost:{local_port}",
-                    detail=", ".join(steps),
-                )
+                return ReadyTcp(local_port, auth_headers, ", ".join(steps))
             else:
                 return CheckResult(
                     "TCP Mode",
@@ -453,13 +493,18 @@ async def check_tcp(
 
 
 async def check_portal_state(
-    device: AdbDevice, use_tcp: bool, debug: bool
+    device: AdbDevice, debug: bool, *, tcp_portal: ForwardedPortal | None = None
 ) -> tuple[CheckResult, Any]:
     """Fetch full state and verify a11y_tree, phone_state, device_context are present."""
     try:
-        portal = PortalClient(device, prefer_tcp=use_tcp)
-        await portal.connect()
-        method = "tcp" if portal.tcp_available else "content_provider"
+        portal: PortalClient | ForwardedPortal
+        if tcp_portal is None:
+            portal = PortalClient(device, prefer_tcp=False)
+            await portal.connect()
+            method = "content_provider"
+        else:
+            portal = tcp_portal
+            method = "tcp"
 
         state = await portal.get_state()
 

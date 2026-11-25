@@ -19,7 +19,7 @@ import mobilerun.core.operator.cloud as cloud_operator
 from mobilerun.clients.cloud import tasks as task_client
 from mobilerun.clients.cloud.tasks import run_task
 from mobilerun.core.credentials import CloudCredentials, Credential, DictCredentials
-from mobilerun.errors import CloudTaskTimeout, OperatorNotSupported
+from mobilerun.errors import BillingError, CloudTaskTimeout, OperatorNotSupported
 from mobilerun.models.billing import Billing
 from mobilerun.models.results import (
     ExecutionResult,
@@ -172,14 +172,26 @@ def test_device_lifecycle_forwards(name):
     device = module.CloudDevice("device", api_key="test")
     response = SimpleNamespace(name="response") if name == "info" else "response"
     method = AsyncMock(return_value=response)
-    device._client = cast(
-        AsyncMobilerun,
-        SimpleNamespace(
-            devices=SimpleNamespace(**{"retrieve" if name == "info" else name: method})
-        ),
-    )
+    endpoints = SimpleNamespace(**{"retrieve" if name == "info" else name: method})
+    if name == "resume":
+        endpoints.retrieve = AsyncMock(
+            return_value=SimpleNamespace(billing_strategy="subscription")
+        )
+    device._client = cast(AsyncMobilerun, SimpleNamespace(devices=endpoints))
     assert asyncio.run(getattr(device, name)()) == response
     method.assert_awaited_once_with("device")
+
+
+def test_device_resume_refuses_minute_billing_under_included():
+    device = module.CloudDevice("device", api_key="test", billing=Billing.INCLUDED)
+    endpoints = SimpleNamespace(
+        retrieve=AsyncMock(return_value=SimpleNamespace(billing_strategy="minute")),
+        resume=AsyncMock(),
+    )
+    device._client = cast(AsyncMobilerun, SimpleNamespace(devices=endpoints))
+    with pytest.raises(BillingError, match="paid"):
+        asyncio.run(device.resume())
+    endpoints.resume.assert_not_awaited()
 
 
 def test_create_waits_ready_and_resolves_auth(monkeypatch):

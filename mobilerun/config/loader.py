@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
-import shutil
+import stat
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any, Dict, Optional
 
 import yaml
@@ -66,15 +67,16 @@ class ConfigLoader:
     def _load_user_config(cls, user_config_path: Path) -> MobileConfig:
         """Load user config and run migrations."""
         try:
-            with open(user_config_path, "r", encoding="utf-8") as f:
-                user_dict = yaml.safe_load(f)
+            user_config_path = user_config_path.resolve()
+            original = user_config_path.read_bytes()
+            user_dict = yaml.safe_load(original.decode("utf-8"))
             if not isinstance(user_dict, dict):
                 raise ValueError("config must be a mapping")
             old_version = user_dict.get("_version", 1)
             if type(old_version) is not int or old_version < 1:
                 raise ValueError("_version must be a positive integer")
             user_dict["_version"] = old_version
-            user_dict = migrate(user_dict)
+            user_dict = migrate(user_dict, for_storage=True)
             config = cls.config_type.from_dict(user_dict)
         except (
             OSError,
@@ -92,9 +94,24 @@ class ConfigLoader:
             backup = user_config_path.with_name(
                 f"{user_config_path.name}.v{old_version}.bak"
             )
-            fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as target, open(user_config_path, "rb") as source:
-                shutil.copyfileobj(source, target)
+            # Publish a complete, private backup without replacing an older one.
+            target = NamedTemporaryFile(dir=backup.parent, delete=False)
+            try:
+                with target:
+                    target.write(original)
+                    target.flush()
+                    os.fsync(target.fileno())
+                try:
+                    os.link(target.name, backup)
+                except FileExistsError:
+                    if not stat.S_ISREG(backup.lstat().st_mode):
+                        raise FileExistsError(
+                            f"Migration backup must be a regular file, not a link or special file: {backup}"
+                        ) from None
+                    if backup.read_bytes() != original:
+                        raise
+            finally:
+                Path(target.name).unlink(missing_ok=True)
             cls._save_dict(user_dict, user_config_path)
 
         return config
@@ -116,17 +133,17 @@ class ConfigLoader:
     @classmethod
     def _save_dict(cls, config_dict: Dict[str, Any], path: Path) -> Path:
         """Save config dict to path."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
+        destination = path.resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        f = NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=destination.parent, delete=False
+        )
         try:
-            if os.name != "nt":
-                os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                fd = -1  # fdopen owns the descriptor from here.
-                f.seek(0)
-                f.truncate()
+            with f:
                 yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(f.name, destination)
         finally:
-            if fd != -1:
-                os.close(fd)
+            Path(f.name).unlink(missing_ok=True)
         return path

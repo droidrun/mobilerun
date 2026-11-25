@@ -4,12 +4,12 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from functools import wraps
+from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, overload
 
 import click
 
-from mobilerun.cli.base.menu import is_interactive
+from mobilerun.cli.base.menu import PromptingParameter, is_interactive
 from mobilerun.cli.base.prompts import SelectChoice, confirm_prompt, select_prompt
 from mobilerun.cli.devices.base.default import save_default_device
 from mobilerun.cli.devices.base.discovery import DiscoveredDevice, discover_devices
@@ -117,7 +117,7 @@ def device_command(
 
 
 def choose_device(
-    devices: list[DiscoveredDevice], *, save_after_pick: bool = False
+    devices: list[DiscoveredDevice], *, save: Callable[[str], None] | None = None
 ) -> str:
     if not devices:
         raise click.ClickException(
@@ -152,10 +152,8 @@ def choose_device(
         target = select_prompt("Select a device", choices)
         if target is None:
             click.get_current_context().exit(0)
-        if save_after_pick and confirm_prompt(
-            f"Save {target} as default device?", default=False
-        ):
-            save_default_device(target)
+        if save and confirm_prompt(f"Save {target} as default device?", default=False):
+            save(target)
     except (KeyboardInterrupt, click.Abort, EOFError):
         click.get_current_context().exit(130)
     return target
@@ -235,24 +233,34 @@ def device_options(
                     )
             return choose_value(None, "cloud device", choices)
         saved = config.device.serial
+        requested = [
+            kind
+            for kind in ("android", "ios", "cloud", "visual_remote")
+            if kwargs.get(kind)
+        ]
+        if len(requested) > 1:
+            raise click.UsageError("Choose at most one device type flag.")
+        kind = requested[0] if requested else None
+        if saved and kind and _infer_device_kind(saved, config) != kind:
+            saved = None
         if saved and saved.lower().startswith(("http://", "https://")):
             return saved
-        platform = (
-            "ios"
-            if kwargs.get("ios")
-            else getattr(config.device, "platform", "android")
-        )
         if (
             not saved
-            and platform == "ios"
-            and not any(
-                kwargs.get(flag) for flag in ("android", "cloud", "visual_remote")
-            )
+            and (kind or getattr(config.device, "platform", "android")) == "ios"
         ):
             from mobilerun_core_local.driver.ios import discover_ios_device
 
             return asyncio.run(discover_ios_device())
-        devices = asyncio.run(discover_devices(base_url=kwargs.get(base_url_name)))
+        if kind == "visual_remote":
+            raise click.UsageError("Pass a remote device URL with --remote.")
+        devices = asyncio.run(
+            discover_devices(
+                local=kind != "cloud",
+                cloud=kind != "android",
+                base_url=kwargs.get(base_url_name),
+            )
+        )
         if saved:
             if not any(device.id == saved for device in devices):
                 raise click.ClickException(
@@ -262,12 +270,27 @@ def device_options(
             return saved
         if optional and not devices:
             return None
-        return choose_device(devices, save_after_pick=True)
+        save = (
+            partial(save_default_device, config_path=path)
+            if path
+            else save_default_device
+        )
+        return choose_device(devices, save=save)
 
     def target_callback(
         ctx: click.Context, param: click.Parameter, value: str | None
     ) -> str | None:
-        if not is_device_command or ctx.resilient_parsing or not is_interactive():
+        # Only pick early when a required command argument would prompt first.
+        # Explicit kind options are eager too, so Click processes them before DEVICE.
+        if (
+            not is_device_command
+            or ctx.resilient_parsing
+            or not is_interactive()
+            or not any(
+                isinstance(p, PromptingParameter) and p.required
+                for p in ctx.command.params
+            )
+        ):
             return value
         return resolve(ctx, value, ctx.params)
 
@@ -327,24 +350,49 @@ def device_options(
             "-v",
             "--remote",
             "visual_remote",
+            is_eager=True,
             is_flag=True,
             help="Interpret DEVICE as a remote device URL",
         ),
         click.option(
-            "-c", "--cloud", is_flag=True, help="Interpret DEVICE as a cloud device id"
+            "-c",
+            "--cloud",
+            is_eager=True,
+            is_flag=True,
+            help="Interpret DEVICE as a cloud device id",
         ),
         click.option(
-            "-i", "--ios", is_flag=True, help="Interpret DEVICE as an iOS URL"
+            "-i",
+            "--ios",
+            is_eager=True,
+            is_flag=True,
+            help="Interpret DEVICE as an iOS URL",
         ),
         click.option(
             "-a",
             "--android",
+            is_eager=True,
             is_flag=True,
             help="Interpret DEVICE as Android (including Portal HTTP URLs)",
         ),
     ):
         decorated = option(decorated)
     return decorated
+
+
+def _infer_device_kind(target: str, config: MobileConfig | None) -> str:
+    """Use configured transport for a known URL; otherwise infer from the ID."""
+    if (
+        config
+        and target.lower().startswith(("http://", "https://"))
+        and (config.device.serial == target or config.device.platform == "ios")
+    ):
+        return (
+            "visual_remote"
+            if (config.device.control_backend or "").lower() == "visual-remote"
+            else config.device.platform
+        )
+    return detect_device_kind(target)
 
 
 def selected_device_kind(
@@ -370,20 +418,7 @@ def selected_device_kind(
     ctx = click.get_current_context(silent=True)
     config = ctx.meta.get("device_config") if ctx else None
     try:
-        if selected:
-            kind = selected[0]
-        elif (
-            config
-            and target.lower().startswith(("http://", "https://"))
-            and (config.device.serial == target or config.device.platform == "ios")
-        ):
-            kind = (
-                "visual_remote"
-                if (config.device.control_backend or "").lower() == "visual-remote"
-                else config.device.platform
-            )
-        else:
-            kind = detect_device_kind(target)
+        kind = selected[0] if selected else _infer_device_kind(target, config)
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
     if tcp is not None and kind != "android":

@@ -1,6 +1,5 @@
 """Humanized input over the explicit framework device contract."""
 
-import asyncio
 import random
 from typing import TypeVar
 
@@ -23,7 +22,7 @@ class StealthDevice(DeviceWrapper[D]):
             if i < len(words) - 1:
                 if not await self._inner.input_text(" ", False, stealth, wpm):
                     return False
-                await asyncio.sleep(random.uniform(0.1, 0.3))
+                await self._inner.wait(random.uniform(0.1, 0.3))
         return True
 
     async def swipe(

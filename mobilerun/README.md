@@ -1,6 +1,6 @@
 # mobilerun/
 
-Mobilerun connects device interfaces, execution operators, clients, and state providers. Its shared framework supports deterministic macros, sandbox apps, and coding-agent skills. LLM-backed execution and fallback are provided by the separate `mobilerun-agents` add-on (`pip install mobilerun-agents`).
+Mobilerun connects device interfaces, execution operators, clients, and state providers. Its shared framework supports deterministic macros, sandbox apps, and coding-agent skills. LLM-backed execution and fallback require the separate `mobilerun-agents` add-on. It is not yet publicly published; there is no public pip or uv install command for it.
 
 Pause with `await device.wait(seconds)`, not `asyncio.sleep()`: RecordingDevice
 records device waits so macro replay keeps the pause.
@@ -38,7 +38,7 @@ See the [demos](../tests/demos/README.md) for source-checkout examples and costs
 | [macro/](macro/README.md) | Recording and guarded replay. |
 | [sandbox/](sandbox/README.md) | Sandbox apps and tasks. |
 | [skills/](skills/README.md) | Bundled coding-agent skills. |
-| `mobilerun-agents` (separate package) | Optional LLM agents, integrations and agent commands (`pip install mobilerun-agents`). |
+| `mobilerun-agents` (separate package) | Optional LLM agents, integrations and agent commands. |
 
 ## Where code goes
 
@@ -101,14 +101,14 @@ Arrows show permitted use, not a requirement to import every package. Shared bas
 
 ## Operators
 
-A device provides actions and state; an operator decides how to execute an instruction. `CloudDevice` defaults to `CloudTaskOperator`. Pass `MacroOperator` for strict replay. Install `mobilerun-agents` to use `AgentOperator` for LLM execution or `AgentMacroOperator` for agent fallback on divergence. Pass an operator to the device or override it per `device.do()` call.
+A device provides actions and state; an operator decides how to execute an instruction. `CloudDevice` defaults to `CloudTaskOperator`. Pass `MacroOperator` for strict replay. The `mobilerun-agents` add-on provides `AgentOperator` for LLM execution and `AgentMacroOperator` for agent fallback on divergence. Pass an operator to the device or override it per `device.do()` call.
 
 ## Quickstart
 
 Start or reuse a local AVD with `await AndroidDevice(avd="AVD_NAME")`; see
 [device lifecycle](core/devices/README.md#platforms-and-wrappers).
 
-Install `mobilerun-agents` (`pip install mobilerun-agents`) first. With an Android device available and agent credentials configured:
+This example requires the unpublished `mobilerun-agents` add-on, an Android device and agent credentials. Running it may consume LLM tokens. For an example using only the base package, see the [device quickstart](../README.md#60-second-quickstart).
 
 ```python
 import asyncio
@@ -154,5 +154,5 @@ to use local credentials.
 
 DEVICE is optional: run `mobilerun device connect <id>` to save a default, or choose from discovered devices. An explicit DEVICE takes precedence, followed by the saved `device.serial` and discovery. Run `mobilerun device disconnect` to clear the default. Python device APIs remain explicit.
 
-There is no legacy import compatibility layer. Install `mobilerun-agents` and
+There is no legacy import compatibility layer. With the add-on installed,
 import agent code from `mobilerun.agents` directly.

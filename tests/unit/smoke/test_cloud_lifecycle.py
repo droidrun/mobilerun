@@ -1,6 +1,7 @@
 """Read-only cloud checks, plus explicitly selected billable lifecycle checks."""
 
 import asyncio
+from uuid import uuid4
 
 import pytest
 from conftest import CLOUD_ID
@@ -8,6 +9,8 @@ from conftest import CLOUD_ID
 from mobilerun.core.credentials import DictCredentials
 from mobilerun.core.devices import CloudDevice
 from mobilerun.errors import LocalCredentialsNotAllowed
+from mobilerun.models import Billing, Plan
+from tests.support.smoke_phone import close_smoke_phone
 
 pytestmark = pytest.mark.smoke_cloud
 
@@ -31,12 +34,15 @@ def test_cloud_rejects_local_secrets(cloud_ready):
     asyncio.run(run())
 
 
-def test_paid_cloud_create_lifecycle(cloud_ready):
+def test_paid_cloud_create_lifecycle(cloud_ready, record_property):
     async def run():
-        device = await CloudDevice(name="SDK lifecycle smoke", billing="paid")
+        name = f"SDK lifecycle smoke {uuid4().hex}"
+        record_property("device_name", name)
+        device = CloudDevice(name=name, billing=Billing.PAID, plan=Plan.MINUTE)
         try:
+            await device
             info = await device.info()
-            assert info.id == device._adb_device_id
+            assert info.id == device.cloud_id
             assert info.type == "android_cloud_phone"
             await device.stop()
             await device.resume()
@@ -46,6 +52,6 @@ def test_paid_cloud_create_lifecycle(cloud_ready):
             await device.reset(mode="identity")
             await device.wait_ready()
         finally:
-            await device.terminate()
+            await close_smoke_phone(device, name)
 
     asyncio.run(run())

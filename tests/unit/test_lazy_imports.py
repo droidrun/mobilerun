@@ -59,3 +59,15 @@ assert Device.__name__ == 'Device'
 assert 'mobilerun.core.devices.android' not in sys.modules
 assert 'mobilerun.clients.cloud' not in sys.modules
 """)
+
+
+@pytest.mark.parametrize("option", ["--help", "--version"])
+def test_root_info_does_not_load_prompt_libraries(option: str) -> None:
+    run_python(f"""
+import sys
+from click.testing import CliRunner
+from mobilerun.cli.app import cli
+assert CliRunner().invoke(cli, [{option!r}]).exit_code == 0
+assert 'InquirerPy' not in sys.modules
+assert 'prompt_toolkit' not in sys.modules
+""")

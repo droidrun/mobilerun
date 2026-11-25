@@ -4,6 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import platformdirs
 import pytest
 
 
@@ -84,6 +85,7 @@ _real_android_sdk = (
     or os.environ.get("ANDROID_SDK_ROOT")
     or str(Path.home() / "Library/Android/sdk")
 )
+_real_smoke_apk = Path(platformdirs.user_cache_dir("droidrun")) / "smoke/counter.apk"
 
 
 def pytest_addoption(parser):
@@ -113,6 +115,11 @@ def real_env(monkeypatch, isolate_user_configuration, request):
 @pytest.fixture
 def real_android_sdk():
     return _real_android_sdk
+
+
+@pytest.fixture
+def real_smoke_apk():
+    return Path(os.environ.get("MOBILERUN_SMOKE_APK", _real_smoke_apk))
 
 
 @pytest.fixture

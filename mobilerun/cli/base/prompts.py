@@ -1,13 +1,16 @@
 """Shared interactive prompts."""
 
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import click
-from InquirerPy import inquirer  # pyright: ignore[reportPrivateImportUsage]
-from InquirerPy.base.simple import BaseSimplePrompt
-from prompt_toolkit.key_binding import KeyPressEvent
+
+if TYPE_CHECKING:
+    from InquirerPy.base.simple import BaseSimplePrompt
+    from prompt_toolkit.key_binding import KeyPressEvent
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,8 @@ async def _execute_async(prompt):
 def _select(
     message: str, choices: Sequence[SelectChoice], *, default: str | None = None
 ) -> BaseSimplePrompt:
+    from InquirerPy import inquirer  # pyright: ignore[reportPrivateImportUsage]
+
     rendered = [
         {
             "name": f"• {choice.label}" + (f" ({choice.hint})" if choice.hint else ""),
@@ -117,6 +122,8 @@ async def confirm_prompt_async(message: str, *, default: bool = False) -> bool:
 def multi_select_prompt(
     message: str, choices: Sequence[SelectChoice]
 ) -> list[str] | None:
+    from InquirerPy import inquirer  # pyright: ignore[reportPrivateImportUsage]
+
     rendered = [
         {
             "name": choice.label + (f" ({choice.hint})" if choice.hint else ""),
@@ -136,6 +143,8 @@ def multi_select_prompt(
 def _text(
     message: str, *, default: str | None = None, secret: bool = False
 ) -> BaseSimplePrompt:
+    from InquirerPy import inquirer  # pyright: ignore[reportPrivateImportUsage]
+
     prompt = (
         inquirer.secret  # pyright: ignore[reportPrivateImportUsage]
         if secret

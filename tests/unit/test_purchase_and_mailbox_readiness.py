@@ -22,6 +22,8 @@ def test_conflicting_number_purchase_reports_pending_checkout():
         )
         pending = NS(
             id="pending-id",
+            country_code="US",
+            label="work",
             state="awaiting_payment",
             checkout_url="https://checkout.test/pay",
             created_at=None,
@@ -35,7 +37,9 @@ def test_conflicting_number_purchase_reports_pending_checkout():
             )
         )
         with pytest.raises(PurchaseInProgress) as caught:
-            await numbers.create(billing=Billing.PAID, client=sdk, country="US")
+            await numbers.create(
+                billing=Billing.PAID, client=sdk, country="US", label="work"
+            )
         assert caught.value.resource_id == "pending-id"
         assert caught.value.checkout.url == "https://checkout.test/pay"
 
@@ -257,7 +261,10 @@ def test_pending_lookup_paginates_and_rejects_ambiguity(ambiguous):
             "conflict", response=response, body={"code": "purchase_in_progress"}
         )
         pending = NS(
-            id="pending", state="awaiting_payment", checkout_url="https://checkout.test"
+            id="pending",
+            state="awaiting_payment",
+            label=None,
+            checkout_url="https://checkout.test",
         )
         first = [pending] if ambiguous else []
         sdk = NS(

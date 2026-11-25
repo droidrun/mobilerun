@@ -179,7 +179,8 @@ def test_interactive_delete_offers_field_picker(monkeypatch):
         "select_prompt",
         lambda label, choices: next(c.value for c in choices if c.value == "password"),
     )
-    result = CliRunner().invoke(cli, ["credentials", "delete", "app", "work", "--yes"])
+    monkeypatch.setattr(group, "confirm_prompt", lambda label, *, default: True)
+    result = CliRunner().invoke(cli, ["credentials", "delete", "app", "work"])
     assert result.exit_code == 0, result.output
     assert calls == [("app", "work", "password")]
 

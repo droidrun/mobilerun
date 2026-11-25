@@ -11,9 +11,10 @@ from copy import deepcopy
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, TypeVar, get_type_hints
+from typing import Any, TypeVar, get_args, get_origin, get_type_hints
 
-from pydantic import AliasChoices, AliasPath, BaseModel, TypeAdapter
+from pydantic import AliasChoices, AliasPath, BaseModel, TypeAdapter, ValidationError
+from pydantic_core import ErrorType, InitErrorDetails, PydanticCustomError
 
 from mobilerun.models.billing import Billing
 
@@ -31,6 +32,7 @@ from .settings import get_sandbox_settings
 JSON = dict[str, Any]
 F = TypeVar("F", bound=Callable[..., Any])
 T = TypeVar("T")
+_BUILTIN_ERROR_CODES = frozenset(get_args(ErrorType))
 
 
 def _sync(operation: Callable[[], Coroutine[Any, Any, T]]) -> T:
@@ -103,6 +105,78 @@ def _validation_keys(value: Any, dumped: Any) -> Any:
             for key, entry in dumped.items()
         }
     return dumped
+
+
+def _safe_location(
+    model: Any, location: tuple[str | int, ...], *, extra_field: bool
+) -> tuple[str | int, ...]:
+    """Keep declared model fields and sequence indices; unknown path segments are data."""
+    result: list[str | int] = []
+    for part in location:
+        origin, args = get_origin(model), get_args(model)
+        safe: str | int = "<key>"
+        child = None
+        if (
+            isinstance(model, type)
+            and issubclass(model, BaseModel)
+            and not model.__pydantic_root_model__
+        ):
+            # An alias path or ambiguous alias may point to a different shape.
+            fields = model.model_fields
+            if isinstance(part, str) and all(
+                f.validation_alias is None or isinstance(f.validation_alias, str)
+                for f in fields.values()
+            ):
+                matches = [
+                    f
+                    for name, f in fields.items()
+                    if part in (name, f.validation_alias)
+                ]
+                if len(matches) == 1:
+                    safe, child = part, matches[0].annotation
+        elif origin is list and isinstance(part, int) and part >= 0:
+            safe, child = part, args[0] if args else None
+        elif origin is tuple and isinstance(part, int) and part >= 0:
+            safe = part
+            child = (
+                args[0]
+                if args[-1:] == (Ellipsis,)
+                else args[part] if part < len(args) else None
+            )
+        elif origin is dict and len(args) == 2:
+            child = args[1]
+        result.append(safe)
+        model = child
+    if extra_field and result:
+        result[-1] = "<key>"
+    return tuple(result)
+
+
+def _validate_typed(validate: Callable[[Any], T], value: Any, model: Any) -> T:
+    """Preserve validation locations and types, never values or validator messages."""
+    try:
+        return validate(value)
+    except ValidationError as exc:
+        errors: list[InitErrorDetails] = []
+        for error in exc.errors(
+            include_input=False, include_context=False, include_url=False
+        ):
+            code = error["type"] if error["type"] in _BUILTIN_ERROR_CODES else "invalid"
+            errors.append(
+                {
+                    "type": PydanticCustomError(code, code),
+                    "loc": _safe_location(
+                        model,
+                        error["loc"],
+                        extra_field=error["type"] == "extra_forbidden",
+                    ),
+                    "input": None,
+                }
+            )
+    # Raise outside the handler so the original exception is not retained as context.
+    raise ValidationError.from_exception_data(
+        "Sandbox validation", errors, hide_input=True
+    )
 
 
 def _validation_payload(value: BaseModel) -> JSON:
@@ -191,7 +265,9 @@ class Remote:
         if self.input_type is not None and not isinstance(data, self.input_type):
             if isinstance(data, BaseModel):
                 data = _validation_payload(data)
-            data = self.input_type.model_validate(data)
+            data = _validate_typed(
+                self.input_type.model_validate, data, self.input_type
+            )
         payload = (
             _validation_payload(data) if isinstance(data, BaseModel) else dict(data)
         )
@@ -330,7 +406,9 @@ class Run:
         value = step["body"]["result"]
         output_type = self.remote.output_type
         return (
-            TypeAdapter(output_type).validate_python(value)
+            _validate_typed(
+                TypeAdapter(output_type).validate_python, value, output_type
+            )
             if output_type is not None
             else deepcopy(value)
         )

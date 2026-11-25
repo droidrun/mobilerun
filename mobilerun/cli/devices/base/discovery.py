@@ -65,7 +65,9 @@ async def discover_devices(
             except Exception as exc:
                 if strict:
                     if not isinstance(exc, MobilerunError):
-                        raise
+                        raise click.ClickException(
+                            "Error listing cloud devices: offline or unavailable (use --debug for details)."
+                        ) from exc
                     raise click.ClickException(
                         f"Error listing cloud devices: {exc}"
                     ) from exc

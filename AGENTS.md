@@ -16,7 +16,7 @@ See [mobilerun/README.md](mobilerun/README.md) for the detailed package map,
 examples, and dependency diagram.
 
 - `mobilerun/core/`: device, state, operator and resource interfaces.
-- LLM-backed agent execution is in the separate `mobilerun-agents` package; install with `pip install mobilerun-agents`.
+- LLM-backed agent execution is in the separate `mobilerun-agents` package (not yet publicly published).
 - `mobilerun/clients/`: cloud, local and Portal service adapters.
 - `mobilerun/models/`, `config/`, `errors/`, `logs/`, `utils/`: shared types and support.
 - `mobilerun/cli/`: command groups and shared CLI helpers.

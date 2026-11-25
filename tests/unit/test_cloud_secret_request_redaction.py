@@ -7,6 +7,7 @@ import pytest
 from mobilerun_sdk import AsyncMobilerun
 
 from mobilerun.clients.cloud import devices, proxies, secrets
+from mobilerun.errors import CloudValidationError
 from mobilerun.models.billing import Billing
 
 
@@ -35,7 +36,7 @@ def test_sdk_request_options_never_log_secrets(monkeypatch, caplog, operation):
 
     async def run():
         try:
-            with pytest.raises(Exception):
+            with pytest.raises(CloudValidationError):
                 if operation == "device":
                     await devices.create(
                         client=sdk,

@@ -56,6 +56,13 @@ def env(tmp_path, monkeypatch):
         ),
         enable_flow=AsyncMock(return_value={"id": "flow", "enabled": True}),
     )
+
+    def enable(flow_id, **kwargs):
+        flow = fake.enable_flow.return_value
+        fake.list_flows.return_value = [flow]
+        return flow
+
+    fake.enable_flow.side_effect = enable
     monkeypatch.setattr(deploy, "clients", fake, raising=False)
     return SimpleNamespace(
         artifact=artifact,

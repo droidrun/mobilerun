@@ -264,6 +264,10 @@ class MacroPlayer:
             elif action_type == "type_secret":
                 from mobilerun.core.credentials import CredentialProvider
 
+                package = action.get("package")
+                name = action.get("name", action.get("secret", action.get("secret_id")))
+                if not any(isinstance(v, str) and v.strip() for v in (package, name)):
+                    raise MacroError("type_secret action requires a package or name")
                 vault = driver.extensions.get("vault")
                 if not isinstance(vault, CredentialProvider):
                     candidates = [
@@ -275,9 +279,9 @@ class MacroPlayer:
                         raise MacroError("Bind one vault to replay a secret action")
                     vault = candidates[0]
                 await vault.type_field(
-                    action.get("package"),
+                    package,
                     action.get("field", "password"),
-                    action.get("name", action.get("secret", action.get("secret_id"))),
+                    name,
                 )
                 return True
 
@@ -305,7 +309,7 @@ class MacroPlayer:
             elif action_type == "wait":
                 duration = action.get("duration", 1.0)
                 logger.info(f"Waiting for {duration} seconds")
-                await asyncio.sleep(duration)
+                await driver.wait(duration)
                 return True
 
             else:

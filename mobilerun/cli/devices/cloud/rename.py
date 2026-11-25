@@ -1,6 +1,7 @@
 """Rename an existing cloud phone without opening a device connection."""
 
 import json
+from typing import Any
 
 import click
 
@@ -14,7 +15,20 @@ from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.config.settings import get_settings
 
 
-@click.command()
+class _RenameCommand(click.Command):
+    def invoke(self, ctx: click.Context) -> Any:
+        """With -d, bind a single positional to NAME, not DEVICE."""
+        params = ctx.params
+        if (
+            params["device_target"]
+            and params["target"] is not None
+            and params["name"] is None
+        ):
+            params["name"], params["target"] = params["target"], None
+        return super().invoke(ctx)
+
+
+@click.command(cls=_RenameCommand)
 @click.option("--json", "as_json", is_flag=True)
 @device_command(cloud_only=True)
 @click.argument("name", required=False)

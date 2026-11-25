@@ -161,7 +161,8 @@ def test_cloud_credentials_list(cloud_ready):
             if not items:
                 pytest.skip("Cloud vault is empty")
             assert all(
-                item.name and (item.package is None or isinstance(item.package, str))
+                item["name"]
+                and (item["package"] is None or isinstance(item["package"], str))
                 for item in items
             )
         finally:

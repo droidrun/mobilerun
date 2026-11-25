@@ -67,17 +67,15 @@ uv tool install mobilerun
 
 Sandbox APIs require `pip install 'mobilerun[sandbox]'`.
 
-For local AI agents, install the separate add-on with `pip install mobilerun-agents`. Anthropic and DeepSeek support are included in the add-on; no provider extra is needed.
+Local AI agents require `mobilerun-agents`, a separate add-on that is not yet publicly published. There is no public pip or uv install command for the add-on. The base CLI, direct device actions and macros do not require it.
 
 ## 60-second quickstart
 
-Connect an Android device or emulator with [ADB](https://developer.android.com/studio/releases/platform-tools) and USB debugging, then set up Portal. The agent commands require `pip install mobilerun-agents`. Configuring and running an LLM agent may incur provider charges.
+Connect an Android device or emulator with [ADB](https://developer.android.com/studio/releases/platform-tools) and USB debugging, then set up Portal:
 
 ```bash
 mobilerun device setup DEVICE
 mobilerun device ping DEVICE
-mobilerun agent llm configure
-mobilerun agent run "Open Settings" DEVICE
 ```
 
 Or use Python directly (replace the serial):
@@ -149,7 +147,7 @@ The context manager releases resources it creates; existing IDs are not automati
 **Cost:** local agent tasks can consume LLM tokens; cloud tasks consume credits.
 
 ```python
-# Install the optional agent add-on first: pip install mobilerun-agents
+# Requires the unpublished mobilerun-agents add-on.
 from mobilerun.agents import AgentOperator
 from mobilerun.core.devices import AndroidDevice
 
@@ -218,7 +216,7 @@ See [vault_demo.py](tests/demos/vault_demo.py) for save, use and cleanup.
 For a local agent, use a private YAML or JSON file with `FileCredentials` instead. The file must not be readable by other users (`chmod 600 secrets.yaml`). LLM use can incur provider charges.
 
 ```python
-# Install the optional agent add-on first: pip install mobilerun-agents
+# Requires the unpublished mobilerun-agents add-on.
 from mobilerun.agents import AgentOperator
 from mobilerun.core.credentials import FileCredentials
 from mobilerun.core.devices import AndroidDevice

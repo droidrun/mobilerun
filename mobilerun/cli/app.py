@@ -5,6 +5,7 @@ from importlib import import_module, metadata
 from typing import Any, cast
 
 import click
+from click.shell_completion import CompletionItem
 
 from mobilerun import __version__
 from mobilerun.addons import plugins
@@ -117,6 +118,17 @@ class LazyGroup(MenuGroup):
             for part in epilog.split("; ")
             if not part.startswith("mobilerun agent ")
         )
+
+    def shell_complete(
+        self, ctx: click.Context, incomplete: str
+    ) -> list[CompletionItem]:
+        """Complete registered names without importing their command modules."""
+        names = [
+            CompletionItem(choice.value, help=choice.hint)
+            for choice in self.menu_choices(ctx)
+            if choice.value.startswith(incomplete)
+        ]
+        return names + click.Command.shell_complete(self, ctx, incomplete)
 
     def format_commands(
         self, ctx: click.Context, formatter: click.HelpFormatter

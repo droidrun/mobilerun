@@ -222,7 +222,7 @@ def test_cli_accepts_after_unmanaged_refusal_without_reconciliation(monkeypatch)
     monkeypatch.setattr(group, "CloudDevice", lambda **kwargs: phone)
 
     async def accept(message, *, default):
-        assert default is True
+        assert default is False
         assert phone.target.status.await_count == 1
         phone.target.status = AsyncMock(return_value=phone.target.current)
         return True

@@ -11,13 +11,20 @@ from pathlib import Path
 from typing import Any
 
 VERSION = 8
+# CWD is a property of the reader, not of the shared config file.
+READ_TIME_ONLY = True
 
 
-def migrate(config: dict[str, Any]) -> dict[str, Any]:
-    agent = config.get("agent")
-    if not isinstance(agent, dict):
-        return config
-    assets = Path(__file__).resolve().parents[2] / "assets"
+def bundled_asset(path: Path) -> Path | None:
+    """Find a read-only fallback for a legacy asset path, never importing agents."""
+    if (
+        len(path.parts) < 2
+        or path.parts[0] != "config"
+        or path.parts[1] not in {"prompts", "app_cards"}
+        or ".." in path.parts
+    ):
+        return None
+    package = Path(__file__).resolve().parents[2]
     try:
         # Locate add-on assets for old config paths without importing the add-on.
         spec = find_spec("mobilerun.agents")
@@ -28,7 +35,19 @@ def migrate(config: dict[str, Any]) -> dict[str, Any]:
             raise
         spec = None
     locations = spec.submodule_search_locations or () if spec else ()
-    addon_assets = [Path(location) / "assets" for location in locations]
+    roots = [package, package / "agents", *(Path(p) for p in locations)]
+    for root in roots:
+        candidate = root.joinpath("assets", *path.parts[1:])
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def migrate(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve legacy paths for an in-memory config only."""
+    agent = config.get("agent")
+    if not isinstance(agent, dict):
+        return config
     for section in agent.values():
         if not isinstance(section, dict):
             continue
@@ -37,21 +56,6 @@ def migrate(config: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(value, str):
                 continue
             path = Path(value)
-            if path.is_absolute() or len(path.parts) < 2 or path.parts[0] != "config":
-                continue
-            if path.parts[1] not in {"prompts", "app_cards"} or ".." in path.parts:
-                continue
-            # A caller-provided CWD resource wins over the bundled fallback.
-            if path.exists():
-                continue
-            target = assets.joinpath(*path.parts[1:])
-            relocated_target = (
-                assets.parent / "agents" / "assets" / Path(*path.parts[1:])
-            )
-            if (
-                target.exists()
-                or relocated_target.exists()
-                or any(root.joinpath(*path.parts[1:]).exists() for root in addon_assets)
-            ):
+            if not path.exists() and bundled_asset(path) is not None:
                 section[key] = str(Path("assets").joinpath(*path.parts[1:]))
     return config

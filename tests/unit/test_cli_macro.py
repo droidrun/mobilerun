@@ -1,5 +1,3 @@
-from importlib import import_module
-
 from click.testing import CliRunner
 from test_macro_operator import FakeDevice, write_macro
 
@@ -35,7 +33,6 @@ def test_macro_replay_discovery_and_exclusive_flags(tmp_path, monkeypatch):
 
 
 def fake_device_factory(monkeypatch):
-    module = import_module("mobilerun.macro.cli.replay")
     device = FakeDevice()
     targets = []
 

@@ -11,7 +11,7 @@ from mobilerun.config.settings import get_settings
 from mobilerun.skills import install, list_skills
 from mobilerun.skills.bundle import Skill, bundle_folders, install_bundles
 
-from .common import options
+from .common import discard_policy, options
 
 _EVERYTHING = "/"  # Not a valid skill name.
 
@@ -61,6 +61,8 @@ def install_command(
     project: bool,
     directory: Path | None,
     force: bool,
+    discard_changes: bool,
+    yes: bool,
 ) -> None:
     """Install named skills, --all, or choose skills interactively."""
     mode = "legacy"
@@ -154,6 +156,11 @@ def install_command(
         click.echo("No skills selected.")
         return
     for result in installer(
-        selected, agent, "project" if project else "user", directory, force
+        selected,
+        agent,
+        "project" if project else "user",
+        directory,
+        force,
+        discard_changes=discard_policy(discard_changes, yes),
     ):
         click.echo(f"{result.name}: {result.status} ({result.path})")

@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -53,9 +54,14 @@ def test_upload_confirms_and_marks_failure(monkeypatch, tmp_path):
     http.put.side_effect = httpx.ConnectError("https://signed.test?token=private")
     with pytest.raises(CloudConnectionError) as raised:
         asyncio.run(apps.upload_app(apk, billing="included", api_key="test"))
-    assert "signed.test" not in str(raised.value)
-    assert "private" not in str(raised.value)
-    assert raised.value.__cause__ is http.put.side_effect
+    error = raised.value
+    for rendered in (
+        str(error),
+        repr(error),
+        "".join(traceback.format_exception(error)),
+    ):
+        assert "signed.test" not in rendered
+        assert "private" not in rendered
     sdk.apps.mark_failed.assert_awaited_once_with("version-id")
 
 

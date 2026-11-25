@@ -97,7 +97,8 @@ async def save(
                 ],
             )
         except APIError as exc:
-            raise cloud_error(exc, "Save vault credential") from exc
+            error = cloud_error(exc, "Save vault credential")
+        raise error from None
 
 
 @requires(Billing.NO_COMMERCE)
@@ -120,7 +121,8 @@ async def create_field(
                 value=value,
             )
         except APIError as exc:
-            raise cloud_error(exc, "Create vault field") from exc
+            error = cloud_error(exc, "Create vault field")
+        raise error from None
 
 
 @requires(Billing.NO_COMMERCE)
@@ -143,7 +145,8 @@ async def update(
                 value=value,
             )
         except APIError as exc:
-            raise cloud_error(exc, "Update vault field") from exc
+            error = cloud_error(exc, "Update vault field")
+        raise error from None
 
 
 @requires(Billing.NO_COMMERCE)

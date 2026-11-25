@@ -17,6 +17,7 @@ from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.clients.portal.http import is_portal_http_url
 from mobilerun.clients.portal.install import install_portal
 from mobilerun.diagnostics.checks import (
+    ReadyTcp,
     check_accessibility,
     check_adb,
     check_config,
@@ -225,7 +226,7 @@ async def run_doctor(
     _print_result(r, debug)
     results.append(r)
 
-    r_cp_state, cp_portal = await check_portal_state(device, False, debug)
+    r_cp_state, cp_portal = await check_portal_state(device, debug)
     r_cp_state.name = "State (content)"
     _print_result(r_cp_state, debug)
     results.append(r_cp_state)
@@ -241,8 +242,10 @@ async def run_doctor(
     _print_result(r, debug)
     results.append(r)
 
-    if r.status == Status.PASS and fix:
-        r_tcp_state, tcp_portal = await check_portal_state(device, True, debug)
+    if isinstance(r, ReadyTcp):
+        r_tcp_state, tcp_portal = await check_portal_state(
+            device, debug, tcp_portal=r.portal
+        )
         r_tcp_state.name = "State (tcp)"
         _print_result(r_tcp_state, debug)
         results.append(r_tcp_state)

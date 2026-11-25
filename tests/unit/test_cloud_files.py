@@ -1,6 +1,8 @@
 """Workspace file transport behavior without cloud calls."""
 
 import asyncio
+import logging
+import traceback
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -9,6 +11,7 @@ import httpx
 import pytest
 from mobilerun_sdk import AsyncMobilerun
 
+from mobilerun.errors import CloudPermissionDenied
 from mobilerun.models import Billing
 
 
@@ -128,18 +131,26 @@ def test_device_file_sdk_transport(tmp_path):
     resource.delete.assert_awaited_once_with("device", path="/sdcard/picture.png")
 
 
-def test_workspace_download_follows_sdk_redirect_without_auth_on_storage():
+@pytest.mark.parametrize("device", [False, True])
+@pytest.mark.parametrize("status", [200, 403])
+def test_sdk_download_redirect_hides_signature_and_strips_auth(caplog, device, status):
     from mobilerun.clients.cloud import files
 
     requests = []
+    signature = "storage-redirect-canary"
+    caplog.set_level(logging.INFO, logger="httpx")
+    caplog.set_level(logging.DEBUG, logger="mobilerun_sdk._base_client")
 
     def respond(request):
         requests.append(request)
         if request.url.host == "api.example":
             return httpx.Response(
-                302, headers={"Location": "https://storage.example/signed"}
+                302,
+                headers={"Location": f"https://storage.example/signed?sig={signature}"},
             )
-        return httpx.Response(200, content=b"\x00\xff")
+        return httpx.Response(
+            status, content=b"\x00\xff" if status == 200 else b"denied"
+        )
 
     async def run():
         http = httpx.AsyncClient(
@@ -148,8 +159,19 @@ def test_workspace_download_follows_sdk_redirect_without_auth_on_storage():
         async with AsyncMobilerun(
             api_key="test", base_url="https://api.example", http_client=http
         ) as client:
+            if device:
+                return await files.download_device_file(
+                    client, "id", "/sdcard/test", billing=Billing.NO_COMMERCE
+                )
             return await files.download_file(client, "id", billing=Billing.NO_COMMERCE)
 
-    assert asyncio.run(run()) == b"\x00\xff"
+    if status == 200:
+        assert asyncio.run(run()) == b"\x00\xff"
+    else:
+        with pytest.raises(CloudPermissionDenied) as caught:
+            asyncio.run(run())
+        assert signature not in "".join(traceback.format_exception(caught.value))
     assert len(requests) == 2
     assert "authorization" not in requests[1].headers
+    assert requests[1].url.params["sig"] == signature
+    assert signature not in caplog.text

@@ -96,7 +96,7 @@ class CloudDevice(_CloudApps, _BackendIO, Device):
     def supported_operations(self) -> set[str]:
         return (
             self._driver.supported
-            | {"proxy_switch", "stop_app"}
+            | {"proxy_switch", "stop_app", "open_url"}
             | ({"cloud_telephony"} if self._cloud_telephony else set())
         )
 

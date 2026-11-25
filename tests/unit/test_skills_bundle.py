@@ -200,7 +200,12 @@ def test_same_name_foreign_skill_preserved_and_legacy_copies_managed(
     )
     assert (target / "classic/.mobilerun-installed").is_file()
     (target / "classic/SKILL.md").write_text("modified managed content")
-    assert bundle.uninstall(["classic"], "codex", dir=target)[0].status == "removed"
+    assert (
+        bundle.uninstall(["classic"], "codex", dir=target, discard_changes=True)[
+            0
+        ].status
+        == "removed"
+    )
     (target / "classic").mkdir()
     (target / "classic/SKILL.md").write_text(content)
     assert bundle.uninstall(["classic"], "codex", dir=target)[0].status == "removed"
@@ -266,13 +271,17 @@ def test_force_swap_failure_restores_old_install(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "rename", fail)
     with pytest.raises(OSError, match="swap failed"):
-        bundle.install(["classic"], "codex", dir=target, force=True)
+        bundle.install(
+            ["classic"], "codex", dir=target, force=True, discard_changes=True
+        )
     assert (target / "classic/SKILL.md").read_text() == "existing managed skill"
     assert not list(target.glob(".mobilerun-install-*"))
     assert not list(target.glob(".mobilerun-backup-*"))
     monkeypatch.setattr(Path, "rename", rename)
     assert (
-        bundle.install(["classic"], "codex", dir=target, force=True)[0].status
+        bundle.install(
+            ["classic"], "codex", dir=target, force=True, discard_changes=True
+        )[0].status
         == "installed"
     )
 
