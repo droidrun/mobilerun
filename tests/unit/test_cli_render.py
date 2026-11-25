@@ -1,5 +1,4 @@
 import click
-import pytest
 from click.testing import CliRunner
 
 from mobilerun.cli.devices.base import selection
@@ -333,19 +332,6 @@ def test_spinner_only_uses_tty(monkeypatch):
     assert calls == ["Working"]
 
 
-def test_oauth_success_uses_shared_style():
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
-    from mobilerun.agents.cli.base.oauth_output import _print_oauth_login_success
-
-    @click.command()
-    def command():
-        _print_oauth_login_success("Example", "/somewhere/credential")
-
-    result = CliRunner().invoke(command)
-    assert result.stdout.startswith("✓ Example login succeeded.")
-    assert "Credentials saved to: /somewhere/credential" in result.stdout
-
-
 def test_uninstall_failure_result_is_not_reported_as_success(monkeypatch):
     import importlib
     from unittest.mock import AsyncMock
@@ -407,43 +393,3 @@ def test_doctor_summary_uses_status_lines(capsys):
 
     _print_summary([CheckResult("ADB", Status.WARN, "Unavailable")])
     assert capsys.readouterr().out.splitlines() == ["! 1 warning", "! ADB: Unavailable"]
-
-
-def test_llm_wizard_intro_and_summary_use_shared_style(capsys):
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
-    from mobilerun.agents.cli.agent.llm.wizard import (
-        _print_configure_intro,
-        _print_configure_summary,
-    )
-
-    _print_configure_intro(None)
-    _print_configure_summary(
-        None,
-        family_id="openai",
-        auth_mode="api_key",
-        provider_label="OpenAI",
-        variant_id="openai",
-        model="gpt",
-        used_advanced_settings=False,
-    )
-    out = capsys.readouterr().out
-    assert "✓ Configuration saved" in out
-    assert "Provider: OpenAI" in out and "Model: gpt" in out
-
-
-def test_llm_login_output_uses_plain_shared_renderer(monkeypatch):
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
-    import importlib
-
-    from mobilerun.cli.base import render
-
-    module = importlib.import_module("mobilerun.agents.cli.agent.llm.login.openai")
-    seen = []
-    monkeypatch.setattr(
-        module,
-        "run_openai_oauth_login",
-        lambda *args, **kwargs: seen.append(kwargs["on_output"]),
-    )
-    monkeypatch.setattr(module, "_print_oauth_login_success", lambda *args: None)
-    module._run_openai_oauth_login("/fake", None)
-    assert seen == [render.message]

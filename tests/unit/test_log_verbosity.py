@@ -79,51 +79,9 @@ def test_log_level_is_registered(monkeypatch):
     assert get_settings().MOBILERUN_LOG_LEVEL == "verbose"
 
 
-def test_quiet_cli_suppresses_banner_and_telemetry(monkeypatch, capsys):
-    pytest.importorskip(
-        "mobilerun.agents", reason="requires the optional mobilerun-agents add-on"
-    )
-    from mobilerun.agents.cli.agent.run import _show_local_config
-    from mobilerun.agents.config.user_config import MobileConfig
-
-    calls = []
-    monkeypatch.setattr(
-        "mobilerun.agents.cli.agent.run.print_telemetry_message",
-        lambda **kw: calls.append(kw),
-    )
-    _show_local_config(MobileConfig(), False, "quiet")
-    assert capsys.readouterr().out == ""
-    assert calls == []
-
-
 def test_default_device_environment_setting_removed(monkeypatch):
     from mobilerun.config.settings import get_settings
 
     monkeypatch.setenv("MOBILERUN_DEFAULT_DEVICE", "obsolete")
     assert "default_device" not in get_settings().model_fields_set
     assert "default_device" not in type(get_settings()).model_fields
-
-
-def test_cloud_applies_cli_level_before_device_run(monkeypatch):
-    pytest.importorskip(
-        "mobilerun.agents", reason="requires the optional mobilerun-agents add-on"
-    )
-    import asyncio
-    from types import SimpleNamespace
-
-    from mobilerun.agents import runner
-    from mobilerun.agents.config.user_config import MobileConfig
-
-    monkeypatch.setattr(runner.ConfigLoader, "load", lambda path=None: MobileConfig())
-    monkeypatch.setenv("MOBILERUN_LOG_LEVEL", "debug")
-
-    class Device:
-        async def do(self, command, *, max_steps=None):
-            assert logging.getLogger("mobilerun").level == logging.WARNING
-            return SimpleNamespace(success=True)
-
-    assert asyncio.run(
-        runner.run_agent(
-            "goal", device=Device(), device_kind="cloud", log_level="quiet"
-        )
-    ).success

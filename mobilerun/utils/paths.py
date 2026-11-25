@@ -7,9 +7,10 @@ with consistent priority: working directory first, then package directory.
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
+from importlib.util import find_spec
 from pathlib import Path
-from pkgutil import extend_path
 from typing import Literal, Union
 
 
@@ -55,6 +56,36 @@ class PathResolver:
         mobilerun/utils/paths.py -> mobilerun/ (package root)
         """
         return Path(__file__).resolve().parents[1]
+
+    @staticmethod
+    def bundled_asset(path: Path) -> Path | None:
+        """Find a legacy prompt or app card without importing the optional add-on."""
+        if (
+            path.parts[:2] not in {("config", "prompts"), ("config", "app_cards")}
+            or ".." in path.parts
+        ):
+            return None
+        asset = Path("assets", *path.parts[1:])
+        candidate = PathResolver.get_project_root() / asset
+        if candidate.exists():
+            return candidate
+        try:
+            spec = find_spec("mobilerun_agents")
+        except ValueError:
+            addon = sys.modules.get("mobilerun_agents")
+            if addon is not None and getattr(addon, "__spec__", None) is None:
+                return None
+            raise
+        except ModuleNotFoundError as error:
+            if error.name != "mobilerun_agents":
+                raise
+            return None
+        if spec and spec.submodule_search_locations:
+            for location in spec.submodule_search_locations:
+                candidate = Path(location) / asset
+                if candidate.exists():
+                    return candidate
+        return None
 
     @staticmethod
     def resolve(
@@ -128,19 +159,9 @@ class PathResolver:
             return package_path
 
         # Support legacy bundled paths without overriding a user file in CWD.
-        if (
-            path.parts[:2] in {("config", "prompts"), ("config", "app_cards")}
-            and ".." not in path.parts
-        ):
-            root = PathResolver.get_project_root()
-            legacy_asset = root.joinpath("assets", *path.parts[1:])
-            if legacy_asset.exists():
-                return legacy_asset
-            # Search the shared namespace's filesystem roots, without importing an add-on.
-            for location in extend_path([str(root)], "mobilerun"):
-                candidate = Path(location).joinpath("agents", "assets", *path.parts[1:])
-                if candidate.exists():
-                    return candidate
+        legacy_asset = PathResolver.bundled_asset(path)
+        if legacy_asset is not None:
+            return legacy_asset
 
         # Not found in either location
         if must_exist:

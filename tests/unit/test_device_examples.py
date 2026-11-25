@@ -98,7 +98,7 @@ def test_quickstart_runs_with_fake_devices(tmp_path, monkeypatch, capsys):
     assert "sandbox function (local): Hello, world!" in output
     assert "skills:" in output
 
-    if importlib.util.find_spec("mobilerun.agents") is not None:
+    if importlib.util.find_spec("mobilerun_agents") is not None:
         monkeypatch.setattr(main, "AGENT", True)
         asyncio.run(main.main())
         assert "15" in capsys.readouterr().out

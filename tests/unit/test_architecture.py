@@ -15,14 +15,13 @@ SHARED = ("errors", "models", "utils", "cli", "config", "logs", "core", "clients
 
 
 def test_base_contains_no_agent_module_references():
-    # Migration only locates add-on assets to preserve legacy config paths.
-    allowed = {Path("config/migrations/v008_bundled_assets.py")}
+    allowed = {Path("utils/paths.py"), Path("core/operator/base.py")}
     violations = []
     for path in ROOT.rglob("*.py"):
-        if path.relative_to(ROOT) in allowed:
-            continue
         source = path.read_text()
-        if "mobilerun.agents" in source:
+        if "mobilerun.agents" in source or (
+            path.relative_to(ROOT) not in allowed and "mobilerun_agents" in source
+        ):
             violations.append(str(path))
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.ImportFrom):

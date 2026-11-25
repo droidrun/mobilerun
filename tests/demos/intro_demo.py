@@ -45,7 +45,7 @@ class AndroidVersion(BaseModel):
 
 def AgentOperator():
     """Load the optional operator only when the agent demo is enabled."""
-    from mobilerun.agents.operator import AgentOperator as operator
+    from mobilerun_agents import AgentOperator as operator
 
     return operator()
 

@@ -86,7 +86,9 @@ def test_operator_base_raises():
     from mobilerun.core.operator import Operator
     from mobilerun.errors import OperatorNotAvailable
 
-    with pytest.raises(OperatorNotAvailable, match="No operator for object"):
+    with pytest.raises(
+        OperatorNotAvailable, match="from mobilerun_agents import AgentOperator"
+    ):
         asyncio.run(Operator().execute(cast(Device, object()), "hello"))
 
 
@@ -127,9 +129,11 @@ def test_core_has_no_agent_imports():
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                assert not (node.module or "").startswith("mobilerun.agents"), path
+                assert not (node.module or "").startswith(
+                    ("mobilerun.agents", "mobilerun_agents")
+                ), path
             elif isinstance(node, ast.Import):
                 assert all(
-                    not alias.name.startswith("mobilerun.agents")
+                    not alias.name.startswith(("mobilerun.agents", "mobilerun_agents"))
                     for alias in node.names
                 ), path

@@ -126,22 +126,6 @@ def test_credential_table_sorted_and_sources(tmp_path, monkeypatch):
     assert "1password" in result.output
 
 
-def test_agent_default_local_path(monkeypatch, tmp_path):
-    pytest.importorskip(
-        "mobilerun.agents", reason="requires the optional mobilerun-agents add-on"
-    )
-    from mobilerun.agents.config import user_config
-    from mobilerun.agents.config.user_config import CredentialsConfig
-
-    monkeypatch.setattr(
-        user_config,
-        "get_settings",
-        lambda: SimpleNamespace(local_credentials_path=tmp_path / "vault.yaml"),
-    )
-    assert CredentialsConfig().file_path == str(tmp_path / "vault.yaml")
-    assert CredentialsConfig(file_path="relative.yaml").file_path == "relative.yaml"
-
-
 def test_cloud_slug_mapping_and_1password_metadata(monkeypatch):
     from types import SimpleNamespace as NS
 

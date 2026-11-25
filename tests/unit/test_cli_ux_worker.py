@@ -159,30 +159,6 @@ def test_missing_credentials_message():
     )
 
 
-def test_wizard_cancel_does_not_save(monkeypatch):
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
-    from mobilerun.agents.cli.agent.llm import wizard
-    from rich.console import Console
-
-    config = wizard.ConfigLoader.load()
-    saved = []
-    monkeypatch.setattr(wizard.ConfigLoader, "load", lambda: config)
-    monkeypatch.setattr(
-        wizard.ConfigLoader, "save", lambda config: saved.append(config)
-    )
-    monkeypatch.setattr(wizard, "select_prompt", lambda *args, **kwargs: None)
-    wizard.run_configure_wizard(
-        Console(),
-        None,
-        provider=None,
-        auth_mode=None,
-        model=None,
-        api_key=None,
-        base_url=None,
-    )
-    assert saved == []
-
-
 def test_skill_list_shows_installed_targets(monkeypatch):
     import importlib
     from pathlib import Path

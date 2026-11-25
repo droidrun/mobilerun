@@ -21,7 +21,7 @@ def blocked(*args, **kwargs):
 sandbox.deploy = blocked
 original = builtins.__import__
 def guarded(name, *args, **kwargs):
-    if name == 'mobilerun.agents' or name.startswith('mobilerun.agents.'):
+    if name.startswith(('mobilerun.agents', 'mobilerun_agents')):
         raise AssertionError('demo imported agents eagerly')
     return original(name, *args, **kwargs)
 builtins.__import__ = guarded
@@ -36,6 +36,16 @@ import tests.demos.intro_demo
 def test_sandbox_example_runs_locally():
     greeting = intro_demo.hello(intro_demo.GreetingInput(name="Ada"))
     assert greeting.message == "Hello, Ada!"
+
+
+def test_agent_demo_uses_public_operator(monkeypatch):
+    from types import ModuleType
+
+    addon = ModuleType("mobilerun_agents")
+    operator = Mock()
+    monkeypatch.setattr(addon, "AgentOperator", operator, raising=False)
+    monkeypatch.setitem(sys.modules, addon.__name__, addon)
+    assert intro_demo.AgentOperator() is operator.return_value
 
 
 def test_main_without_agent_uses_base_device(monkeypatch):

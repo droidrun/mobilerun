@@ -19,7 +19,7 @@ names = [choice.value for choice in cli.menu_choices(ctx)]
 assert names == cli.list_commands(ctx)
 assert {"account", "credentials"} <= set(names)
 assert ("agent" in names) == ("agent" in discover(CLI_ENTRY_POINT_GROUP))
-assert not any(x.startswith("mobilerun.agents") for x in sys.modules)
+assert not any(x.startswith(("mobilerun.agents", "mobilerun_agents")) for x in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True

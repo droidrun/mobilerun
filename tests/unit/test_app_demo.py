@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("mobilerun.agents", reason="demo requires the agents add-on")
+pytest.importorskip("mobilerun_agents", reason="demo requires the agents add-on")
 
 from mobilerun.core.devices.base import Device as _FrameworkDevice
 

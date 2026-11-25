@@ -22,12 +22,12 @@ def test_account_help_and_commands():
     assert root.exit_code == 0
     assert all(name in root.output for name in ("account", "device", "macro", "doctor"))
     assert ("  agent " in root.output) == (
-        importlib.util.find_spec("mobilerun.agents") is not None
+        importlib.util.find_spec("mobilerun_agents") is not None
     )
     assert "llm" not in root.output
     assert runner.invoke(cli, ["llm", "--help"]).exit_code == 2
     agent = runner.invoke(cli, ["agent", "--help"])
-    if importlib.util.find_spec("mobilerun.agents") is None:
+    if importlib.util.find_spec("mobilerun_agents") is None:
         assert agent.exit_code != 0
         assert (
             "Install the mobilerun-agents add-on (see README: Agent add-on)."

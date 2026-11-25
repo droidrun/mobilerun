@@ -148,7 +148,7 @@ The context manager releases resources it creates; existing IDs are not automati
 
 ```python
 # Requires the unpublished mobilerun-agents add-on.
-from mobilerun.agents import AgentOperator
+from mobilerun_agents import AgentOperator
 from mobilerun.core.devices import AndroidDevice
 
 async def task():
@@ -217,7 +217,7 @@ For a local agent, use a private YAML or JSON file with `FileCredentials` instea
 
 ```python
 # Requires the unpublished mobilerun-agents add-on.
-from mobilerun.agents import AgentOperator
+from mobilerun_agents import AgentOperator
 from mobilerun.core.credentials import FileCredentials
 from mobilerun.core.devices import AndroidDevice
 

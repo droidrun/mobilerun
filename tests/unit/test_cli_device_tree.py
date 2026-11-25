@@ -388,31 +388,35 @@ def test_failed_connect_closes_constructed_device(monkeypatch):
 
 @pytest.mark.parametrize("flag", ["--device", "-d"])
 def test_agent_run_device_option_reaches_runner(monkeypatch, flag):
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
-    module = importlib.import_module("mobilerun.agents.cli.agent.run")
+    pytest.importorskip("mobilerun_agents", reason="requires mobilerun-agents add-on")
+    module = importlib.import_module("mobilerun_agents.cli.agent.run")
     phone = NS(close=AsyncMock())
     monkeypatch.setattr(selection, "connect_target", AsyncMock(return_value=phone))
-    run = AsyncMock(return_value=NS(error=None, cloud_result=None, success=True))
-    monkeypatch.setattr(module, "run_agent", run)
+    execute = AsyncMock(return_value=NS(answer="done", success=True))
+    monkeypatch.setattr(module, "AgentOperator", lambda **kwargs: NS(execute=execute))
+    monkeypatch.setattr(module.ConfigLoader, "load", lambda _: NS())
     result = CliRunner().invoke(cli, ["agent", "run", "Open settings", flag, "serial"])
     assert result.exit_code == 0, (result.output, result.exception)
-    assert run.await_args.kwargs["device"] is phone
-    assert run.await_args.kwargs["target"] == "serial"
+    execute.assert_awaited_once_with(phone, "Open settings", max_steps=None)
+    assert selection.connect_target.await_args.args == ("serial",)
     assert selection.connect_target.await_args.kwargs["allow_auto_setup"] is True
     phone.close.assert_awaited_once()
 
 
 @pytest.mark.parametrize("flag", ["--device", "-d"])
 def test_agent_replay_device_option_reaches_replay(monkeypatch, tmp_path, flag):
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
-    module = importlib.import_module("mobilerun.agents.cli.agent.replay")
+    pytest.importorskip("mobilerun_agents", reason="requires mobilerun-agents add-on")
+    module = importlib.import_module("mobilerun_agents.cli.macro_agent.replay")
+    monkeypatch.setattr(module.ConfigLoader, "load", lambda _: NS())
     received = []
     monkeypatch.setattr(
         module, "run_replay", lambda operator, **kwargs: received.append(kwargs)
     )
     path = tmp_path / "macro.json"
     path.write_text("{}")
-    result = CliRunner().invoke(cli, ["agent", "replay", str(path), flag, "serial"])
+    result = CliRunner().invoke(
+        cli, ["macro-agent", "replay", str(path), flag, "serial"]
+    )
     assert result.exit_code == 0, (result.output, result.exception)
     assert received[0]["target"].identifier == "serial"
     assert received[0]["target"].kind == "android"

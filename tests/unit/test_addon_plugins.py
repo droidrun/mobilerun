@@ -146,10 +146,12 @@ def test_base_python_has_no_addon_module_paths():
     offenders = [
         str(path.relative_to(root))
         for path in root.rglob("*.py")
-        # Migration locates add-on assets for legacy config paths without importing it.
-        if path.relative_to(root).as_posix()
-        != "config/migrations/v008_bundled_assets.py"
-        and "mobilerun.agents" in path.read_text()
+        if "mobilerun.agents" in (source := path.read_text())
+        or (
+            path.relative_to(root).as_posix()
+            not in {"utils/paths.py", "core/operator/base.py"}
+            and "mobilerun_agents" in source
+        )
     ]
     assert offenders == []
 

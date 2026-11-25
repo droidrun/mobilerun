@@ -113,7 +113,7 @@ This example requires the unpublished `mobilerun-agents` add-on, an Android devi
 ```python
 import asyncio
 from mobilerun.core.devices import AndroidDevice
-from mobilerun.agents import AgentOperator  # provided by mobilerun-agents
+from mobilerun_agents import AgentOperator  # provided by mobilerun-agents
 
 async def main():
     async with AndroidDevice("emulator-5554", operator=AgentOperator()) as device:
@@ -155,4 +155,4 @@ to use local credentials.
 DEVICE is optional: run `mobilerun device connect <id>` to save a default, or choose from discovered devices. An explicit DEVICE takes precedence, followed by the saved `device.serial` and discovery. Run `mobilerun device disconnect` to clear the default. Python device APIs remain explicit.
 
 There is no legacy import compatibility layer. With the add-on installed,
-import agent code from `mobilerun.agents` directly.
+import agent code from `mobilerun_agents` directly.

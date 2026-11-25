@@ -14,7 +14,7 @@ Standalone helpers for coordinates, images, verification codes and timestamps.
 | `coordinates.py`, `geometry.py`, `images.py` | Coordinates, bounds and image helpers |
 | `codes.py` | Verification code extraction and polling |
 | `timestamps.py` | API timestamp formatting |
-| `paths.py`, `prompts.py` | Package asset resolution and prompt loading |
+| `paths.py`, `prompts.py` | Resolve package assets and load prompts. Legacy `config/prompts` and `config/app_cards` paths can read `mobilerun_agents/assets` without importing the add-on. |
 
 Device-facing helpers live in `clients/local/`.
 

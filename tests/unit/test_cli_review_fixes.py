@@ -115,10 +115,10 @@ def test_saved_url_uses_configured_transport_without_discovery(
 
 
 def test_agent_run_ios_without_serial_discovers_portal(monkeypatch):
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
+    pytest.importorskip("mobilerun_agents", reason="requires mobilerun-agents add-on")
     from mobilerun_core_local.driver import ios
 
-    module = importlib.import_module("mobilerun.agents.cli.agent.run")
+    module = importlib.import_module("mobilerun_agents.cli.agent.run")
     config = MobileConfig()
     monkeypatch.setattr(options.ConfigLoader, "load", lambda path: config)
     discovered = AsyncMock(return_value="http://localhost:8080")
@@ -130,13 +130,14 @@ def test_agent_run_ios_without_serial_discovers_portal(monkeypatch):
     )
     connect = AsyncMock(return_value=AsyncMock())
     monkeypatch.setattr(selection, "connect_target", connect)
-    run = AsyncMock(return_value=NS(error=None, success=True, cloud_result=None))
-    monkeypatch.setattr(module, "run_agent", run)
+    execute = AsyncMock(return_value=NS(answer="done", success=True))
+    monkeypatch.setattr(module, "AgentOperator", lambda **kwargs: NS(execute=execute))
+    monkeypatch.setattr(module.ConfigLoader, "load", lambda _: NS())
     result = CliRunner().invoke(cli, ["agent", "run", "hello", "--ios"])
     assert result.exit_code == 0, result.output
     discovered.assert_awaited_once_with()
     assert connect.await_args.kwargs["kind"] == "ios"
-    assert run.await_args.kwargs["device_kind"] == "ios"
+    execute.assert_awaited_once_with(connect.return_value, "hello", max_steps=None)
 
 
 @pytest.mark.parametrize("operation", ["resume", "reboot"])
@@ -201,7 +202,7 @@ def test_stop_remains_nonbillable_and_does_not_require_yes(monkeypatch):
         ["agent", "task", "status", "--help"],
     ],
 )
-def test_agent_management_help_does_not_load_runtime(args):
+def test_agent_management_help_follows_plugin_availability(args):
     script = f"""
 import sys
 from click.testing import CliRunner
@@ -215,8 +216,8 @@ if ("agent" in discover(CLI_ENTRY_POINT_GROUP)):
 else:
     assert r.exit_code != 0
     assert 'Install the mobilerun-agents add-on (see README: Agent add-on).' in r.output
-assert 'mobilerun.agents.runner' not in sys.modules
-assert not any(m == 'llama_index' or m.startswith('llama_index.') for m in sys.modules)
+    assert not any(m.startswith(('mobilerun.agents', 'mobilerun_agents')) for m in sys.modules)
+    assert not any(m == 'llama_index' or m.startswith('llama_index.') for m in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=20

@@ -240,12 +240,12 @@ def test_setting_getters_use_labelled_output(monkeypatch):
 
 
 def test_task_status_dot_and_relative_timestamp_preserve_json(monkeypatch):
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
+    pytest.importorskip("mobilerun_agents", reason="requires mobilerun-agents add-on")
     import importlib
     from contextlib import asynccontextmanager
     from datetime import datetime, timedelta, timezone
 
-    module = importlib.import_module("mobilerun.agents.cli.agent.task")
+    module = importlib.import_module("mobilerun_agents.cli.agent.task")
     timestamp = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
     data = {"status": "running", "created_at": timestamp, "steps": 2}
 

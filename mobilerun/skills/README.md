@@ -33,7 +33,7 @@ Installation writes to the selected agent's skills directory. See
 `mobilerun skills list`. When a bundled name is close, it also suggests a match.
 Installing an unknown bundled skill reports the same guidance.
 
-**Depends on / used by:** Uses the shared base. Independent of macro/, sandbox/, and agents/; only shared CLI helper `cli/base/` is allowed.
+**Depends on / used by:** Uses the shared base. Independent of macro/, sandbox/, and the `mobilerun_agents` add-on; only shared CLI helper `cli/base/` is allowed.
 
 Skills are discovered recursively from the `skills` submodule. Names come from
 frontmatter, or the directory when absent. Duplicate names are errors. The names

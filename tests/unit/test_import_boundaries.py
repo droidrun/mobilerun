@@ -9,10 +9,6 @@ from pathlib import Path
 from tests.feature_packages import FEATURES
 
 ROOT = Path(__file__).resolve().parents[2] / "mobilerun"
-EXCEPTIONS = {
-    "config/migrations/v008_bundled_assets.py",  # Discovers optional add-on assets without importing them.
-    "cli/app.py",  # CLI root registers the agent command groups until agents becomes its own package (DRO-3973).
-}
 
 
 def test_device_package_does_not_import_cloud_driver_eagerly():
@@ -169,32 +165,37 @@ def _agent_import_references(path):
 def test_agent_boundary_scanner_distinguishes_imports_from_strings(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("""
-message = "mobilerun.agents"
-import mobilerun.agents.operator
-from mobilerun.agents import AgentOperator
-import_module("mobilerun.agents.cli")
-find_spec("mobilerun.agents")
-__import__("mobilerun.agents.tools")
-LEGACY_MODULES = {"old": "mobilerun.agents.legacy"}
-LEGACY_MODULES.update({"other": "mobilerun.agents.extra"})
+message = "mobilerun_agents"
+import mobilerun_agents.agent.operator
+from mobilerun_agents import AgentOperator
+import_module("mobilerun_agents.cli")
+find_spec("mobilerun_agents")
+__import__("mobilerun_agents.agent.tools")
+LEGACY_MODULES = {"old": "mobilerun_agents.config"}
+LEGACY_MODULES.update({"other": "mobilerun_agents.macro_agent"})
 """)
     targets = [target for _, target in _agent_import_references(path)]
-    assert targets.count("mobilerun.agents") == 2
-    assert "mobilerun.agents.operator" in targets
-    assert "mobilerun.agents.cli" in targets
-    assert "mobilerun.agents.tools" in targets
-    assert "mobilerun.agents.legacy" in targets
-    assert "mobilerun.agents.extra" in targets
+    assert targets.count("mobilerun_agents") == 2
+    assert "mobilerun_agents.agent.operator" in targets
+    assert "mobilerun_agents.cli" in targets
+    assert "mobilerun_agents.agent.tools" in targets
+    assert "mobilerun_agents.config" in targets
+    assert "mobilerun_agents.macro_agent" in targets
 
 
 def test_base_does_not_import_agents():
     violations = []
     for path in ROOT.rglob("*.py"):
         relative = path.relative_to(ROOT)
-        if relative.parts[0] == "agents" or str(relative) in EXCEPTIONS:
-            continue
         for line, target in _agent_import_references(path):
-            if "mobilerun.agents" in target:
+            if (
+                relative == Path("utils/paths.py")
+                and target == "mobilerun_agents"
+                and path.read_text().splitlines()[line - 1].strip()
+                == 'spec = find_spec("mobilerun_agents")'
+            ):
+                continue  # Read-only legacy asset lookup, not an import.
+            if target.startswith(("mobilerun.agents", "mobilerun_agents")):
                 violations.append(f"{relative}:{line}")
     assert not violations, violations
 
@@ -228,7 +229,9 @@ def test_independent_features_do_not_import_each_other_or_agents():
         forbidden = (set(FEATURES) | {"agents"}) - {feature}
         for path in (ROOT / feature).rglob("*.py"):
             for line, target in _references(path):
-                if any("mobilerun." + other in target for other in forbidden):
+                if "mobilerun_agents" in target or any(
+                    "mobilerun." + other in target for other in forbidden
+                ):
                     violations.append(f"{path.relative_to(ROOT)}:{line}: {target}")
     assert not violations, violations
 
@@ -272,7 +275,7 @@ def test_import_macro_is_agent_free():
         [
             sys.executable,
             "-c",
-            "import mobilerun.macro, sys; assert not any(m.startswith('mobilerun.agents') for m in sys.modules)",
+            "import mobilerun.macro, sys; assert not any(m.startswith(('mobilerun.agents', 'mobilerun_agents')) for m in sys.modules)",
         ],
         check=True,
     )
@@ -295,7 +298,7 @@ def test_import_mobilerun_is_agent_free():
         [
             sys.executable,
             "-c",
-            "import mobilerun, sys; assert not any(m.startswith('mobilerun.agents') for m in sys.modules)",
+            "import mobilerun, sys; assert not any(m.startswith(('mobilerun.agents', 'mobilerun_agents')) for m in sys.modules)",
         ],
         check=True,
     )
@@ -317,7 +320,7 @@ rows = [line.strip().split(maxsplit=1) for line in result.output.splitlines()
         if line.startswith("  ") and line.strip().split()[0] in names | {"agent"}]
 assert {row[0] for row in rows} == names, rows
 assert all(len(row) == 2 and row[1] for row in rows), rows
-assert not any(m.startswith("mobilerun.agents") for m in sys.modules)
+assert not any(m.startswith(("mobilerun.agents", "mobilerun_agents")) for m in sys.modules)
 """
     subprocess.run([sys.executable, "-c", script], check=True)
 
@@ -334,7 +337,7 @@ for args in (["macro", "--help"], ["macro", "replay", "--help"],
              ["macro", "replay", sys.argv[1], "--on-mismatch", "agent", "--dry-run"]):
     result = runner.invoke(cli, args)
     assert result.exit_code == 0, result.output
-    assert not any(name.startswith("mobilerun.agents") for name in sys.modules)
+    assert not any(name.startswith(("mobilerun.agents", "mobilerun_agents")) for name in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", script, str(macro)], capture_output=True, text=True

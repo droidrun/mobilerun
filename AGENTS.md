@@ -29,7 +29,7 @@ Shared core must not import agents or feature packages. The intended boundaries
 are checked in `tests/unit/test_import_boundaries.py`. The agent-required
 dependency test (`tests/unit/test_agent_required_dependencies.py`) lives in the
 separate `mobilerun-agents` repository. The CLI entry point has a special role; see the boundary tests for exceptions.
-The sole `mobilerun.agents` base-code exception is the v008 migration's read-only asset lookup for old configs; it does not import the add-on.
+The v008 migration and legacy path resolver locate `mobilerun_agents` assets without importing the add-on.
 
 ## Where code goes
 

@@ -29,5 +29,6 @@ class Operator(ABC):  # noqa: B024 - the base implementation deliberately raises
     ) -> ExecutionResult[T]:
         raise OperatorNotAvailable(
             f"No operator for {type(device).__name__}. Pass operator=..., "
-            "e.g. AgentOperator() from the mobilerun-agents add-on."
+            "e.g. AgentOperator() from the mobilerun-agents add-on "
+            "(from mobilerun_agents import AgentOperator)."
         )

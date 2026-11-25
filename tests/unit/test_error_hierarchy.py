@@ -30,15 +30,10 @@ from mobilerun.errors.base import MobilerunError
         ("mobilerun.errors.device", "UnsupportedStateCapability"),
         ("mobilerun.errors.device", "StateFetchFailed"),
         ("mobilerun.macro.errors", "MacroMismatch"),
-        ("mobilerun.agents.errors.keyboard_cleanup_failed", "KeyboardCleanupFailed"),
         ("mobilerun.config.loader", "OutdatedConfigError"),
-        ("mobilerun.agents.clients.oauth.profiles", "AuthProfileFormatError"),
-        ("mobilerun.agents.clients.oauth.grok", "GrokOAuthError"),
     ],
 )
 def test_errors_share_root(module, name):
-    if module.startswith("mobilerun.agents."):
-        pytest.importorskip("mobilerun.agents", reason="agent error belongs to add-on")
     assert issubclass(getattr(importlib.import_module(module), name), MobilerunError)
 
 
@@ -48,14 +43,6 @@ def test_new_error_types_keep_builtin_compatibility():
     assert issubclass(CredentialFormatError, ValueError)
     assert issubclass(DeviceNotReady, RuntimeError)
     assert issubclass(PlaceholderError, ValueError)
-
-
-def test_agent_timeout_keeps_builtin_compatibility():
-    pytest.importorskip("mobilerun.agents", reason="agent error belongs to add-on")
-    from mobilerun.agents.errors import AgentTimeout
-
-    assert issubclass(AgentTimeout, (MobilerunError, TimeoutError))
-    assert issubclass(AgentTimeout, TimeoutError)
 
 
 def test_invalid_values_raise_typed_errors():
@@ -86,8 +73,6 @@ def test_error_classes_discovered_by_ast_share_root():
         "UnsupportedStateCapability",
         "MacroMismatch",
         "SandboxNotImplemented",
-        "KeyboardCleanupFailed",
-        "AgentTimeout",
     }
     for path in root.rglob("*.py"):
         if path.name == "__init__.py" or "clients/cloud" in str(path):

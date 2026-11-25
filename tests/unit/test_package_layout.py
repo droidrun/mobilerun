@@ -3,10 +3,9 @@
 import ast
 from pathlib import Path
 
-# The root establishes the shared namespace; selected initializers expose
-# lazily imported public names without importing optional dependencies.
+# Selected initializers expose lazy public names without importing optional dependencies.
 INITIALIZER_EXCEPTIONS = {
-    "__init__.py": "Namespace setup and lazy public exports",
+    "__init__.py": "Lazy public exports",
     "core/__init__.py": "Lazy public core exports",
     "core/devices/__init__.py": "Lazy public device exports",
     "sandbox/__init__.py": "Actionable error when the optional routines dependency is missing",
@@ -46,7 +45,6 @@ def test_initializers_only_export_names():
                 and node.targets[0].id
                 in {
                     "__init__.py": {
-                        "__path__",
                         "__all__",
                         "_EAGER_EXPORTS",
                         "_CORE_EXPORTS",

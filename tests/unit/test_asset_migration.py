@@ -1,55 +1,83 @@
 """Migration and resolution of bundled runtime assets."""
 
-import os
-import subprocess
 import sys
 from copy import deepcopy
-from pathlib import Path
 
 import pytest
 
 from mobilerun.config.migrations import migrate
 
 
-def test_v8_finds_split_addon_assets_and_preserves_absent(tmp_path):
-    base = Path(__file__).resolve().parents[2]
-    addon = tmp_path / "addon" / "mobilerun" / "agents"
-    addon.mkdir(parents=True)
-    (addon / "__init__.py").write_text("")
-    (addon / "assets" / "prompts").mkdir(parents=True)
-    (addon / "assets" / "prompts" / "split.jinja2").write_text("split")
-    env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join((str(base), str(addon.parents[1])))
-    script = """
-import mobilerun, sys
-mobilerun.__path__ = [p for p in mobilerun.__path__ if not p.endswith('/mobilerun/mobilerun')]
-if sys.argv[1] == 'absent': mobilerun.__path__ = []
-from mobilerun.config.migrations.v008_bundled_assets import migrate
-config = {'agent': {'fast': {'system_prompt': 'config/prompts/split.jinja2'}}}
-actual = migrate(config)['agent']['fast']['system_prompt']
-assert actual == ('config/prompts/split.jinja2' if sys.argv[1] == 'absent' else 'assets/prompts/split.jinja2'), actual
-"""
-    # Import migration before pruning the base package path.
-    script = script.replace(
-        "import mobilerun, sys",
-        "import mobilerun, sys\nimport mobilerun.config.migrations.v008_bundled_assets",
+def test_legacy_prompt_handles_addon_without_spec(tmp_path, monkeypatch):
+    from types import ModuleType
+
+    from mobilerun.utils.paths import PathResolver
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(sys.modules, "mobilerun_agents", ModuleType("mobilerun_agents"))
+    prompt = "config/prompts/missing.jinja2"
+    assert PathResolver.resolve(prompt) == tmp_path / prompt
+    with pytest.raises(FileNotFoundError):
+        PathResolver.resolve(prompt, must_exist=True)
+
+
+def test_legacy_prompt_propagates_other_finder_errors(monkeypatch):
+    from mobilerun.utils import paths
+
+    def broken_finder(name):
+        raise ValueError("broken finder")
+
+    monkeypatch.delitem(sys.modules, "mobilerun_agents", raising=False)
+    monkeypatch.setattr(paths, "find_spec", broken_finder)
+    with pytest.raises(ValueError, match="broken finder"):
+        paths.PathResolver.resolve("config/prompts/missing.jinja2")
+
+
+def test_v8_finds_split_addon_assets_without_importing(tmp_path, monkeypatch):
+    addon = tmp_path / "mobilerun_agents"
+    bundled = addon / "assets/prompts/split.jinja2"
+    bundled.parent.mkdir(parents=True)
+    bundled.write_text("split")
+    (addon / "__init__.py").write_text("raise AssertionError('unexpected import')")
+    monkeypatch.delitem(sys.modules, "mobilerun_agents", raising=False)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    config = {
+        "_version": 7,
+        "agent": {"fast": {"system_prompt": "config/prompts/split.jinja2"}},
+    }
+    assert (
+        migrate(config)["agent"]["fast"]["system_prompt"]
+        == "assets/prompts/split.jinja2"
     )
-    for mode in ("present", "absent"):
-        result = subprocess.run(
-            [sys.executable, "-c", script, mode],
-            cwd=tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("missing", ["mobilerun_agents", "other_dependency"])
+def test_blocked_addon_is_treated_as_missing_only_for_its_own_name(
+    monkeypatch, missing
+):
+    from pathlib import Path
+
+    from mobilerun.utils import paths
+
+    def blocked(name):
+        assert name == "mobilerun_agents"
+        raise ModuleNotFoundError(name=missing)
+
+    monkeypatch.setattr(paths, "find_spec", blocked)
+    prompt = Path("config/prompts/blocked-test.jinja2")
+    if missing != "mobilerun_agents":
+        with pytest.raises(ModuleNotFoundError):
+            paths.PathResolver.bundled_asset(prompt)
+    else:
+        assert paths.PathResolver.bundled_asset(prompt) is None
 
 
 @pytest.mark.parametrize("addon_present", [True, False])
 def test_v8_migrates_only_bundled_paths_and_is_idempotent(
     tmp_path, monkeypatch, addon_present
 ):
-    from mobilerun.config.migrations import v008_bundled_assets
+    from mobilerun.utils import paths
 
     monkeypatch.chdir(tmp_path)
     addon = tmp_path / "addon"
@@ -60,11 +88,11 @@ def test_v8_migrates_only_bundled_paths_and_is_idempotent(
     from types import SimpleNamespace
 
     monkeypatch.setattr(
-        v008_bundled_assets,
+        paths,
         "find_spec",
         lambda name: (
             SimpleNamespace(submodule_search_locations=[str(addon)])
-            if addon_present
+            if name == "mobilerun_agents" and addon_present
             else None
         ),
     )

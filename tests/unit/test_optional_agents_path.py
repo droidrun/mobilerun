@@ -1,4 +1,4 @@
-"""Optional agents can share the namespace with an editable base install."""
+"""Optional agents are independent of an editable base install."""
 
 import os
 import shutil
@@ -84,11 +84,10 @@ def test_fake_agent_entry_point_is_discovered(monkeypatch):
 
 @pytest.mark.parametrize("mode", ["present", "blocked", "absent"])
 def test_interactive_menu_uses_available_agent_epilog(mode):
-    if mode == "present" and find_spec("mobilerun.agents") is None:
+    if mode == "present" and find_spec("mobilerun_agents") is None:
         pytest.skip("present-state test requires the agents add-on")
     script = """
 import importlib.abc, sys
-import mobilerun
 from click.testing import CliRunner
 from mobilerun.addons import plugins
 from mobilerun.cli.base import menu
@@ -97,11 +96,11 @@ mode = sys.argv[1]
 if mode != "present":
     plugins.discover = lambda group: {}
 if mode == "absent":
-    mobilerun.__path__ = []
+    sys.modules["mobilerun_agents"] = None
 elif mode == "blocked":
     class Block(importlib.abc.MetaPathFinder):
         def find_spec(self, fullname, path=None, target=None):
-            if fullname == "mobilerun.agents":
+            if fullname in {"mobilerun.agents", "mobilerun_agents"}:
                 raise ModuleNotFoundError(name=fullname)
     sys.meta_path.insert(0, Block())
 menu.is_interactive = lambda: True
@@ -123,7 +122,7 @@ assert ('mobilerun agent run "open settings"' in result.output) == (mode == "pre
 
 @pytest.mark.parametrize("absent", [True, False])
 def test_root_visibility_epilog_and_completion_follow_addon(absent):
-    if not absent and find_spec("mobilerun.agents") is None:
+    if not absent and find_spec("mobilerun_agents") is None:
         pytest.skip("present-state test requires the agents add-on")
     script = """
 import importlib.abc
@@ -131,7 +130,7 @@ import sys
 if sys.argv[1] == "True":
     class BlockAgents(importlib.abc.MetaPathFinder):
         def find_spec(self, fullname, path=None, target=None):
-            if fullname == "mobilerun.agents" or fullname.startswith("mobilerun.agents."):
+            if fullname.startswith(("mobilerun.agents", "mobilerun_agents")):
                 raise ModuleNotFoundError("blocked", name=fullname)
     sys.meta_path.insert(0, BlockAgents())
 import click
@@ -175,7 +174,7 @@ import sys
 
 class BlockAgents(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "mobilerun.agents" or fullname.startswith("mobilerun.agents."):
+        if fullname.startswith(("mobilerun.agents", "mobilerun_agents")):
             raise ModuleNotFoundError("blocked", name=fullname)
 
 sys.meta_path.insert(0, BlockAgents())
@@ -218,18 +217,20 @@ def test_agents_from_another_path_are_discoverable(tmp_path):
     shutil.copytree(
         root / "mobilerun",
         base / "mobilerun",
-        ignore=shutil.ignore_patterns("agents", "__pycache__"),
+        ignore=shutil.ignore_patterns("__pycache__"),
     )
-    agents = addon / "mobilerun" / "agents"
+    agents = addon / "mobilerun_agents"
     agents.mkdir(parents=True)
     (agents / "__init__.py").write_text("MARKER = 42\n")
+    (addon / "mobilerun" / "agents").mkdir(parents=True)  # Obsolete namespace portion.
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join((str(base), str(addon)))
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import mobilerun.agents; " "assert mobilerun.agents.MARKER == 42",
+            "from importlib.util import find_spec; import mobilerun_agents; "
+            "assert mobilerun_agents.MARKER == 42; assert find_spec('mobilerun.agents') is None",
         ],
         cwd=tmp_path,
         env=env,

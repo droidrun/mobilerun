@@ -2,6 +2,7 @@
 
 import runpy
 import stat
+import sys
 
 import pytest
 import yaml
@@ -86,11 +87,12 @@ def test_standalone_resolver_reads_package_asset(tmp_path, monkeypatch):
 def test_move_into_project_after_migration(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     prompt = "config/prompts/system.jinja2"
-    addon = tmp_path / "split" / "mobilerun" / "agents"
+    addon = tmp_path / "split" / "mobilerun_agents"
     bundled = addon / "assets/prompts/system.jinja2"
     bundled.parent.mkdir(parents=True)
     (addon / "__init__.py").write_text("raise AssertionError('unexpected import')")
     bundled.write_text("bundled")
+    monkeypatch.delitem(sys.modules, "mobilerun_agents", raising=False)
     monkeypatch.syspath_prepend(str(tmp_path / "split"))
     project = tmp_path / "project"
     local = project / prompt

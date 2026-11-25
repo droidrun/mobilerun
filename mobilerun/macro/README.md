@@ -13,7 +13,7 @@ The replay CLI can attach a configured file (`credentials.enabled` and
 
 **Purpose:** Record device actions and replay them with state guards.
 
-**What belongs here / what doesn't:** Recording, matching, and deterministic replay belong here; LLM fallback belongs in agents/agent_macro.
+**What belongs here / what doesn't:** Recording, matching, and deterministic replay belong here; LLM fallback belongs in the add-on’s `agent_macro` entry point.
 
 **Contents:**
 
@@ -80,4 +80,4 @@ Replay defaults can be overridden with `MOBILERUN_MACRO_DELAY`,
 `MOBILERUN_MACRO_POLL_INTERVAL`. Set `MOBILERUN_MACRO_DIRECTORY` to change the
 default list directory. Explicit replay options take precedence.
 
-**Depends on / used by:** Uses the shared base. Independent of sandbox/, skills/, and agents/; only shared CLI helper `cli/base/` is allowed.
+**Depends on / used by:** Uses the shared base. Independent of sandbox/, skills/, and the `mobilerun_agents` add-on; only shared CLI helper `cli/base/` is allowed.

@@ -1,5 +1,4 @@
 import click
-import pytest
 from click.testing import CliRunner
 
 
@@ -92,25 +91,6 @@ def test_cancel_menu_exits_cleanly(monkeypatch):
         pass
 
     assert CliRunner().invoke(group, []).exit_code == 0
-
-
-def test_login_menu_lists_providers_and_cancels(monkeypatch):
-    pytest.importorskip("mobilerun.agents", reason="requires mobilerun-agents add-on")
-    from mobilerun.agents.cli.agent.llm.login import login
-
-    from mobilerun.cli.base import menu
-
-    monkeypatch.setattr(menu, "is_interactive", lambda: True)
-    seen = []
-
-    def select(message, choices):
-        seen.extend(choice.value for choice in choices)
-        return None
-
-    monkeypatch.setattr(menu, "select_prompt", select)
-    result = CliRunner().invoke(login, [])
-    assert result.exit_code == 0
-    assert {"openai", "anthropic", "gemini", "xai"} <= set(seen)
 
 
 def test_root_menu_does_not_load_commands_until_selected(monkeypatch):

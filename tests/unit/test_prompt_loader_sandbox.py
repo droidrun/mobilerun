@@ -8,7 +8,7 @@ from jinja2 import Environment
 
 from mobilerun.utils.prompts import PromptLoader
 
-AGENTS_SPEC = find_spec("mobilerun.agents")
+AGENTS_SPEC = find_spec("mobilerun_agents")
 PROMPTS_DIR = (
     Path(next(iter(AGENTS_SPEC.submodule_search_locations))) / "assets" / "prompts"
     if AGENTS_SPEC and AGENTS_SPEC.submodule_search_locations
