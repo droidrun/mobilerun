@@ -15,6 +15,8 @@ from mobilerun.clients.cloud.signed_http import _signed_client
 from mobilerun.models.billing import Billing
 from mobilerun.sandbox.errors import FlowCapabilityError, FlowStagingError
 
+from .models import FILE_UPLOAD_USES
+
 JSON = dict[str, Any]
 
 
@@ -195,7 +197,7 @@ async def _catalog_entry_id(sdk: AsyncMobilerun, step_name: str) -> str:
     if len(matches) != 1:
         label = (
             step_name
-            if step_name in ("functions.run", "webhooks.send")
+            if step_name in ("functions.run", "webhooks.send", FILE_UPLOAD_USES)
             else "sandbox step"
         )
         count = "no entries" if not matches else "more than one entry"
@@ -239,7 +241,21 @@ def _document(document: JSON) -> tuple[JSON, list[JSON], JSON]:
             raise ValueError
         if not (document["version"] == 1 and isinstance(document["name"], str)):
             raise ValueError
-        if document.get("settings", {}) not in ({}, {"recording": {"mode": "off"}}):
+        settings = document.get("settings", {})
+        if not (
+            isinstance(settings, dict)
+            and settings.keys() <= {"recording", "delivery"}
+            and settings.get("recording", {"mode": "off"}) == {"mode": "off"}
+        ):
+            raise ValueError
+        delivery = settings.get("delivery")
+        if "delivery" in settings and not (
+            isinstance(delivery, dict)
+            and delivery.keys() == {"destination", "folder"}
+            and delivery["destination"] == "mobilerun"
+            and isinstance(delivery["folder"], str)
+            and delivery["folder"].startswith("/")
+        ):
             raise ValueError
         on = document["on"]
         if not (isinstance(on, dict) and len(on) == 1):
@@ -276,7 +292,7 @@ def _document(document: JSON) -> tuple[JSON, list[JSON], JSON]:
             ):
                 raise ValueError
             if not (
-                step["uses"] in ("functions.run", "webhooks.send")
+                step["uses"] in ("functions.run", "webhooks.send", FILE_UPLOAD_USES)
                 and isinstance(step["with"], dict)
             ):
                 raise ValueError
@@ -287,6 +303,8 @@ def _document(document: JSON) -> tuple[JSON, list[JSON], JSON]:
             "enabled": False,
             "recording_enabled": False,
         }
+        if delivery is not None:
+            flow["delivery"] = delivery
         if "devices" in document:
             if not (
                 isinstance(document["devices"], list)
@@ -684,6 +702,27 @@ async def update_flow_devices(
         "Update flow devices",
         flow_id,
         device_ids=device_ids,
+        idempotency_key=idempotency_key,
+    )
+
+
+@requires(Billing.PAID)
+async def update_flow_delivery(
+    flow_id: str,
+    delivery: JSON | None,
+    idempotency_key: str,
+    *,
+    billing: Billing,
+    client: AsyncMobilerun | None = None,
+) -> JSON:
+    """Set or clear the workflow's delivery settings."""
+    return await _request(
+        client,
+        billing,
+        lambda sdk: sdk.workflows.flows.update,
+        "Update flow delivery",
+        flow_id,
+        delivery=delivery,
         idempotency_key=idempotency_key,
     )
 

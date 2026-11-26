@@ -33,7 +33,7 @@ from mobilerun.models.billing import Billing, ResourcePlan
 from mobilerun.models.checkout import PaymentSnapshot
 
 
-@requires(Billing.INCLUDED)
+@requires(Billing.INCLUDED, operation="Create mailbox")
 async def create(
     *,
     billing: Billing,

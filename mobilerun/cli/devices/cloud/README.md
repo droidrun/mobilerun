@@ -7,6 +7,10 @@ Terminate permanently deletes the phone and requires confirmation (`--yes` in
 automation). Missing IDs offer the cloud-device picker on a terminal.
 
 Cloud phone operations can incur charges.
+`resume --billing paid` allows charges without asking. Under a restricted mode,
+resume checks the existing phone's billing strategy once. A subscription phone
+can resume without asking; otherwise the command asks before retrying with
+`paid`. Use `--yes` to approve that retry in automation.
 
 ```sh
 mobilerun device cloud status

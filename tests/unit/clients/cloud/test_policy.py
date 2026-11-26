@@ -53,7 +53,7 @@ from tests.support.paths import REPO_ROOT
 def _boundaries():
     root = REPO_ROOT / "mobilerun/clients/cloud"
     for path in sorted(root.glob("*.py")):
-        if path.stem in {"checkout", "errors", "payments"}:
+        if path.stem in {"billing", "checkout", "errors", "payments"}:
             continue  # Helpers are not transport or billing boundaries.
         module = importlib.import_module(f"mobilerun.clients.cloud.{path.stem}")
         for name, function in vars(module).items():
@@ -114,7 +114,9 @@ def test_included_functions_refuse_no_commerce_before_transport(function):
 
 @pytest.mark.parametrize("mode", [Billing.NO_COMMERCE, Billing.INCLUDED])
 def test_paid_proxy_refuses_lower_modes_before_transport(mode):
-    with pytest.raises(BillingError, match="buy_proxy.*requires billing='paid'"):
+    with pytest.raises(
+        BillingError, match="Buy Connect proxy.*requires billing='paid'"
+    ):
         proxies.buy_proxy("US", billing=mode)
 
 
@@ -667,7 +669,7 @@ def test_cloud_helpers_do_not_import_sdk():
 
 def test_cloud_modules_require_explicit_billing():
     for path in (REPO_ROOT / "mobilerun/clients/cloud").glob("*.py"):
-        if path.stem in {"checkout", "errors", "payments"}:
+        if path.stem in {"billing", "checkout", "errors", "payments"}:
             continue  # Helpers do not expose billable cloud operations.
         tree = ast.parse(path.read_text())
         assert not any(

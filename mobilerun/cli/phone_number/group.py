@@ -2,8 +2,6 @@
 
 import asyncio
 import json
-import sys
-from contextlib import redirect_stdout
 
 import click
 from rich.text import Text
@@ -11,8 +9,7 @@ from rich.text import Text
 from mobilerun.cli.base import render
 from mobilerun.cli.base.billing import (
     billing_option,
-    creation_billing_option,
-    creation_warning,
+    invoke_with_billing,
 )
 from mobilerun.cli.base.checkout import complete_checkout
 from mobilerun.cli.base.choices import cloud_devices, numbers
@@ -25,7 +22,6 @@ from mobilerun.cli.base.prompts import (
     select_prompt_async as select_prompt,
 )
 from mobilerun.cli.base.run import coro
-from mobilerun.cli.base.safety import confirm_action_async
 from mobilerun.clients.cloud import devices
 from mobilerun.clients.cloud import numbers as cloud_numbers
 from mobilerun.clients.cloud.client import cloud_client
@@ -145,18 +141,11 @@ async def number_countries(as_json: bool, billing: str) -> None:
 async def number_send(
     number_id: str, to: str, text: str, yes: bool, billing: str
 ) -> None:
-    if Billing(billing) != Billing.PAID:
-        raise click.BadParameter(
-            "Sending SMS may incur charges; use --billing paid.", param_hint="--billing"
-        )
-    await confirm_action_async(
-        "send SMS",
-        billing,
-        f"Sending SMS from {number_id} may incur charges.",
+    await invoke_with_billing(
+        lambda mode: cloud_numbers.send(number_id, to, text, billing=mode),
+        Billing(billing),
         yes=yes,
-        err=True,
     )
-    await cloud_numbers.send(number_id, to, text, billing=Billing(billing))
     render.success(f"Sent SMS from {number_id} to {to}")
 
 
@@ -239,7 +228,7 @@ async def number_list(billing: str, as_json: bool) -> None:
     help="Payment wait timeout in seconds.",
 )
 @click.option("--country", default=None, help="Country code for the number.")
-@creation_billing_option
+@billing_option
 @coro
 async def number_create(
     country: str | None,
@@ -272,27 +261,22 @@ async def number_create(
         country = await select_prompt("Choose a number country", choices)
         if country is None:
             raise click.Abort()
-    warning = (
-        "Renting requires paid billing and may incur charges."
-        if plan == "rent"
-        else creation_warning(billing)
-    )
-    await confirm_action_async(
-        "create number", billing, f"{warning} Plan: {plan}.", yes=yes, err=True
-    )
-    with redirect_stdout(sys.stderr):
-        item = await complete_checkout(
+    item, mode = await invoke_with_billing(
+        lambda attempt: complete_checkout(
             PhoneNumber(
                 country=country,
-                billing=Billing(billing),
+                billing=attempt,
                 plan=plan,
                 keep=True,
                 checkout="browser",
                 payment_timeout=payment_timeout,
             )
-        )
+        ),
+        Billing(billing),
+        yes=yes,
+    )
     try:
-        data = (await cloud_numbers.retrieve(item.id, billing=Billing(billing))).data
+        data = (await cloud_numbers.retrieve(item.id, billing=mode)).data
     except Exception as exc:
         reason = str(exc) if isinstance(exc, MobilerunError) else type(exc).__name__
         click.echo(f"{item.id} created; details unavailable ({reason})", err=True)

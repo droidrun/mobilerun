@@ -812,7 +812,6 @@ def test_known_device_validation_code_is_safe():
 
 def test_noninteractive_create_forwards_missing_country(monkeypatch):
     monkeypatch.setattr(group, "is_interactive", lambda: False)
-    monkeypatch.setattr(group, "confirm_action_async", AsyncMock())
     created = []
 
     async def phone(**kwargs):
@@ -847,7 +846,6 @@ def test_number_create_prompts_for_supported_country(monkeypatch):
         ),
     )
     monkeypatch.setattr(group, "select_prompt", AsyncMock(return_value="US"))
-    monkeypatch.setattr(group, "confirm_action_async", AsyncMock())
     created = []
 
     async def phone(**kwargs):

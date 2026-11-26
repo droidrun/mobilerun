@@ -31,7 +31,11 @@ source ~/.agent-env; .venv/bin/pytest --smoke tests/unit/smoke/test_sandbox_func
 
 `test_device_free_sandbox_webhook` is a separate paid check; it also needs
 `MOBILERUN_SMOKE_WEBHOOK_URL` pointing to a dedicated HTTPS receiver you control.
-Running the whole file runs both.
+`test_device_free_sandbox_files` is another paid check. Use a saved-routine-files
+capable environment (staging or develop). It verifies a PNG saved to a unique
+folder, checks that redeploying without `files` removes delivery, and deletes
+the owned deployment and saved files in that folder. Running the whole file
+selects all three checks.
 
 To check discovery without calling the cloud:
 

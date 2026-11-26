@@ -348,6 +348,30 @@ def test_list_and_existing_status(real_env):
     asyncio.run(run())
 
 
+@pytest.mark.smoke_cloud
+def test_proxy_list_included_json(real_env):
+    if not os.getenv("MOBILERUN_API_KEY"):
+        pytest.skip("Cloud API key is not set")
+    result = subprocess.run(
+        [
+            str(Path(sys.executable).with_name("mobilerun")),
+            "proxy",
+            "list",
+            "--included",
+            "--billing",
+            "no_commerce",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, "Cloud CLI failed (output withheld)"
+    entries = json.loads(result.stdout)
+    assert isinstance(entries, list)
+    assert all(set(entry) == {"id", "country", "status", "type"} for entry in entries)
+
+
 @pytest.mark.smoke
 @pytest.mark.smoke_device
 def test_local_proxy_cleared(real_env):

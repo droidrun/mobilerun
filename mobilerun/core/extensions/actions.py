@@ -14,6 +14,7 @@ from typing import (
     Concatenate,
     Literal,
     ParamSpec,
+    Protocol,
     TypeVar,
     cast,
     get_type_hints,
@@ -23,6 +24,7 @@ from typing import (
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, create_model
 
 from mobilerun.errors.operators import ExtensionActionError
+from mobilerun.models.billing import Billing
 from mobilerun.models.context import JSONValue
 
 if TYPE_CHECKING:
@@ -35,11 +37,23 @@ S = TypeVar("S")
 Audience = Literal["python", "operator", "cli"]
 
 
+class BillingRetry(Protocol):
+    """Run a preflight-guarded operation, retrying only with authorized billing."""
+
+    def __call__(
+        self, operation: Callable[[Billing], Awaitable[R]], billing: Billing, /
+    ) -> Awaitable[tuple[R, Billing]]: ...
+
+
 @dataclass(frozen=True)
 class Declaration:
     public: bool = True
     sensitive_parameters: frozenset[str] = frozenset()
     requires_device: bool = False
+
+
+_RetryHandler = Callable[Concatenate[S, BillingRetry, P], Awaitable[R]]
+_RetryCall = Callable[[BillingRetry, dict[str, Any]], Awaitable[object]]
 
 
 @overload
@@ -57,14 +71,30 @@ def action(
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]: ...
 
 
+@overload
+def action(
+    *,
+    public: bool = True,
+    sensitive_parameters: frozenset[str] = frozenset(),
+    billing_retry: _RetryHandler[S, P, R],
+) -> Callable[
+    [Callable[Concatenate[S, P], Awaitable[R]]],
+    Callable[Concatenate[S, P], Awaitable[R]],
+]: ...
+
+
 def action(
     fn: Callable[..., Any] | None = None,
     *,
     public: bool = True,
     sensitive_parameters: frozenset[str] = frozenset(),
+    billing_retry: Callable[..., Awaitable[Any]] | None = None,
 ) -> Any:
     """Declare a documented async extension method; direct calls stay typed."""
-    decorate = _decorate(Declaration(public, frozenset(sensitive_parameters)))
+    decorate = _decorate(
+        Declaration(public, frozenset(sensitive_parameters)),
+        billing_retry=billing_retry,
+    )
     return decorate if fn is None else decorate(fn)
 
 
@@ -99,6 +129,8 @@ def device_action(
 
 def _decorate(
     declaration: Declaration,
+    *,
+    billing_retry: Callable[..., Awaitable[Any]] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
 
     def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -106,14 +138,14 @@ def _decorate(
             raise TypeError("Actions must be async methods")
         if not inspect.getdoc(fn):
             raise TypeError("Actions require a docstring")
-        for name, parameter in inspect.signature(fn).parameters.items():
+        signature = inspect.signature(fn)
+        for name, parameter in signature.parameters.items():
             if (
                 name in declaration.sensitive_parameters
                 and parameter.default is not parameter.empty
             ):
                 raise TypeError("Sensitive action parameters cannot declare a default")
 
-        signature = inspect.signature(fn)
         if declaration.requires_device:
             parameters = list(signature.parameters.values())
             if (
@@ -140,6 +172,21 @@ def _decorate(
             return await extension._invoke_action(fn, args, kwargs)
 
         invoke.__dict__["_extension_action"] = declaration
+        if billing_retry is not None:
+
+            async def retry_call(
+                extension: Extension, policy: BillingRetry, arguments: dict[str, Any]
+            ) -> object:
+                @wraps(fn)
+                async def authorized(owner: Extension, /, **validated: Any) -> object:
+                    return await billing_retry(owner, policy, **validated)
+
+                return await extension._invoke_action(
+                    authorized, (extension,), arguments
+                )
+
+            # wraps() copies metadata; only this exact wrapper grants consent handling.
+            invoke.__dict__["_billing_handler"] = (invoke, retry_call)
         invoke.__dict__["__signature__"] = signature
         return invoke
 
@@ -166,6 +213,11 @@ class Action:
     _call: Callable[..., Awaitable[Any]] = field(repr=False, compare=False)
     _arguments: type = field(repr=False, compare=False)
     _returns: TypeAdapter[Any] = field(repr=False, compare=False)
+    _retry_call: _RetryCall | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def supports_billing_retry(self) -> bool:
+        return self._retry_call is not None
 
     @classmethod
     def compile(
@@ -176,6 +228,7 @@ class Action:
         declaration: Declaration,
         *,
         description: str | None = None,
+        retry_call: _RetryCall | None = None,
     ) -> Action:
         signature = inspect.signature(fn)
         raw = inspect.unwrap(fn)
@@ -222,6 +275,7 @@ class Action:
             fn,
             arguments,
             returns,
+            retry_call,
         )
 
     def validate(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -311,10 +365,20 @@ class ActionSet:
         *,
         audience: Audience = "python",
         timeout: float | None = None,
+        billing_retry: BillingRetry | None = None,
     ) -> object:
+        """Invoke a validated action, optionally providing billing consent policy."""
         entry = self.get(name)
         if audience != "python" and not entry.public:
             raise ExtensionActionError(f"Action {name} is restricted")
         validated = entry.validate(arguments)
         async with asyncio.timeout(timeout):
+            if billing_retry is not None:
+                if entry._retry_call is None:
+                    raise ExtensionActionError(
+                        f"Action {name} does not support billing retry"
+                    )
+                return entry.validate_result(
+                    await entry._retry_call(billing_retry, validated)
+                )
             return entry.validate_result(await entry._call(**validated))

@@ -1,23 +1,19 @@
 """Cloud mailbox commands."""
 
 import json
-import sys
-from contextlib import redirect_stdout
 
 import click
 
 from mobilerun.cli.base import render
 from mobilerun.cli.base.billing import (
     billing_option,
-    creation_billing_option,
-    creation_warning,
+    invoke_with_billing,
 )
 from mobilerun.cli.base.checkout import complete_checkout
 from mobilerun.cli.base.choices import mailboxes
 from mobilerun.cli.base.cleanup import cleanup
 from mobilerun.cli.base.menu import MenuGroup, PromptingArgument
 from mobilerun.cli.base.run import coro
-from mobilerun.cli.base.safety import confirm_action_async
 from mobilerun.clients.cloud import mailboxes as cloud_mailboxes
 from mobilerun.clients.cloud.mailboxes import list_mailboxes
 from mobilerun.core.mailbox import CloudMailbox as Mailbox
@@ -129,31 +125,26 @@ async def mailbox_list(billing: str, as_json: bool) -> None:
     default=600,
     help="Payment wait timeout in seconds.",
 )
-@creation_billing_option
+@billing_option
 @coro
 async def mailbox_create(
     billing: str, yes: bool, payment_timeout: float, plan: str, as_json: bool
 ) -> None:
-    warning = (
-        "Renting requires paid billing and may incur charges."
-        if plan == "rent"
-        else creation_warning(billing)
-    )
-    await confirm_action_async(
-        "create mailbox", billing, f"{warning} Plan: {plan}.", yes=yes, err=True
-    )
-    with redirect_stdout(sys.stderr):
-        item = await complete_checkout(
+    item, mode = await invoke_with_billing(
+        lambda attempt: complete_checkout(
             Mailbox(
-                billing=Billing(billing),
+                billing=attempt,
                 plan=plan,
                 keep=True,
                 checkout="browser",
                 payment_timeout=payment_timeout,
             )
-        )
+        ),
+        Billing(billing),
+        yes=yes,
+    )
     try:
-        data = (await cloud_mailboxes.retrieve(item.id, billing=Billing(billing))).data
+        data = (await cloud_mailboxes.retrieve(item.id, billing=mode)).data
     except Exception as exc:
         reason = str(exc) if isinstance(exc, MobilerunError) else type(exc).__name__
         click.echo(f"{item.id} created; details unavailable ({reason})", err=True)

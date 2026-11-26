@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import click
 import pytest
 from click.testing import CliRunner
+from mobilerun_sdk.types.connect.proxy_list_response import ProxyListResponse
 
 from mobilerun.cli.base import menu
 from mobilerun.cli.base.errors import render_error
@@ -169,7 +170,12 @@ def test_proxy_list_and_status_show_metadata_without_credentials(monkeypatch):
     import mobilerun.cli.proxy.group as module
 
     proxy = NS(
-        id="proxy-1", status="active", country="DE", type="mobile", password="secret"
+        id="proxy-1",
+        status="active",
+        country="DE",
+        type="mobile",
+        password="secret",
+        billing_mode="standalone_paid",
     )
     monkeypatch.setattr(
         module,
@@ -183,12 +189,126 @@ def test_proxy_list_and_status_show_metadata_without_credentials(monkeypatch):
         "Proxies · 1" in human.stdout
         and "DE" in human.stdout
         and "active" in human.stdout
+        and "standalone paid" in human.stdout
     )
     machine = runner.invoke(module.proxy, ["list", "--json"])
     assert json.loads(machine.stdout)[0]["id"] == "proxy-1"
     assert "secret" not in machine.output
     status = runner.invoke(module.proxy, ["status", "proxy-1"])
     assert "● active" in status.stdout and "DE" in status.stdout
+
+
+@pytest.fixture
+def fake_proxy_pages(monkeypatch):
+    from mobilerun.clients.cloud import proxies
+
+    def item(id, **fields):
+        return {
+            "id": id,
+            "country": "de",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "host": "example.test",
+            "name": id,
+            "port": 1080,
+            "status": "active",
+            "type": "mobile",
+            "username": "never-print",
+            **fields,
+        }
+
+    pages = [
+        [item("paid-proxy", billingMode="standalone_paid"), item("unknown-proxy")],
+        [item("included-proxy", billingMode="included")],
+    ]
+
+    async def list_page(*, page, page_size):
+        return ProxyListResponse.model_validate(
+            {
+                "items": pages[page - 1],
+                "pagination": {
+                    "hasNext": page < 2,
+                    "hasPrev": page > 1,
+                    "page": page,
+                    "pages": 2,
+                    "pageSize": page_size,
+                    "total": sum(map(len, pages)),
+                },
+            }
+        )
+
+    @asynccontextmanager
+    async def client(*args, **kwargs):
+        yield NS(connect=NS(proxies=NS(list=list_page)))
+
+    monkeypatch.setattr(proxies, "cloud_client", client)
+    return pages
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_proxy_list_included_keeps_paging_after_filtered_page(
+    fake_proxy_pages, as_json
+):
+    from mobilerun.cli.proxy.group import proxy
+
+    args = ["list", "--included"] + (["--json"] if as_json else [])
+    result = CliRunner().invoke(proxy, args)
+    assert result.exit_code == 0, result.output
+    if as_json:
+        assert json.loads(result.stdout) == [
+            {
+                "id": "included-proxy",
+                "country": "de",
+                "status": "active",
+                "type": "mobile",
+            }
+        ]
+    else:
+        assert "Proxies · 1" in result.stdout
+        assert result.stdout.splitlines()[-1].split()[-1] == "included"
+        assert "included-proxy" in result.stdout
+        assert (
+            "paid-proxy" not in result.stdout and "unknown-proxy" not in result.stdout
+        )
+    assert "never-print" not in result.output
+
+
+def test_proxy_menu_dispatches_included_list(monkeypatch, fake_proxy_pages):
+    from mobilerun.cli.app import cli
+
+    def select(message, choices):
+        assert message == "cli proxy: select a command"
+        assert [choice.label for choice in choices] == [
+            "bind",
+            "buy",
+            "included",
+            "list",
+            "release",
+            "status",
+            "Back",
+        ]
+        return "included"
+
+    monkeypatch.setattr(menu, "is_interactive", lambda: True)
+    monkeypatch.setattr(menu, "select_prompt", select)
+    result = CliRunner().invoke(cli, ["proxy"], prog_name="cli", catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    assert "included-proxy" in result.stdout
+    assert "paid-proxy" not in result.stdout and "unknown-proxy" not in result.stdout
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_proxy_list_included_empty(fake_proxy_pages, as_json):
+    from mobilerun.cli.proxy.group import proxy
+
+    fake_proxy_pages[1].clear()
+    args = ["list", "--included"] + (["--json"] if as_json else [])
+    result = CliRunner().invoke(proxy, args)
+    assert result.exit_code == 0, result.output
+    if as_json:
+        assert json.loads(result.stdout) == []
+    else:
+        assert "No included proxies" in result.stdout
+        assert "proxy buy" not in result.stdout
 
 
 def test_number_and_mailbox_lists_show_metadata_and_json(monkeypatch):

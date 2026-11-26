@@ -2,7 +2,7 @@
 
 CLI mailbox commands and helpers.
 
-Creating a rented mailbox costs money; the command below requires confirmation.
+Creating a rented mailbox costs money.
 
 ## Quick example
 
@@ -12,6 +12,9 @@ mobilerun mailbox create --billing paid --plan rent
 ```
 
 Plans: `auto` uses included quota first; `included` never rents; `rent` requires paid billing.
+`--billing paid` allows charges without a prompt. If a billing guard rejects the
+selected mode, the command can retry once with the required mode after consent. Use `--yes`
+to approve that retry in automation. Exhausted included quota is not retried.
 
 `mailbox status MAILBOX` shows its address and lifecycle state; `mailbox code
 MAILBOX` waits for a verification code. Create, status and release support `--json`.

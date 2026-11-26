@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import SandboxDeclarationError, SandboxPackagingError
-from .models import Artifact, CloudDeclaration
+from .models import FILES_RETURN_ERROR, Artifact, CloudDeclaration
 from .settings import RUNTIME_MODULE, get_sandbox_settings
 
 JSON = dict[str, Any]
@@ -127,7 +127,16 @@ def _declaration(
                     "The manual trigger was removed; use an endpoint with device= to attach a device"
                 )
             if (
-                keyword.arg not in {"name", "schedule", "device", "endpoint", "webhook"}
+                keyword.arg
+                not in {
+                    "name",
+                    "schedule",
+                    "device",
+                    "endpoint",
+                    "webhook",
+                    "files",
+                    "files_folder",
+                }
                 or keyword.arg in values
             ):
                 raise ValueError("unknown or duplicate option")
@@ -143,12 +152,13 @@ def _declaration(
     return declaration, func
 
 
-def read_declaration(path: Path) -> CloudDeclaration:
+def read_declaration(path: Path, *, source: str | None = None) -> CloudDeclaration:
     """Read a single literal declaration without importing the user's file."""
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise SandboxDeclarationError(f"Cannot read declaration: {path}") from exc
+    if source is None:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise SandboxDeclarationError(f"Cannot read declaration: {path}") from exc
     return _declaration(_parse(source, str(path)), str(path))[0]
 
 
@@ -538,41 +548,90 @@ def transform(source: str, *, filename: str = "main.py") -> str:
 
 # Use the same loader and inspector as the runtime's `inspect` command. Run in
 # its existing child process: never import the user's original module or call
-# the function. Only scheduled inspections need the additional model check.
-_SCHEDULE_INSPECTOR = f"""\
+# the function. Scheduled and file-backed routines need additional model checks.
+_MODEL_INSPECTOR = f"""\
 import json, sys
 from contextlib import redirect_stdout
 from pydantic import ValidationError
+from pydantic.json_schema import GenerateJsonSchema
 from {RUNTIME_MODULE}.loader import load_script
 from {RUNTIME_MODULE}._contract import inspect_entry
+from {RUNTIME_MODULE}.schema import _walk
+
+class ProjectionSchema(GenerateJsonSchema):
+    def generate_inner(self, schema):
+        result = super().generate_inner(schema)
+        serializer = schema.get('serialization') or {{}}
+        if self.mode == 'serialization' and serializer.get('type') in ('any', 'function-plain', 'function-wrap'):
+            # Mark this occurrence, not the shared definition used by other fields.
+            return dict(result, **{{'x-mobilerun-dynamic-serializer': True}})
+        return result
+
+    def field_is_required(self, field, total):
+        if self.mode == 'serialization' and field['type'] in ('model-field', 'dataclass-field'):
+            # The runner's model_dump_json(by_alias=True) includes defaults and nulls.
+            return field.get('serialization_exclude_if') is None
+        return super().field_is_required(field, total)
+
+    def model_fields_schema(self, schema):
+        result = super().model_fields_schema(schema)
+        if any(field.get('serialization_exclude') for field in schema['fields'].values()) or any(
+            field.get('alias', field['property_name']) not in result.get('properties', {{}})
+            for field in schema.get('computed_fields', [])
+        ):
+            result['x-mobilerun-omittable-fields'] = True
+        return result
 
 with redirect_stdout(sys.stderr):
-    entry = load_script(sys.argv[1])
+    flags, path = sys.argv[1:-1], sys.argv[-1]
+    entry = load_script(path)
     document = inspect_entry(entry)
-    try:
-        entry.input_model.model_validate_json('{{}}')
-    except ValidationError as exc:
-        properties = document['inputSchema'].get('properties', {{}})
-        locations = (error['loc'] for error in exc.errors(
-            include_input=False, include_context=False, include_url=False))
-        document['scheduleInputErrors'] = sorted({{
-            loc[0] for loc in locations if loc and loc[0] in properties
-        }})
-    else:
-        document['scheduleInputErrors'] = None
+    if 'files' in flags:
+        document['validFilesOutput'] = entry.output_model is not None and not entry.allows_none
+    if 'file_webhook' in flags and document['validFilesOutput']:
+        raw = entry.output_model.model_json_schema(mode='serialization', schema_generator=ProjectionSchema)
+        document['projectionSchema'] = _walk(raw, raw.get('$defs', {{}}), (), '')
+    if 'scheduled' in flags:
+        try:
+            entry.input_model.model_validate_json('{{}}')
+        except ValidationError as exc:
+            properties = document['inputSchema'].get('properties', {{}})
+            locations = (error['loc'] for error in exc.errors(
+                include_input=False, include_context=False, include_url=False))
+            document['scheduleInputErrors'] = sorted({{
+                loc[0] for loc in locations if loc and loc[0] in properties
+            }})
+        else:
+            document['scheduleInputErrors'] = None
 print(json.dumps(document))
 """
 
 
-def inspect_source(source: str, *, scheduled: bool = False) -> JSON:
+def inspect_source(
+    source: str,
+    *,
+    scheduled: bool = False,
+    files: bool = False,
+    file_webhook: bool = False,
+) -> JSON:
     """Inspect trusted generated source in an isolated temporary directory."""
+    files = files or file_webhook
     try:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "script.py"
             path.write_text(source, encoding="utf-8")
+            flags = [
+                name
+                for name, enabled in (
+                    ("scheduled", scheduled),
+                    ("files", files),
+                    ("file_webhook", file_webhook),
+                )
+                if enabled
+            ]
             args = (
-                ["-c", _SCHEDULE_INSPECTOR]
-                if scheduled
+                ["-c", _MODEL_INSPECTOR, *flags]
+                if flags
                 else ["-m", RUNTIME_MODULE, "inspect"]
             )
             result = subprocess.run(
@@ -595,9 +654,16 @@ def inspect_source(source: str, *, scheduled: bool = False) -> JSON:
             )
             or "outputSchema" not in document
             or (scheduled and "scheduleInputErrors" not in document)
+            or (files and not isinstance(document.get("validFilesOutput"), bool))
         ):
             raise SandboxPackagingError(
                 "Local sandbox inspection returned an invalid document"
+            )
+        if files and not document["validFilesOutput"]:
+            raise SandboxDeclarationError(FILES_RETURN_ERROR)
+        if file_webhook and not isinstance(document.get("projectionSchema"), dict):
+            raise SandboxPackagingError(
+                "Local sandbox inspection returned an invalid projection schema"
             )
         if scheduled and (fields := document["scheduleInputErrors"]) is not None:
             properties = document["inputSchema"].get("properties", {})
@@ -619,26 +685,88 @@ def inspect_source(source: str, *, scheduled: bool = False) -> JSON:
         raise SandboxPackagingError("Local sandbox inspection failed") from None
 
 
-def package(path: Path) -> Artifact:
+def _validate_file_output(output: JSON, path: str) -> None:
+    """Require the inspected result schema to guarantee a string at this path."""
+    hint = f"files output field {path!r} must be a required, non-null string"
+
+    def dereference(node: Any) -> JSON:
+        seen: set[str] = set()
+        while isinstance(node, dict):
+            if node.get("nullable") is True or {"anyOf", "oneOf"} & node.keys():
+                break
+            if "$ref" not in node:
+                return node
+            ref = node["$ref"]
+            if not isinstance(ref, str) or not ref.startswith("#/") or ref in seen:
+                break
+            seen.add(ref)
+            node = output
+            for token in ref[2:].split("/"):
+                node = (
+                    node.get(token.replace("~1", "/").replace("~0", "~"))
+                    if isinstance(node, dict)
+                    else None
+                )
+        raise SandboxDeclarationError(hint)
+
+    node: Any = output
+    parts = path.split(".")
+    for offset, part in enumerate(parts):
+        node = dereference(node)
+        if node.get("type") == "object" and part in node.get("required", []):
+            node = node.get("properties", {}).get(part)
+        elif node.get("type") == "array" and part.isdecimal():
+            try:
+                size = int(part) + 1
+            except ValueError:
+                raise SandboxDeclarationError(
+                    f"files output field {path!r} has an unsupported array index"
+                ) from None
+            minimum = node.get("minItems", 0)
+            if type(minimum) is not int or minimum < size:
+                parent = ".".join(parts[:offset])
+                raise SandboxDeclarationError(
+                    f"files output field {path!r} requires min_length={size} on {parent or 'the result array'}"
+                )
+            node = node.get("items")
+        else:
+            raise SandboxDeclarationError(hint)
+    if dereference(node).get("type") != "string":
+        raise SandboxDeclarationError(hint)
+
+
+def package(path: Path, *, source: str | None = None) -> Artifact:
     """Build and inspect an artifact before any cloud operation."""
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise SandboxPackagingError(f"Cannot read source: {path}") from exc
+    if source is None:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise SandboxPackagingError(f"Cannot read source: {path}") from exc
     declaration = _declaration(_parse(source, str(path)), str(path))[0]
     generated = transform(source, filename=str(path))
     scheduled = declaration.schedule is not None
-    document = inspect_source(generated, scheduled=scheduled)
+    if declaration.files:
+        document = inspect_source(
+            generated,
+            scheduled=scheduled,
+            files=True,
+            file_webhook=declaration.webhook is not None,
+        )
+        for field_path in declaration.files.values():
+            _validate_file_output(document["outputSchema"], field_path)
+    else:
+        document = inspect_source(generated, scheduled=scheduled)
     digest = hashlib.sha256(
         RUNTIME_MODULE.encode("utf-8") + b"\0" + generated.encode("utf-8")
     ).hexdigest()
+    output = document.get("projectionSchema", document["outputSchema"])
     if scheduled:
         return _ScheduledArtifact(
             declaration,
             generated,
             digest,
             document["inputSchema"],
-            document["outputSchema"],
+            output,
             inspected_source=generated,
         )
     return Artifact(
@@ -646,5 +774,5 @@ def package(path: Path) -> Artifact:
         generated,
         digest,
         document["inputSchema"],
-        document["outputSchema"],
+        output,
     )

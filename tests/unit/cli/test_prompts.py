@@ -493,9 +493,10 @@ def test_json_redirect_does_not_make_stdout_noninteractive_look_interactive(
     import sys
 
     from mobilerun.cli.proxy import group
+    from mobilerun.clients.cloud import proxies
 
-    buy = AsyncMock()
-    monkeypatch.setattr(group, "buy_proxy", buy)
+    client = AsyncMock(side_effect=AssertionError("must not construct a client"))
+    monkeypatch.setattr(proxies, "cloud_client", client)
     monkeypatch.setattr(safety, "confirm_prompt_async", AsyncMock(return_value=True))
 
     def check_ttys():
@@ -506,10 +507,12 @@ def test_json_redirect_does_not_make_stdout_noninteractive_look_interactive(
         return sys.stdin.isatty() and sys.stdout.isatty()
 
     monkeypatch.setattr(menu, "is_interactive", check_ttys)
-    result = CliRunner().invoke(group.proxy, ["buy", "--country", "US", "--json"])
+    result = CliRunner().invoke(
+        group.proxy, ["buy", "--country", "US", "--json", "--billing", "included"]
+    )
     assert result.exit_code != 0
     assert "--yes" in result.output
-    buy.assert_not_awaited()
+    client.assert_not_called()
     safety.confirm_prompt_async.assert_not_awaited()
 
 
@@ -638,22 +641,6 @@ def test_unknown_command_suggests_nearest_match() -> None:
     assert "Did you mean 'device'?" in result.output
 
 
-def test_proxy_buy_requires_yes_in_non_tty(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mobilerun.cli.proxy import group
-
-    buy = AsyncMock(return_value=SimpleNamespace(id="p1"))
-    monkeypatch.setattr(group, "buy_proxy", buy)
-    monkeypatch.setattr(menu, "is_interactive", lambda: False)
-    result = CliRunner().invoke(group.proxy, ["buy", "--country", "DE"])
-    assert result.exit_code == 1
-    assert "Refusing to buy proxy without confirmation; pass --yes." in result.output
-    buy.assert_not_awaited()
-    result = CliRunner().invoke(group.proxy, ["buy", "--country", "DE", "--yes"])
-    assert result.exit_code == 0, result.output
-    assert "✓ Bought proxy p1 (DE)" in result.output
-    buy.assert_awaited_once()
-
-
 def test_proxy_status_json_redacts_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     from mobilerun.cli.proxy import group
 
@@ -680,8 +667,6 @@ def test_proxy_status_json_redacts_secrets(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.parametrize(
     "module_name,command,args,action",
     [
-        ("mobilerun.cli.mailbox.group", "mailbox", ["create"], "create mailbox"),
-        ("mobilerun.cli.phone_number.group", "number", ["create"], "create number"),
         (
             "mobilerun.cli.mailbox.group",
             "mailbox",
@@ -710,23 +695,6 @@ def test_resource_actions_refuse_noninteractive_without_yes(
     result = CliRunner().invoke(group, args)
     assert result.exit_code == 1, result.output
     assert f"Refusing to {action} without confirmation; pass --yes." in result.output
-
-
-def test_interactive_buy_defaults_no_and_warns(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mobilerun.cli.proxy import group
-
-    monkeypatch.setattr(menu, "is_interactive", lambda: True)
-    from mobilerun.cli.base import safety
-
-    prompt = AsyncMock(return_value=False)
-    monkeypatch.setattr(safety, "confirm_prompt_async", prompt)
-    buy = AsyncMock(return_value=SimpleNamespace(id="p1"))
-    monkeypatch.setattr(group, "buy_proxy", buy)
-    result = CliRunner().invoke(group.proxy, ["buy", "--country", "DE"], input="n\n")
-    assert result.exit_code == 0, result.output
-    assert "Billing: paid. This may incur charges." in result.output
-    prompt.assert_awaited_once_with("Continue?", default=False)
-    buy.assert_not_awaited()
 
 
 def test_auth_status_json_masks_key(monkeypatch: pytest.MonkeyPatch) -> None:

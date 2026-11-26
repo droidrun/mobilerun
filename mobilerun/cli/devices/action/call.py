@@ -2,10 +2,12 @@
 
 import json
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 import click
 
+from mobilerun.cli.base.billing import invoke_with_billing
 from mobilerun.cli.base.menu import is_interactive
 from mobilerun.cli.base.prompts import SelectChoice
 from mobilerun.cli.base.prompts import text_prompt_async as text_prompt
@@ -14,7 +16,8 @@ from mobilerun.cli.base.safety import confirm_action_async
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.cli.devices.base.pickers import choose_value_async as choose_value
 from mobilerun.config.settings import get_settings
-from mobilerun.core.extensions import Action
+from mobilerun.core.devices import Device
+from mobilerun.core.extensions import Action, BillingRetry
 from mobilerun.errors.base import MobilerunError
 from mobilerun.models.billing import Billing
 from mobilerun.models.context import JSONValue
@@ -52,6 +55,32 @@ async def _arguments(action: Action, supplied: tuple[str, ...]) -> dict[str, JSO
     }
 
 
+async def _billing_policy(
+    device: Device, entry: Action, *, yes: bool
+) -> BillingRetry | None:
+    if entry.supports_billing_retry:
+        return partial(invoke_with_billing, yes=yes)
+
+    # Unmarked SMS providers cannot safely be retried; require consent up front.
+    owner = device.extensions.get(entry.owner)
+    is_sms_send = entry.name == "sms.send" or (
+        entry.name.endswith(".send")
+        and owner is not None
+        and owner.role == "phone_number"
+    )
+    if not is_sms_send:
+        return None
+    billing = get_settings().MOBILERUN_BILLING
+    if billing is not Billing.PAID:
+        raise click.ClickException(
+            "Sending SMS may incur charges; set MOBILERUN_BILLING=paid."
+        )
+    await confirm_action_async(
+        "send SMS", billing.value, "Sending SMS may incur charges.", yes=yes, err=True
+    )
+    return None
+
+
 @click.command("call")
 @click.argument("action", required=False)
 @click.option(
@@ -74,6 +103,7 @@ async def call(
     """Call an action on the selected device."""
     try:
         async with target.open() as device:
+            assert device is not None  # @device_command requires a device.
             selected = await choose_value(
                 action,
                 "action",
@@ -89,24 +119,12 @@ async def call(
             entry = device.actions.get(selected)
             if not entry.public:
                 raise click.ClickException(f"Action {selected} is restricted")
-            if entry.name == "sms.send" or (
-                entry.name.endswith(".send")
-                and device.extensions[entry.owner].role == "phone_number"
-            ):
-                billing = get_settings().MOBILERUN_BILLING
-                if billing is not Billing.PAID:
-                    raise click.ClickException(
-                        "Sending SMS may incur charges; set MOBILERUN_BILLING=paid."
-                    )
-                await confirm_action_async(
-                    "send SMS",
-                    billing.value,
-                    "Sending SMS may incur charges.",
-                    yes=yes,
-                    err=True,
-                )
+            billing_retry = await _billing_policy(device, entry, yes=yes)
             result = await device.actions.call(
-                selected, await _arguments(entry, arguments), audience="cli"
+                selected,
+                await _arguments(entry, arguments),
+                audience="cli",
+                billing_retry=billing_retry,
             )
             serialized = entry.serialize(result)
             click.echo(

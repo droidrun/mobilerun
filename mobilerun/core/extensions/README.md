@@ -54,6 +54,16 @@ Both decorators support bare or configured forms (`@action()`,
 `@device_action(public=False, sensitive_parameters=frozenset({"text"}))`).
 Overrides inherit the original decorator unless explicitly redecorated.
 
+For a cloud operation that checks billing before any side effects, use
+`@action(billing_retry=_send_with_billing)`, where the handler accepts
+`(self, policy: BillingRetry, /, ...)` followed by the ordinary action arguments.
+The policy is bound to this handler only, never serialized or recorded.
+Callers may pass it to `actions.call(..., billing_retry=policy)` only for entries
+with `supports_billing_retry=True`. Pass the callback only the guarded operation
+and its starting billing mode; keep validation and the action lock around both
+attempts. With no policy, run once at the action's configured mode. A replacement
+method must opt in explicitly; it never inherits retry support from the old body.
+
 Bound actions still reject uncertain bindings and draining devices. Unbound
 actions retain serialization, validation, safe error wrapping, and nested-call
 rules. Local proxy status requires a device; cloud proxy status returns a

@@ -177,9 +177,7 @@ def test_every_device_command_module_matches_its_path():
     visit(device, "mobilerun.cli.devices")
 
 
-@pytest.mark.parametrize(
-    "operation", ["status", "resume", "stop", "reboot", "terminate"]
-)
+@pytest.mark.parametrize("operation", ["status", "stop", "reboot", "terminate"])
 def test_cloud_lifecycle_uses_sdk_boundary_without_phone_connect(
     monkeypatch, operation
 ):
@@ -206,7 +204,7 @@ def test_cloud_lifecycle_uses_sdk_boundary_without_phone_connect(
         module, "get_settings", lambda: NS(MOBILERUN_BILLING=Billing.NO_COMMERCE)
     )
     args = ["cloud", operation, "-d", CLOUD_ID, "--base-url", "https://example.invalid"]
-    if operation in {"terminate", "resume", "reboot"}:
+    if operation in {"terminate", "reboot"}:
         refused = CliRunner().invoke(device, args)
         assert refused.exit_code == 1
         boundary.assert_not_awaited()

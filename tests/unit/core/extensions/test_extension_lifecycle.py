@@ -7,6 +7,7 @@ import logging
 import pickle
 from dataclasses import dataclass
 from enum import Enum
+from functools import wraps
 from types import SimpleNamespace
 from typing import Annotated, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -18,7 +19,7 @@ from mobilerun.core.devices.base import Device
 from mobilerun.core.devices.components.wrapper import DeviceWrapper
 from mobilerun.core.devices.pool import DevicePool
 from mobilerun.core.devices.recording import RecordingDevice
-from mobilerun.core.extensions import Extension, action, device_action
+from mobilerun.core.extensions import BillingRetry, Extension, action, device_action
 from mobilerun.core.extensions.registry import Binding
 from mobilerun.core.phone_number import CloudPhoneNumber
 from mobilerun.core.proxy import CloudFixedProxy, ExistingCloudProxy, LocalProxy
@@ -30,10 +31,266 @@ from mobilerun.errors import (
     ExtensionNotBound,
 )
 from mobilerun.models import CloudCredentialReference, CloudTaskInputs
+from mobilerun.models.billing import Billing
 from mobilerun.models.proxy import ProxyStatus
 from tests.support.devices import MemoryDevice
 from tests.support.extensions import check_extension_contract
 from tests.support.proxy import ProxyMemory
+
+
+def test_outer_decorator_preserves_action_discovery():
+    def trace(fn):
+        @wraps(fn)
+        async def wrapper(*args, **kwargs):
+            return f"traced: {await fn(*args, **kwargs)}"
+
+        return wrapper
+
+    class Resource(Extension):
+        @trace
+        @action(public=False)
+        async def echo(self, text: str) -> str:
+            """Echo a value through the tracing decorator."""
+            return text
+
+    actions = Resource().actions
+    assert [entry.name for entry in actions.list()] == ["extension.echo"]
+    assert actions.list(audience="cli") == ()
+    assert asyncio.run(actions.call("extension.echo", {"text": "ok"})) == "traced: ok"
+
+
+@pytest.mark.parametrize("descriptor", [classmethod, staticmethod])
+def test_descriptor_override_remains_discoverable(descriptor):
+    class Parent(Extension):
+        @action
+        async def echo(self, text: str) -> str:
+            """Echo a value."""
+            return text
+
+    class Child(Parent):
+        async def class_echo(cls, text: str) -> str:
+            return f"{cls.__name__}: {text}"
+
+        async def static_echo(text: str) -> str:
+            return f"static: {text}"
+
+        echo = descriptor(class_echo if descriptor is classmethod else static_echo)
+
+    actions = Child().actions
+    expected = "Child: ok" if descriptor is classmethod else "static: ok"
+    assert [entry.name for entry in actions.list()] == ["extension.echo"]
+    assert asyncio.run(actions.call("extension.echo", {"text": "ok"})) == expected
+
+
+def test_billing_retry_is_call_policy_not_an_action_argument():
+    class Resource(Extension):
+        async def _retry(self, policy: BillingRetry, /, text: str) -> str:
+            async def send_with_mode(mode: Billing) -> str:
+                return f"{mode.value}: {text}"
+
+            result, _ = await policy(send_with_mode, Billing.INCLUDED)
+            return result
+
+        @action(billing_retry=_retry)
+        async def send(self, text: str) -> str:
+            """Send once at the configured billing mode."""
+            return f"included: {text}"
+
+    async def authorize(operation, mode):
+        assert mode is Billing.INCLUDED
+        return await operation(Billing.PAID), Billing.PAID
+
+    async def scenario():
+        resource = Resource()
+        device = MemoryDevice()
+        await resource.bind(device)
+        entry = device.actions.get("extension.send")
+        assert set(entry.input_schema["properties"]) == {"text"}
+        with pytest.raises(ExtensionActionError, match="Invalid arguments"):
+            await device.actions.call(
+                "extension.send", {"text": "hello", "billing_retry": True}
+            )
+        assert await resource.send("hello") == "included: hello"
+        assert (
+            await device.actions.call(
+                "extension.send", {"text": "hello"}, billing_retry=authorize
+            )
+            == "paid: hello"
+        )
+        assert await resource.send("hello") == "included: hello"
+        await device.close()
+
+    asyncio.run(scenario())
+
+
+def test_billing_retry_action_can_have_public_owner_argument():
+    class Resource(Extension):
+        async def _retry(self, policy: BillingRetry, /, owner: str) -> str:
+            return owner
+
+        @action(billing_retry=_retry)
+        async def echo(self, owner: str) -> str:
+            """Return the public owner argument."""
+            return owner
+
+    async def policy(operation, mode):
+        return await operation(mode), mode
+
+    async def scenario():
+        actions = Resource().actions
+        assert await actions.call("extension.echo", {"owner": "public"}) == "public"
+        assert (
+            await actions.call(
+                "extension.echo", {"owner": "public"}, billing_retry=policy
+            )
+            == "public"
+        )
+
+    asyncio.run(scenario())
+
+
+def test_diamond_inheritance_uses_merged_action_visibility_and_sensitivity():
+    class Private(Extension):
+        @action(public=False, sensitive_parameters=frozenset({"text"}))
+        async def echo(self, text: str) -> int:
+            """Return the length without exposing the text."""
+            return len(text)
+
+    class Inherited(Private):
+        pass
+
+    class Public(Private):
+        @action
+        async def echo(self, text: str) -> int:
+            """Return the length plus one."""
+            return len(text) + 1
+
+    class Diamond(Inherited, Public):
+        pass
+
+    async def scenario():
+        phone = RecordingDevice(MemoryDevice())
+        await Diamond().bind(phone)
+        for audience in ("cli", "operator"):
+            assert "extension.echo" not in {
+                entry.name for entry in phone.actions.list(audience=audience)
+            }
+        assert await phone.actions.call("extension.echo", {"text": "secret"}) == 7
+        assert phone.recorded_actions[-1]["arguments"] == {"text": "<redacted>"}
+        await phone.close()
+
+    asyncio.run(scenario())
+
+
+def test_ordinary_billing_retry_parameters_stay_public_action_arguments():
+    class Resource(Extension):
+        @action
+        async def optional(self, *, billing_retry: str | None = None) -> str | None:
+            """Echo an optional value."""
+            return billing_retry
+
+        @action
+        async def required(self, *, billing_retry: str) -> str:
+            """Echo a required value."""
+            return billing_retry
+
+        @action
+        async def defaulted(self, *, billing_retry: str = "default") -> str:
+            """Echo a defaulted value."""
+            return billing_retry
+
+    async def scenario():
+        resource = Resource()
+        for name in ("optional", "required", "defaulted"):
+            qualified = f"extension.{name}"
+            entry = resource.actions.get(qualified)
+            assert "billing_retry" in entry.input_schema["properties"]
+            result = await resource.actions.call(qualified, {"billing_retry": "custom"})
+            assert result == "custom"
+        assert await resource.optional(billing_retry=None) is None
+        assert await resource.defaulted() == "default"
+
+    asyncio.run(scenario())
+
+
+class LateBoundResource(Extension):
+    async def _retry(self, policy, /, *, billing_retry):
+        return f"authorized: {billing_retry}"
+
+    @action(billing_retry=_retry)
+    async def echo(self, *, billing_retry: "str | None" = None) -> "LateResult":
+        """Return a type that does not exist when the action is declared."""
+        return billing_retry or "default"
+
+
+LateResult = str
+
+
+def test_retry_handler_and_public_billing_retry_argument_are_independent():
+    actions = LateBoundResource().actions
+    arguments = {"billing_retry": "public"}
+    assert asyncio.run(actions.call("extension.echo", arguments)) == "public"
+    assert (
+        asyncio.run(
+            actions.call("extension.echo", arguments, billing_retry=AsyncMock())
+        )
+        == "authorized: public"
+    )
+
+
+def test_unmarked_retry_override_uses_ordinary_signature():
+    class Parent(Extension):
+        async def _retry(self, policy: BillingRetry) -> str:
+            raise AssertionError("Unmarked replacement inherited retry handler")
+
+        @action(billing_retry=_retry)
+        async def send(self) -> str:
+            """Return the parent marker."""
+            return "parent"
+
+    class Child(Parent):
+        async def send(self: "Extension", *, billing_retry: str | None = None) -> str:
+            """Do not receive a retry policy."""
+            return billing_retry or "child"
+
+    child = Child()
+    assert asyncio.run(child.send(billing_retry=None)) == "child"
+    assert asyncio.run(child.send(billing_retry="public")) == "public"
+    entry = child.actions.get("extension.send")
+    assert set(entry.input_schema["properties"]) == {"billing_retry"}
+    assert not entry.supports_billing_retry
+    with pytest.raises(ExtensionActionError, match="does not support billing retry"):
+        asyncio.run(child.actions.call(entry.name, {}, billing_retry=AsyncMock()))
+
+
+def test_retry_enabled_action_can_call_unmarked_parent():
+    class Parent(Extension):
+        @action()
+        async def send(self, text: str) -> str:
+            """Return the text without receiving billing policy."""
+            return text
+
+    class Child(Parent):
+        async def _retry(self, policy: BillingRetry, /, text: str) -> str:
+            return await super().send(text)
+
+        @action(billing_retry=_retry)
+        async def send(self, text: str) -> str:
+            """Delegate to the parent after selecting billing."""
+            return await super().send(text)
+
+    child = Child()
+    assert (
+        asyncio.run(child.actions.call("extension.send", {"text": "hello"})) == "hello"
+    )
+    assert (
+        asyncio.run(
+            child.actions.call(
+                "extension.send", {"text": "ok"}, billing_retry=AsyncMock()
+            )
+        )
+        == "ok"
+    )
 
 
 def test_reciprocal_cross_extension_actions_fail_without_deadlock():

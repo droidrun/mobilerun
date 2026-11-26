@@ -16,17 +16,20 @@ from typing import Any, TypeVar, get_args, get_origin, get_type_hints
 from pydantic import AliasChoices, AliasPath, BaseModel, TypeAdapter, ValidationError
 from pydantic_core import ErrorType, InitErrorDetails, PydanticCustomError
 
+from mobilerun.clients.cloud.billing import with_billing_retry
 from mobilerun.models.billing import Billing
 
 from . import deployment as _operations
 from .errors import SandboxDeclarationError, SandboxDeploymentError, SandboxRunError
 from .models import (
+    FILES_RETURN_ERROR,
     CloudDeclaration,
-    DeploymentPreview,
     DeploymentReceipt,
     Endpoint,
     resolve_billing,
+    validate_device,
 )
+from .packaging import package
 from .settings import get_sandbox_settings
 
 JSON = dict[str, Any]
@@ -271,9 +274,14 @@ class Remote:
         payload = (
             _validation_payload(data) if isinstance(data, BaseModel) else dict(data)
         )
-        mode = self._mode(billing)
-        fired = _sync(
-            partial(_operations.fire_remote, self.name, payload, billing=mode)
+        fired, mode = _sync(
+            partial(
+                with_billing_retry,
+                lambda attempt: _operations.fire_remote(
+                    self.name, payload, billing=attempt
+                ),
+                self._mode(billing),
+            )
         )
         run = Run(self, invocation_id=fired["invocation_id"])
         run._billing = mode
@@ -303,13 +311,21 @@ class Remote:
             runs.append(run)
         return runs
 
-    def enable(self, *, billing: Billing | str | None = None) -> JSON:
+    def enable(
+        self, *, billing: Billing | str | None = None, yes: bool = False
+    ) -> JSON:
         """Enable this owned flow."""
-        return _sync(
+        result, _ = _sync(
             partial(
-                _operations.set_enabled, self.name, True, billing=self._mode(billing)
+                with_billing_retry,
+                lambda attempt: _operations.set_enabled(
+                    self.name, True, billing=attempt
+                ),
+                self._mode(billing),
+                yes=yes,
             )
         )
+        return result
 
     def disable(self, *, billing: Billing | str | None = None) -> JSON:
         """Pause this owned flow until enabled again."""
@@ -430,19 +446,35 @@ class Cloud:
         device: str | None = None,
         endpoint: bool | None = None,
         webhook: str | None = None,
+        *,
+        files: dict[str, str] | None = None,
+        files_folder: str | None = None,
     ) -> Callable[[F], F]:
         CloudDeclaration(
-            name, schedule=schedule, device=device, endpoint=endpoint, webhook=webhook
+            name,
+            schedule=schedule,
+            device=device,
+            endpoint=endpoint,
+            webhook=webhook,
+            files=files,
+            files_folder=files_folder,
         ).validate()
+        has_files = bool(files)
 
         def decorate(func: F) -> F:
             from ._runtime import EntryPointError, script
 
+            hints = get_type_hints(func) if has_files else None
+            if hints is not None:
+                output = hints.get("return")
+                if not isinstance(output, type) or not issubclass(output, BaseModel):
+                    raise SandboxDeclarationError(FILES_RETURN_ERROR)
             try:
                 script(func)
             except EntryPointError as exc:
                 raise SandboxDeclarationError(str(exc)) from exc
-            hints = get_type_hints(func)
+            if hints is None:
+                hints = get_type_hints(func)
             first = next(iter(inspect.signature(func).parameters))
             func.remote = Remote(name, hints[first], hints.get("return"))  # type: ignore[attr-defined]
             return func
@@ -463,17 +495,23 @@ def deploy(
     device_free: bool = False,
     billing: Billing | str | None = None,
     yes: bool = False,
-    confirm: Callable[[DeploymentPreview], bool] | None = None,
 ) -> DeploymentReceipt:
-    """Explicitly deploy a script after confirmation."""
-    return _sync(
-        partial(
-            _operations.deploy_file,
-            Path(path),
+    """Explicitly deploy a script; paid billing implies confirmation."""
+
+    async def deploy_inspected() -> DeploymentReceipt:
+        mode = resolve_billing(billing)
+        validate_device(device)
+        _, mode = await with_billing_retry(
+            _operations._check_deploy_billing, mode, yes=yes
+        )
+        source = Path(path)
+        artifact = package(source)
+        return await _operations.deploy_file(
+            source,
             device=device,
             device_free=device_free,
-            billing=resolve_billing(billing),
-            yes=yes,
-            confirm=confirm,
+            billing=mode,
+            artifact=artifact,
         )
-    )
+
+    return _sync(deploy_inspected)

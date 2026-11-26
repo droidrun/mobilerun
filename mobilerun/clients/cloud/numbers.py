@@ -71,7 +71,7 @@ MessageOptions = TypedDict(
 )
 
 
-@requires(Billing.INCLUDED)
+@requires(Billing.INCLUDED, operation="Create number")
 async def create(
     *,
     billing: Billing,
@@ -368,7 +368,7 @@ async def messages(
             raise cloud_error(exc, "List SMS messages") from exc
 
 
-@requires(Billing.PAID)
+@requires(Billing.PAID, operation="Send SMS")
 async def send(
     number_id: str,
     to: str,

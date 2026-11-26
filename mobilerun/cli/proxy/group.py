@@ -7,21 +7,19 @@ from contextlib import redirect_stdout
 import click
 
 from mobilerun.cli.base import menu, render
-from mobilerun.cli.base.billing import billing_option
+from mobilerun.cli.base.billing import billing_option, invoke_with_billing
 from mobilerun.cli.base.checkout import complete_checkout
 from mobilerun.cli.base.choices import cloud_devices, proxies
 from mobilerun.cli.base.cleanup import cleanup
 from mobilerun.cli.base.menu import MenuGroup, PromptingArgument
 from mobilerun.cli.base.prompts import confirm_prompt_async
 from mobilerun.cli.base.run import coro
-from mobilerun.cli.base.safety import confirm_action_async
 from mobilerun.clients.cloud.proxies import (
     buy_proxy,
     cancel_proxy,
     get_proxy,
     list_proxies,
 )
-from mobilerun.config.settings import get_settings
 from mobilerun.core.devices.cloud import CloudDevice
 from mobilerun.core.proxy import CloudFixedProxy, UnmanagedProxyConflict
 from mobilerun.models.billing import Billing
@@ -118,43 +116,64 @@ async def proxy_bind(
 
 
 @proxy.command("list", help="List Connect proxies.")
+@click.option("--included", is_flag=True, help="Show only proxies billed as included.")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON.")
 @billing_option
 @coro
-async def proxy_list(billing: str, as_json: bool) -> None:
+async def proxy_list(billing: str, as_json: bool, included: bool) -> None:
     page = 1
     entries = []
     while True:
-        result = await list_proxies(billing=Billing(billing), page=page, page_size=100)
-        for item in result.items:
-            entries.append(
-                {
-                    "id": item.id,
-                    "country": item.country,
-                    "status": item.status,
-                    "type": item.type,
-                }
-            )
+        result = await list_proxies(
+            billing=Billing(billing), page=page, page_size=100, included_only=included
+        )
+        entries.extend(result.items)
         if not result.pagination.has_next:
             break
         page += 1
     if as_json:
-        click.echo(json.dumps(entries, ensure_ascii=False))
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "id": item.id,
+                        "country": item.country,
+                        "status": item.status,
+                        "type": item.type,
+                    }
+                    for item in entries
+                ],
+                ensure_ascii=False,
+            )
+        )
     elif not entries:
-        render.empty("proxies", "Create one: mobilerun proxy buy")
+        if included:
+            render.empty("included proxies")
+        else:
+            render.empty("proxies", "Create one: mobilerun proxy buy")
     else:
         render.heading(len(entries), "proxy")
         render.table(
             [
                 [
-                    render.secondary(entry["id"]),
-                    render.secondary(entry["country"]),
-                    render.status(entry["status"]),
-                    render.secondary(entry["type"]),
+                    render.secondary(item.id),
+                    render.secondary(item.country),
+                    render.status(item.status),
+                    render.secondary(item.type),
+                    render.secondary((item.billing_mode or "").replace("_", " ")),
                 ]
-                for entry in entries
+                for item in entries
             ]
         )
+
+
+@proxy.command("included", help="List existing proxies billed as included.")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON.")
+@billing_option
+@click.pass_context
+def proxy_included(ctx: click.Context, billing: str, as_json: bool) -> None:
+    """Run the included-only list from the proxy menu or command line."""
+    ctx.invoke(proxy_list, billing=billing, as_json=as_json, included=True)
 
 
 @proxy.command("status", help="Show status for PROXY_ID, the proxy ID.")
@@ -205,13 +224,7 @@ async def proxy_status(proxy_id: str, billing: str, as_json: bool) -> None:
     default="residential",
     help="Proxy network type. Use dedicated_residential for a fixed IP; pass the printed ID to CloudFixedProxy.",
 )
-@click.option(
-    "--billing",
-    type=click.Choice(["included", "paid"]),
-    default=lambda: get_settings().MOBILERUN_BILLING.value,
-    show_default="configured billing",
-    help="Proxy purchases require paid; included is not supported.",
-)
+@billing_option
 @coro
 async def proxy_buy(
     country: str,
@@ -221,25 +234,21 @@ async def proxy_buy(
     payment_timeout: float,
     as_json: bool,
 ) -> None:
-    if billing != "paid":
-        raise click.BadParameter(
-            "Proxy purchases require --billing paid", param_hint="--billing"
-        )
-    await confirm_action_async(
-        "buy proxy", billing, "This may incur charges.", yes=yes, err=True
-    )
     if proxy_type not in ("residential", "dedicated_residential", "mobile"):
         raise click.BadParameter("Invalid proxy type", param_hint="--type")
-    with redirect_stdout(sys.stderr):
-        result = await complete_checkout(
+    result, _ = await invoke_with_billing(
+        lambda mode: complete_checkout(
             buy_proxy(
                 country,
                 type=proxy_type,
-                billing=Billing(billing),
+                billing=mode,
                 checkout="browser",
                 payment_timeout=payment_timeout,
             )
-        )
+        ),
+        Billing(billing),
+        yes=yes,
+    )
     if as_json:
         click.echo(
             json.dumps({"id": result.id, "status": result.status, "country": country})

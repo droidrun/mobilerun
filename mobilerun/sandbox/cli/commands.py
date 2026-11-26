@@ -12,14 +12,29 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from mobilerun.cli.base import menu, render
+from mobilerun.cli.base.billing import invoke_with_billing
 from mobilerun.cli.base.errors import safe_error_message
 from mobilerun.cli.base.prompts import SelectChoice, select_prompt_async
 from mobilerun.cli.base.run import coro
 from mobilerun.cli.base.safety import confirm_action_async
+from mobilerun.errors.cloud import BillingRequired
 from mobilerun.models.billing import Billing
 
 if TYPE_CHECKING:
     from mobilerun.sandbox.models import DeploymentReceipt
+
+
+class _TargetedBillingRequired(BillingRequired):
+    def __init__(self, error: BillingRequired, target_summary: str) -> None:
+        super().__init__(
+            needed=error.needed, given=error.given, operation=error.operation
+        )
+        self.target_summary = target_summary
+
+    @property
+    def confirmation(self) -> str:
+        return f"{self.target_summary}. {super().confirmation}"
+
 
 _billing_option = click.option(
     "--billing",
@@ -51,23 +66,16 @@ class _StderrArgument(menu.PromptingArgument):
         return super().process_value(ctx, value)
 
 
-def _resolve_mode(billing: str | None, *, commerce: bool = False) -> Billing:
+def _resolve_mode(billing: str | None) -> Billing:
     from mobilerun.sandbox.models import resolve_billing
 
-    mode = resolve_billing(billing)
-    if commerce and mode is Billing.NO_COMMERCE:
-        raise click.ClickException(
-            "Sandbox operation not allowed with no_commerce billing."
-        )
-    return mode
+    return resolve_billing(billing)
 
 
 def _deployment_choices(ctx: click.Context) -> list[SelectChoice]:
     from mobilerun.sandbox.deployment import list_deployments
 
-    mode = _resolve_mode(
-        ctx.params.get("billing"), commerce=ctx.command.name in {"fire", "enable"}
-    )
+    mode = _resolve_mode(ctx.params.get("billing"))
     records = asyncio.run(list_deployments(billing=mode))
     choices = []
     for item in records:
@@ -208,38 +216,41 @@ async def deploy_command(
     as_json: bool,
 ) -> None:
     """Deploy a cloud function as an endpoint by default."""
-    from mobilerun.sandbox.deployment import deploy_file
-    from mobilerun.sandbox.packaging import package
+    from mobilerun.sandbox.deployment import _check_deploy_billing, deploy_file
+    from mobilerun.sandbox.packaging import package, read_declaration
 
     if device is not None and device_free:
         raise click.UsageError("Choose either --device or --device-free, not both.")
     if device is not None and not device.strip():
         raise click.UsageError("--device requires a nonempty ID.")
-    mode = _resolve_mode(billing, commerce=True)
-    artifact = package(file)
-    declaration = artifact.declaration
+    try:
+        source = file.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise click.ClickException(f"Cannot read source: {file}") from exc
+    declaration = read_declaration(file, source=source)
     if not device_free and device is None:
         device = declaration.device
         if device is None and declaration.schedule is not None:
             device, device_free = await _pick_device(as_json=as_json)
 
-    schedule = declaration.schedule
-    device_label = repr(device) if device is not None else "device-free"
-    warning = f"Deploy {declaration.name!r}. Billing: {mode}. Device: {device_label}. "
-    if schedule is not None:
-        warning += f"Schedule: {schedule!r}; future runs may incur charges."
-    else:
-        flow = "endpoint" if declaration.has_endpoint else "none"
-        warning += f"Flow: {flow}. Cloud usage may incur charges."
-    await confirm_action_async(
-        "deploy a sandbox function", mode, warning, yes=yes, err=as_json
-    )
+    async def authorize(attempt: Billing) -> None:
+        try:
+            await _check_deploy_billing(attempt)
+        except BillingRequired as exc:
+            target = f"device {device!r}" if device is not None else "device-free"
+            summary = f"Deploy {declaration.name!r} ({target})"
+            if declaration.schedule is not None:
+                summary += f" on schedule {declaration.schedule!r}"
+            raise _TargetedBillingRequired(exc, summary) from exc
+
+    _, mode = await invoke_with_billing(authorize, _resolve_mode(billing), yes=yes)
+    artifact = package(file, source=source)
+
     receipt = await deploy_file(
         file,
         device=device,
         device_free=device_free,
         billing=mode,
-        yes=True,
         artifact=artifact,
     )
     if as_json:
@@ -310,31 +321,6 @@ def _payload(input_json: str | None, input_file: Path | None) -> dict[str, Any]:
     return payload
 
 
-async def _flow_preview(name: str, billing: Billing) -> str:
-    """Read only the device and schedule facts needed for consent."""
-    from mobilerun.sandbox.clients import get_document
-    from mobilerun.sandbox.deployment import describe_remote
-
-    flow_id = (await describe_remote(name, billing=billing)).get("flow_id")
-    if flow_id is None:
-        raise click.ClickException(
-            "No flow to run or enable; deploy the function first."
-        )
-    document = await get_document(flow_id, billing=billing)
-    devices = document.get("devices") or []
-    if not isinstance(devices, list) or not all(
-        isinstance(device, str) for device in devices
-    ):
-        raise click.ClickException("Could not verify the flow's device selection.")
-    schedule = document.get("on", {}).get("schedule")
-    label = ", ".join(map(repr, devices)) if devices else "device-free"
-    details = f"Device: {label}"
-    if schedule is not None:
-        cron = schedule.get("cron") if isinstance(schedule, dict) else schedule
-        details += f"; scheduled ({cron!r})" if isinstance(cron, str) else "; scheduled"
-    return details
-
-
 @click.command("fire")
 @_name_argument
 @click.option("--input", "input_json", metavar="JSON", help="Input as a JSON object.")
@@ -359,19 +345,13 @@ async def fire_command(
     """Trigger a sandbox run without waiting for its result."""
     from mobilerun.sandbox.deployment import fire_remote
 
-    mode = _resolve_mode(billing, commerce=True)
+    mode = _resolve_mode(billing)
     payload = _payload(input_json, input_file)
-    warning = f"Run {name!r}. Billing: {mode}. This run may incur charges."
-    if not yes and menu.is_interactive():
-        warning += f" {await _flow_preview(name, mode)}."
-    await confirm_action_async(
-        "fire a sandbox function",
+    result, _ = await invoke_with_billing(
+        lambda attempt: fire_remote(name, payload, billing=attempt),
         mode,
-        warning,
         yes=yes,
-        err=as_json,
     )
-    result = await fire_remote(name, payload, billing=mode)
     invocation_id = result["invocation_id"]
     if as_json:
         click.echo(json.dumps({"invocation_id": invocation_id}))
@@ -434,40 +414,39 @@ async def runs_command(
 async def _set_enabled(
     names: tuple[str, ...], enabled: bool, billing: str | None, yes: bool, as_json: bool
 ) -> None:
-    from mobilerun.sandbox.deployment import set_enabled
+    from mobilerun.sandbox.deployment import _require_paid, set_enabled
 
-    mode = _resolve_mode(billing, commerce=enabled)
+    mode = _resolve_mode(billing)
     verb = "Enable" if enabled else "Disable"
     names = tuple(dict.fromkeys(names))
     targets = ", ".join(map(repr, names))
     warning = f"{verb} {targets}. Billing: {mode}."
-    preview_errors = {}
     if enabled:
-        warning += " Future runs may incur charges."
-        if not yes and menu.is_interactive():
-            for name in names:
-                try:
-                    details = await _flow_preview(name, mode)
-                except Exception as exc:
-                    preview_errors[name] = exc
-                    details = "could not verify device or schedule; will not enable"
-                warning += f"\n{name!r}: {details}."
-    try:
-        await confirm_action_async(
-            f"{verb.lower()} sandbox flows", mode, warning, yes=yes, err=True
-        )
-    except click.exceptions.Exit as exc:
-        if as_json and exc.exit_code == 0:
-            click.echo("[]")
-        raise
+
+        async def authorize(attempt: Billing) -> None:
+            try:
+                _require_paid(billing=attempt)
+            except BillingRequired as exc:
+                raise _TargetedBillingRequired(
+                    exc, f"Enable sandbox flows {targets}"
+                ) from exc
+
+        _, mode = await invoke_with_billing(authorize, mode, yes=yes)
+    else:
+        try:
+            await confirm_action_async(
+                "disable sandbox flows", mode, warning, yes=yes, err=True
+            )
+        except click.exceptions.Exit as exc:
+            if as_json and exc.exit_code == 0:
+                click.echo("[]")
+            raise
 
     results = []
     for name in names:
         try:
-            if name in preview_errors:
-                raise preview_errors[name]
             await set_enabled(name, enabled, billing=mode)
-        except (click.Abort, click.exceptions.Exit):
+        except (BillingRequired, click.Abort, click.exceptions.Exit):
             raise
         except Exception as exc:
             status = "failed"

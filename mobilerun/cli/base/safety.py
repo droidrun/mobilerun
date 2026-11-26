@@ -15,11 +15,6 @@ def _prepare_confirmation(
     if interactive:
         chargeable = action in {
             "send SMS",
-            "create number",
-            "create mailbox",
-            "buy proxy",
-            "run a cloud task",
-            "resume cloud phone",
             "reboot cloud phone",
         }
         click.echo(

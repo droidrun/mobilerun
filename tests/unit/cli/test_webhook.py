@@ -229,14 +229,38 @@ def test_replay_without_secret(hooks, flags):
 
 
 @pytest.mark.parametrize("flags", [[], ["--json"]])
-def test_custom_filter_has_no_flow_hint(hooks, flags):
-    hooks.register.return_value = replace(
-        hooks.get.return_value, event_types=("sms.received",)
-    )
-    result = invoke("register", URL, "--event-type", "sms.received", *flags)
-    assert result.exit_code == 0 and "@cloud" not in result.output
+@pytest.mark.parametrize("existing_events", [("sms.received",), ()])
+def test_custom_filter_retry_reuses_covering_endpoint(hooks, flags, existing_events):
+    endpoint = replace(hooks.get.return_value, event_types=("sms.received",))
+    hooks.register.return_value = endpoint
+    args = ("register", URL, "--event-type", "sms.received", *flags)
+    created = invoke(*args)
+    assert created.exit_code == 0 and "@cloud" not in created.output
+
+    hooks.find_by_url.return_value = replace(endpoint, event_types=existing_events)
+    reused = invoke(*args)
+    assert reused.exit_code == 0 and "already registered" in reused.output
+    assert ("@cloud" in reused.output) == (not existing_events)
+    assert SECRET not in reused.output
+    hooks.register.assert_awaited_once_with(URL, event_types=("sms.received",))
     if flags:
-        assert json.loads(result.stdout)["id"] == ID
+        assert json.loads(created.stdout)["created"] is True
+        assert json.loads(reused.stdout)["created"] is False
+
+
+@pytest.mark.parametrize("flags", [[], ["--json"]])
+@pytest.mark.parametrize("also_request_flow", [False, True])
+def test_flow_only_endpoint_cannot_be_reused_for_sms(hooks, flags, also_request_flow):
+    hooks.find_by_url.return_value = hooks.get.return_value
+    flow = ("--event-type", "workflow.step.emit") if also_request_flow else ()
+    result = invoke("register", URL, *flow, "--event-type", "sms.received", *flags)
+
+    assert result.exit_code == 1
+    assert "filter excludes sms.received" in result.output
+    assert "@cloud" not in result.output
+    if flags:
+        assert "filter excludes sms.received" in json.loads(result.stdout)["error"]
+    hooks.register.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

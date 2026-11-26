@@ -48,8 +48,9 @@ app = await upload_app("counter.apk", billing=Billing.NO_COMMERCE)
 
 Every public client function requires keyword-only `billing: Billing`, without a
 default. Enum values and their strings work; `None` does not. Each boundary declares
-its minimum with `@requires(Billing.X)`. Missing billing raises `TypeError`; a lower
-or invalid mode raises `BillingError` before transport. The order is
+its minimum with `@requires(Billing.X)`. Missing billing raises `TypeError`, an
+invalid mode raises `BillingError`, and a lower mode raises `BillingRequired`
+with `needed`, `given`, and `operation`, all before transport. The order is
 `NO_COMMERCE < INCLUDED < PAID`. Import enums from `mobilerun.models` (clients)
 or `mobilerun.core.devices` (application code).
 
@@ -57,15 +58,27 @@ Core resources snapshot `MOBILERUN_BILLING` (default `paid`) at construction unl
 `billing=` is explicit, and pass that mode on every client call. Cloud CLI commands accept
 `--billing no_commerce|included|paid`, defaulting to that setting.
 
+For a single operation whose guard runs before side effects, call
+`await with_billing_retry(operation, billing, yes=False)` from
+`mobilerun.clients.cloud.billing`. The callback receives the mode for each attempt;
+the helper returns `(result, effective_billing)`. It prompts on a terminal only if
+the guard rejects the requested mode. `yes=True` authorizes one retry with the
+mode required by the guard without a prompt. Only a retry with `PAID` can charge.
+It does not retry checkout, transport errors,
+or an exhausted included quota. Do not wrap a batch or a callback that may do work
+before hitting a billing guard.
+
 | Function | Minimum mode |
 | --- | --- |
 | `client._cloud_client` | `NO_COMMERCE` |
 | `api_keys.validate_api_key` | `NO_COMMERCE` |
 | `device_flow.request_code`, `poll_token`, `fetch_session` | `NO_COMMERCE` |
 | `devices.create` | `INCLUDED`; `PAID` for `AUTO`/`MINUTE` or a country Connect proxy |
-| `devices.list_devices`, `retrieve`, `wait_ready`, `terminate`, `resume`, `stop`, `reboot`, `reset`, `number`, `bind_number`, `unbind_number` | `NO_COMMERCE` |
+| `devices.resume` | `NO_COMMERCE` for subscription-billed phones; `PAID` otherwise |
+| `devices.list_devices`, `retrieve`, `wait_ready`, `terminate`, `stop`, `reboot`, `reset`, `number`, `bind_number`, `unbind_number` | `NO_COMMERCE` |
 | `numbers.create`, `mailboxes.create` | `INCLUDED` |
-| `numbers.list_numbers`, `retrieve`, `delete`, `countries`, `capacity`, `messages`, `send` | `NO_COMMERCE` |
+| `numbers.list_numbers`, `retrieve`, `delete`, `countries`, `capacity`, `messages` | `NO_COMMERCE` |
+| `numbers.send` | `PAID` |
 | `mailboxes.list_mailboxes`, `retrieve`, `delete`, `capacity`, `messages`, `otp` | `NO_COMMERCE` |
 | `proxies.connect_device` | `NO_COMMERCE` for an existing Connect ID or SOCKS5; `PAID` for country Connect |
 | `proxies.buy_proxy` | `PAID` |
@@ -84,6 +97,9 @@ Core resources snapshot `MOBILERUN_BILLING` (default `paid`) at construction unl
 
 Existing IDs never trigger a purchase. A Connect proxy ID can be attached without
 buying a proxy; selecting a Connect country may purchase one and is guarded.
+`proxies.list_proxies(included_only=True, billing=Billing.NO_COMMERCE)` filters
+each page to proxies billed as included. Pagination still describes the unfiltered
+inventory, so a filtered page can be empty even when more pages are available.
 The old allow-paid setting and resource create classmethods are removed.
 
 App uploads and installs require the explicit mode, but permit `NO_COMMERCE`.

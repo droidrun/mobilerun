@@ -22,7 +22,7 @@ from mobilerun.config.user_config import MobileConfig
 from mobilerun.core.devices.base import Device
 from mobilerun.core.extensions import Extension, action
 from mobilerun.errors import (
-    BillingError,
+    BillingRequired,
     CloudPermissionDenied,
     DeviceOperationNotSupported,
 )
@@ -391,7 +391,7 @@ def test_status_json_only_prints_status_fields(monkeypatch):
     ],
 )
 @pytest.mark.parametrize("alias", ["sms", "work"])
-def test_bound_sms_send_requires_paid_billing_and_consent(
+def test_third_party_sms_retains_legacy_confirmation(
     monkeypatch, mode, flags, expected, alias
 ):
     sent = []
@@ -440,21 +440,37 @@ def test_restricted_resume_checks_existing_strategy(mode, strategy):
         asyncio.run(devices.resume(CLOUD, billing=mode, client=client))
         client.devices.resume.assert_awaited_once_with(CLOUD)
     else:
-        with pytest.raises(BillingError, match="paid"):
+        with pytest.raises(BillingRequired, match="paid") as caught:
             asyncio.run(devices.resume(CLOUD, billing=mode, client=client))
+        assert (caught.value.needed, caught.value.given) == (Billing.PAID, mode)
         client.devices.resume.assert_not_awaited()
     client.devices.retrieve.assert_awaited_once_with(CLOUD)
 
 
-def test_resume_prompt_describes_existing_phone_billing(monkeypatch):
+def test_restricted_subscription_resume_never_prompts(monkeypatch):
     from mobilerun.cli.base import menu, safety
 
     monkeypatch.setenv("MOBILERUN_BILLING", "included")
     monkeypatch.setattr(menu, "is_interactive", lambda: True)
-    monkeypatch.setattr(safety, "confirm_prompt_async", AsyncMock(return_value=False))
+    prompt = AsyncMock(side_effect=AssertionError("subscription needs no consent"))
+    monkeypatch.setattr(safety, "confirm_prompt_async", prompt)
+    transport = SimpleNamespace(
+        retrieve=AsyncMock(
+            return_value=SimpleNamespace(billing_strategy="subscription")
+        ),
+        resume=AsyncMock(),
+    )
+    module = importlib.import_module("mobilerun.cli.devices.cloud.resume")
+    monkeypatch.setattr(
+        module,
+        "cloud_client",
+        lambda **kwargs: nullcontext(SimpleNamespace(devices=transport)),
+    )
     result = CliRunner().invoke(device, ["cloud", "resume", CLOUD])
-    assert "subscription" in result.output.lower()
-    assert "quota" not in result.output
+    assert result.exit_code == 0, result.output
+    prompt.assert_not_awaited()
+    transport.retrieve.assert_awaited_once_with(CLOUD)
+    transport.resume.assert_awaited_once_with(CLOUD)
 
 
 def test_paid_resume_needs_no_strategy_lookup():
@@ -733,9 +749,8 @@ def test_agent_run_ios_without_serial_discovers_portal(monkeypatch):
     execute.assert_awaited_once_with(connect.return_value, "hello", max_steps=None)
 
 
-@pytest.mark.parametrize("operation", ["resume", "reboot"])
-def test_chargeable_lifecycle_requires_consent_before_client(monkeypatch, operation):
-    module = importlib.import_module("mobilerun.cli.devices.cloud." + operation)
+def test_reboot_requires_consent_before_client(monkeypatch):
+    module = importlib.import_module("mobilerun.cli.devices.cloud.reboot")
     calls = []
 
     @asynccontextmanager
@@ -745,28 +760,27 @@ def test_chargeable_lifecycle_requires_consent_before_client(monkeypatch, operat
 
     method = AsyncMock()
     monkeypatch.setattr(module, "cloud_client", client)
-    monkeypatch.setattr(module.devices, operation, method)
-    result = CliRunner().invoke(cli, ["device", "cloud", operation, CLOUD])
+    monkeypatch.setattr(module.devices, "reboot", method)
+    result = CliRunner().invoke(cli, ["device", "cloud", "reboot", CLOUD])
     assert result.exit_code == 1 and "--yes" in result.output
     assert calls == []
     method.assert_not_awaited()
-    accepted = CliRunner().invoke(cli, ["device", "cloud", operation, CLOUD, "--yes"])
+    accepted = CliRunner().invoke(cli, ["device", "cloud", "reboot", CLOUD, "--yes"])
     assert accepted.exit_code == 0, accepted.output
     method.assert_awaited_once()
 
 
-@pytest.mark.parametrize("operation", ["resume", "reboot"])
-def test_lifecycle_warning_and_decline_prevent_billing(monkeypatch, operation):
+def test_reboot_warning_and_decline_prevent_billing(monkeypatch):
     from mobilerun.cli.base import menu
 
-    module = importlib.import_module("mobilerun.cli.devices.cloud." + operation)
+    module = importlib.import_module("mobilerun.cli.devices.cloud.reboot")
     client = AsyncMock(side_effect=AssertionError("No client before confirmation"))
     monkeypatch.setattr(menu, "is_interactive", lambda: True)
     from mobilerun.cli.base import safety
 
     monkeypatch.setattr(safety, "confirm_prompt_async", AsyncMock(return_value=False))
     monkeypatch.setattr(module, "cloud_client", client)
-    result = CliRunner().invoke(cli, ["device", "cloud", operation, CLOUD], input="n\n")
+    result = CliRunner().invoke(cli, ["device", "cloud", "reboot", CLOUD], input="n\n")
     assert result.exit_code == 0, result.output
     assert "may incur charges" in result.output and "Billing: paid" in result.output
     client.assert_not_called()

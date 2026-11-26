@@ -102,16 +102,26 @@ async def device_status(
 async def list_proxies(
     *,
     billing: Billing,
+    included_only: bool = False,
     api_key: str | None = None,
     base_url: str | None = None,
     **params: Unpack[ProxyListParams],
 ) -> ProxyListResponse:
-    """List a proxy page."""
+    """List a proxy page, optionally filtering items while retaining SDK pagination."""
     async with cloud_client(api_key, base_url, billing=billing) as client:
         try:
-            return await client.connect.proxies.list(**params)
+            response = await client.connect.proxies.list(**params)
         except APIError as exc:
             raise cloud_error(exc, "List proxies") from exc
+    if included_only:
+        return response.model_copy(
+            update={
+                "items": [
+                    item for item in response.items if item.billing_mode == "included"
+                ]
+            }
+        )
+    return response
 
 
 @requires(Billing.NO_COMMERCE)
@@ -146,7 +156,7 @@ async def cancel_proxy(
             raise cloud_error(exc, "Release proxy") from exc
 
 
-@requires(Billing.PAID)
+@requires(Billing.PAID, operation="Buy Connect proxy")
 async def buy_proxy(
     country: str,
     *,

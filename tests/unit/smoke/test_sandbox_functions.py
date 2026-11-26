@@ -1,14 +1,18 @@
 """Opt-in, potentially paid, device-free sandbox endpoint lifecycle."""
 
 import asyncio
+import json
 import os
+from base64 import b64decode
 from pathlib import Path
 from runpy import run_path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
 from urllib.parse import urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
+from warnings import warn
 
+import httpx
 import pytest
 
 pytestmark = [pytest.mark.smoke, pytest.mark.smoke_cloud]
@@ -51,8 +55,15 @@ def test_device_free_sandbox_webhook(real_env, tmp_path, monkeypatch):
     webhook = os.getenv("MOBILERUN_SMOKE_WEBHOOK_URL")
     if not webhook:
         pytest.skip(
-            "Set MOBILERUN_SMOKE_WEBHOOK_URL to a dedicated HTTPS receiver you control"
+            "Set MOBILERUN_SMOKE_WEBHOOK_URL to a dedicated https://webhook.site/<uuid> receiver you control"
         )
+    parsed = urlsplit(webhook)
+    try:
+        token = str(UUID(parsed.path.strip("/")))
+    except ValueError:
+        pytest.fail("Expected a webhook.site receiver UUID", pytrace=False)
+    if parsed.scheme != "https" or parsed.netloc != "webhook.site":
+        pytest.fail("Expected a dedicated HTTPS webhook.site receiver", pytrace=False)
     if not os.getenv("MOBILERUN_API_KEY"):
         pytest.skip("Set MOBILERUN_API_KEY for the sandbox smoke")
     pytest.importorskip("mobilerun_functions")
@@ -65,19 +76,200 @@ def test_device_free_sandbox_webhook(real_env, tmp_path, monkeypatch):
     endpoint = asyncio.run(hooks.register(webhook, event_types=[DEFAULT_WEBHOOK_EVENT]))
     try:
         print(f"smoke webhook endpoint: {endpoint.id}", flush=True)
-        _exercise_endpoint(tmp_path, monkeypatch, webhook=endpoint.id)
+        _exercise_endpoint(
+            tmp_path, monkeypatch, webhook=endpoint.id, receiver_token=token
+        )
     finally:
         asyncio.run(hooks.delete(endpoint.id))
         with pytest.raises(CloudResourceNotFound):
             asyncio.run(hooks.get(endpoint.id))
 
 
-def _exercise_endpoint(tmp_path, monkeypatch, webhook):
+async def _cleanup_saved_copy(
+    folder, execution_id, *, wait_for_copy, get_execution, clean, invocation_id=None
+):
+    try:
+        await wait_for_copy()
+    except TimeoutError:
+        # The execution may already have succeeded while its separate copy job
+        # is still queued. Only the matching delivery can confirm completion.
+        deliveries = []
+        if execution_id is not None:
+            try:
+                async with asyncio.timeout(10):
+                    execution = await get_execution(execution_id)
+                deliveries = execution.get("deliveries") or []
+            except Exception:
+                pass  # An unavailable status cannot confirm cleanup.
+        if not isinstance(deliveries, list) or not any(
+            isinstance(delivery, dict)
+            and delivery.get("destination") == "mobilerun"
+            and delivery.get("artifact") == "file"
+            and delivery.get("folder") == folder
+            and delivery.get("filename") == "pixel.png"
+            and delivery.get("status") in ("succeeded", "failed", "cancelled")
+            for delivery in deliveries
+        ):
+            warn(
+                f"Saved-file cleanup unconfirmed; folder={folder}; "
+                f"execution={execution_id or 'unknown'}; "
+                f"invocation={invocation_id or 'unknown'}. Folder left for manual cleanup.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return
+    await clean()
+
+
+def test_device_free_sandbox_files(real_env, tmp_path, monkeypatch):
+    if not os.getenv("MOBILERUN_API_KEY"):
+        pytest.skip("Set MOBILERUN_API_KEY for the sandbox smoke")
+    pytest.importorskip("mobilerun_functions")
+    pytest.importorskip("mobilerun_sdk.resources.routine_files")
+
+    from mobilerun.clients.cloud.client import cloud_client
+    from mobilerun.models.billing import Billing
+    from mobilerun.sandbox import clients, cloud, deploy
+    from mobilerun.sandbox.deployment import ReceiptStore, cleanup_owned
+
+    scope = _verified_smoke_scope()
+    name = f"sandbox-files-smoke-{uuid4().hex}"
+    folder = f"/{name}"
+    image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="
+    source = tmp_path / "image.py"
+    monkeypatch.setenv("MOBILERUN_SANDBOX_DIRECTORY", str(tmp_path / "sandbox"))
+    store = ReceiptStore(scope, name)
+    read_mode = Billing.NO_COMMERCE
+    file_options = f", files_folder={folder!r}, files={{'pixel.png': 'image'}}"
+    template = dedent(f"""\
+        from pydantic import BaseModel
+        from mobilerun.sandbox import cloud
+
+        class Input(BaseModel):
+            pass
+
+        class Output(BaseModel):
+            image: str
+
+        @cloud({name!r}FILE_OPTIONS)
+        def task(value: Input) -> Output:
+            return Output(image={image!r})
+    """)
+
+    async def wait_for_saved_file(**filters):
+        async with asyncio.timeout(60), cloud_client(billing=read_mode) as sdk:
+            while True:
+                page = await sdk.routine_files.list(folder=folder, **filters)
+                if page.items:
+                    (saved,) = page.items
+                    return saved
+                await asyncio.sleep(1)
+
+    async def clean_saved_files():
+        async with cloud_client(billing=read_mode) as sdk:
+            await sdk.routine_files.delete_many(folder=folder)
+            assert not (await sdk.routine_files.list(folder=folder)).items
+
+    async def get_execution(execution_id):
+        return await clients.get_execution(execution_id, billing=read_mode)
+
+    print(
+        f"sandbox files smoke: folder={folder} receipt={store.receipt_path}", flush=True
+    )
+    fired = False
+    saw_copy = False
+    run = None
+    try:
+        source.write_text(
+            template.replace("FILE_OPTIONS", file_options), encoding="utf-8"
+        )
+        deployed = deploy(source, device_free=True, billing=Billing.PAID, yes=True)
+        assert deployed.flow_id and len(deployed.action_ids) == 2
+        fired = True
+        run = cloud[name].fire({}, billing=Billing.PAID)
+        assert run.result() == {"image": image}
+        assert run.snapshot["status"] == "success"
+        saved = asyncio.run(wait_for_saved_file(execution_id=run.id))
+        saw_copy = True
+        assert (saved.filename, saved.mime_type, saved.folder, saved.size_bytes) == (
+            "pixel.png",
+            "image/png",
+            folder,
+            len(b64decode(image)),
+        )
+        print(f"saved file={saved.id} execution={run.id}", flush=True)
+
+        source.write_text(template.replace("FILE_OPTIONS", ""), encoding="utf-8")
+        updated = deploy(source, device_free=True, billing=Billing.PAID, yes=True)
+        assert updated.flow_id == deployed.flow_id
+        document = asyncio.run(clients.get_document(updated.flow_id, billing=read_mode))
+        assert document["settings"].get("delivery") is None
+        assert [step["uses"] for step in document["steps"]] == ["functions.run"]
+    finally:
+        try:
+            if fired:
+                if saw_copy:
+                    asyncio.run(clean_saved_files())
+                else:
+                    asyncio.run(
+                        _cleanup_saved_copy(
+                            folder,
+                            run.snapshot.get("id") if run is not None else None,
+                            wait_for_copy=wait_for_saved_file,
+                            get_execution=get_execution,
+                            clean=clean_saved_files,
+                            invocation_id=(
+                                run.invocation_id if run is not None else None
+                            ),
+                        )
+                    )
+        finally:
+            receipt = store.read()
+            if receipt is not None:
+                asyncio.run(
+                    cleanup_owned(receipt, delete_function=True, billing=read_mode)
+                )
+
+
+async def _verify_webhook_capture(token, event_id):
+    async with httpx.AsyncClient(
+        base_url="https://webhook.site", timeout=10
+    ) as receiver:
+        for attempt in range(10):
+            try:
+                response = await receiver.get(
+                    f"/token/{token}/requests",
+                    params={"page": 1, "per_page": 25, "_": attempt},
+                )
+                response.raise_for_status()
+            except httpx.HTTPError:
+                pytest.fail("Could not read webhook.site captures", pytrace=False)
+            for request in response.json()["data"]:
+                if request.get("method") != "POST":
+                    continue
+                try:
+                    event = json.loads(request.get("content") or "")
+                except ValueError:
+                    continue
+                if not isinstance(event, dict) or event.get("id") != event_id:
+                    continue
+                if event.get("type") != "workflow.step.emit":
+                    pytest.fail("Unexpected captured webhook event type", pytrace=False)
+                if event.get("data") != {"result": {"reply": "pong: smoke"}}:
+                    pytest.fail("Unexpected captured webhook event data", pytrace=False)
+                return
+            await asyncio.sleep(1)
+    pytest.fail("The sandbox webhook event was not captured", pytrace=False)
+
+
+def _exercise_endpoint(tmp_path, monkeypatch, webhook, receiver_token=None):
     with TemporaryDirectory(prefix="mobilerun-smoke-source-") as directory:
-        _run_lifecycle(tmp_path, monkeypatch, webhook, Path(directory) / "ping.py")
+        _run_lifecycle(
+            tmp_path, monkeypatch, webhook, Path(directory) / "ping.py", receiver_token
+        )
 
 
-def _run_lifecycle(tmp_path, monkeypatch, webhook, source):
+def _run_lifecycle(tmp_path, monkeypatch, webhook, source, receiver_token):
     if not os.getenv("MOBILERUN_API_KEY"):
         pytest.skip("Set MOBILERUN_API_KEY for the sandbox smoke")
     pytest.importorskip("mobilerun_functions")
@@ -191,6 +383,7 @@ def _run_lifecycle(tmp_path, monkeypatch, webhook, source):
                         await asyncio.sleep(1)
 
             asyncio.run(verify_delivery())
+            asyncio.run(_verify_webhook_capture(receiver_token, event_id))
         # An identical deploy must preserve the running binding, even when paused.
         script["ping"].remote.disable(billing=read_mode)
         repeated = deploy(source, device_free=True, billing=Billing.PAID, yes=True)

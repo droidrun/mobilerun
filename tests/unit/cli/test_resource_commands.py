@@ -105,17 +105,6 @@ def test_codes_are_only_explicit_cli_output(monkeypatch, group, command, resourc
     wait.assert_awaited_once_with(sender="Example", timeout=60)
 
 
-def test_included_proxy_purchase_rejected_before_api(monkeypatch):
-    buy = AsyncMock()
-    monkeypatch.setattr(proxy_commands, "buy_proxy", buy)
-    result = CliRunner().invoke(
-        cli, ["proxy", "buy", "--country", "US", "--billing", "included", "--yes"]
-    )
-    assert result.exit_code != 0
-    assert "require" in result.output.lower()
-    buy.assert_not_called()
-
-
 @pytest.mark.parametrize("group", ["number", "mailbox"])
 def test_create_invalid_billing_is_usage_error(group):
     result = CliRunner().invoke(cli, [group, "create", "--yes", "--billing", "invalid"])
@@ -129,20 +118,23 @@ def test_create_invalid_billing_is_usage_error(group):
         ("number", number_commands, "PhoneNumber"),
     ],
 )
-def test_included_creation_confirmation_has_no_paid_wording(
-    monkeypatch, group, module, name
+def test_included_creation_does_not_prompt(
+    monkeypatch, group, module, name, fake_resource_retrieval
 ):
     from mobilerun.cli.base import menu, safety
 
     create = AsyncMock(return_value=NS(id="resource-id"))
     monkeypatch.setattr(module, name, lambda **kwargs: create(**kwargs))
     monkeypatch.setattr(menu, "is_interactive", lambda: True)
-    monkeypatch.setattr(safety, "confirm_prompt_async", AsyncMock(return_value=False))
-    result = CliRunner().invoke(cli, [group, "create", "--billing", "included"])
+    prompt = AsyncMock(side_effect=AssertionError("included plan never prompts"))
+    monkeypatch.setattr(safety, "confirm_prompt_async", prompt)
+    args = ["--country", "US"] if group == "number" else []
+    result = CliRunner().invoke(
+        cli, [group, "create", "--billing", "included", "--plan", "included", *args]
+    )
     assert result.exit_code == 0
-    assert "included quota only (no charges)" in result.output.lower()
-    assert "paid" not in result.output.lower()
-    create.assert_not_called()
+    prompt.assert_not_awaited()
+    assert create.await_args.kwargs["billing"] is Billing.INCLUDED
 
 
 @pytest.fixture
@@ -271,11 +263,27 @@ def test_proxy_list_paginates_and_status_is_value_safe(monkeypatch):
     listing = AsyncMock(
         side_effect=[
             NS(
-                items=[NS(id="one", country=None, status=None, type=None)],
+                items=[
+                    NS(
+                        id="one",
+                        country=None,
+                        status=None,
+                        type=None,
+                        billing_mode=None,
+                    )
+                ],
                 pagination=NS(has_next=True),
             ),
             NS(
-                items=[NS(id="two", country=None, status=None, type=None)],
+                items=[
+                    NS(
+                        id="two",
+                        country=None,
+                        status=None,
+                        type=None,
+                        billing_mode=None,
+                    )
+                ],
                 pagination=NS(has_next=False),
             ),
         ]
@@ -296,7 +304,9 @@ def test_proxy_list_paginates_and_status_is_value_safe(monkeypatch):
         "one        ○ unknown",
         "two        ○ unknown",
     ]
-    listing.assert_awaited_with(page=2, page_size=100, billing="paid")
+    listing.assert_awaited_with(
+        page=2, page_size=100, billing="paid", included_only=False
+    )
     result = CliRunner().invoke(cli, ["proxy", "status", "one"])
     assert result.exit_code == 0
     assert "one" in result.output and "● active" in result.output

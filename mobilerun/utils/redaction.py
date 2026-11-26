@@ -192,7 +192,13 @@ def secret_scope(*values: str) -> Iterator[None]:
 
 
 def mask_url(url: str) -> str:
-    """Show an HTTP(S) destination without userinfo, query values or fragment."""
+    """Show an HTTP(S) destination without userinfo, query values or fragment.
+
+    The path is shown on purpose: users want to recognise their own URLs in
+    `mobilerun webhook list`. Services that put the secret in the path
+    (webhook.site, Slack, Discord) are therefore shown in full; only use this
+    for output the user explicitly asked to see, never for logs or errors.
+    """
     try:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:

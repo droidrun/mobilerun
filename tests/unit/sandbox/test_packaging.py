@@ -5,7 +5,7 @@ import importlib
 import runpy
 import traceback
 from pathlib import Path
-from textwrap import dedent
+from textwrap import dedent, indent
 
 import pytest
 from mobilerun_functions.entry import take
@@ -100,6 +100,310 @@ def test_unknown_cloud_option_is_rejected():
         sandbox.cloud("demo", unknown=True)
 
 
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (dict(endpoint=False), "flow trigger"),
+        (dict(files=[]), "files must be a dict"),
+        (dict(files_folder=None), "safe folder"),
+        (dict(files_folder="  "), "safe folder"),
+        (dict(files_folder="one/../two"), "safe folder"),
+        (dict(files_folder="/"), "safe folder"),
+        (dict(files_folder="/one/./two"), "safe folder"),
+        (dict(files_folder="one//two"), "safe folder"),
+        (dict(files_folder="//one"), "safe folder"),
+        (dict(files_folder="one/"), "safe folder"),
+        (dict(files_folder="a" * 1024), "safe folder"),
+        (dict(files_folder="😀" * 512), "safe folder"),
+        (dict(files_folder="one\x7f"), "safe folder"),
+        (dict(files={"": "image"}), "safe single path segment"),
+        (dict(files={1: "image"}), "safe single path segment"),
+        (dict(files={"a" * 252 + ".png": "image"}), "safe single path segment"),
+        (dict(files={"one/two.jpg": "image"}), "safe single path segment"),
+        (dict(files={"one\\two.jpg": "image"}), "safe single path segment"),
+        (dict(files={"one\x00.jpg": "image"}), "safe single path segment"),
+        (dict(files={" map.jpg": "image"}), "safe single path segment"),
+        (dict(files={"map.jpg\u00a0": "image"}), "safe single path segment"),
+        (dict(files={"😀" * 126 + ".jpg": "image"}), "safe single path segment"),
+        (dict(files={"not.gif": "image"}), "unsupported file extension"),
+        (dict(files={"A.jpg": "image", "a.JPG": "image"}), "filename collision"),
+        *[
+            (dict(files={"valid.jpg": path}), "invalid output field")
+            for path in (
+                1,
+                "",
+                "events..image",
+                "events.01.image",
+                "events.-1.image",
+                "events[0].image",
+                "events.__proto__.image",
+                "events.Prototype.image",
+                "events.constructor.image",
+            )
+        ],
+    ],
+)
+def test_invalid_file_options(options, message):
+    with pytest.raises(SandboxDeclarationError, match=message):
+        sandbox.cloud(
+            "demo",
+            **({"files": {"valid.jpg": "image"}, "files_folder": "ok"} | options),
+        )
+
+
+def test_file_name_accepts_exactly_255_utf16_units():
+    sandbox.cloud("demo", files={"😀" * 125 + "a.jpg": "image"}, files_folder="ok")
+
+
+@pytest.mark.parametrize("annotation", ["", " -> None", " -> Output | None"])
+def test_file_upload_requires_nonoptional_model_on_import_and_packaging(
+    tmp_path, annotation
+):
+    path = tmp_path / "requires_model.py"
+    path.write_text(dedent(f"""\
+        from __future__ import annotations
+        from pydantic import BaseModel
+        from mobilerun.sandbox import cloud
+
+        class Output(BaseModel):
+            image: str
+
+        @cloud('demo', files={{'image.jpg': 'image'}}, files_folder='images')
+        def task(value: Output){annotation}:
+            raise AssertionError('entry point ran')
+    """))
+    with pytest.raises(SandboxDeclarationError, match="non-optional.*BaseModel"):
+        runpy.run_path(str(path), run_name="requires_model")
+    assert take("requires_model") is None
+    with pytest.raises(SandboxDeclarationError, match="non-optional.*BaseModel"):
+        package(path)
+
+
+@pytest.mark.parametrize(
+    ("fields", "field_path", "message"),
+    [
+        ("events: list[Event] = Field(min_length=1)", "events.0.missing", "required"),
+        ("event: Event | None", "event.image", "required, non-null"),
+        (
+            "events: list[Event] = Field(min_length=1, max_length=1)",
+            "events.1.image",
+            "min_length=2",
+        ),
+        ("image: str | None", "image", "non-null string"),
+        ("image: int", "image", "non-null string"),
+        ("image: str = ''", "image", "required"),
+        ("events: list[Event]", "events.0.image", "min_length=1"),
+        ("events: list[Event] = Field(min_length=1)", "events.1.image", "min_length=2"),
+    ],
+)
+def test_packaging_rejects_file_paths_not_guaranteed_by_output_schema(
+    tmp_path, fields, field_path, message
+):
+    path = tmp_path / "routine.py"
+    path.write_text(dedent(f"""\
+        from pydantic import BaseModel, Field
+        from mobilerun.sandbox import cloud
+
+        class Input(BaseModel):
+            pass
+
+        class Event(BaseModel):
+            image: str
+
+        class Output(BaseModel):
+            {fields}
+
+        @cloud('demo', files_folder='images', files={{'map.jpg': {field_path!r}}})
+        def task(value: Input) -> Output:
+            raise AssertionError('entry point ran')
+    """))
+    with pytest.raises(SandboxDeclarationError, match=message) as caught:
+        package(path)
+    assert field_path in str(caught.value)
+
+
+def test_packaged_schedule_builds_file_uploads_and_webhook(tmp_path):
+    from mobilerun.sandbox.deployment import build_document
+
+    path = tmp_path / "routine.py"
+    path.write_text(dedent("""\
+        from pydantic import BaseModel, Field
+        from mobilerun.sandbox import cloud
+
+        class Input(BaseModel):
+            pass
+
+        class Event(BaseModel):
+            title: str | None = Field(default=None, serialization_alias='event-title')
+            tags: list[str]
+            map_data: str = Field(serialization_alias='map_image')
+            transcript_image: str
+
+        class Output(BaseModel):
+            captured: str = Field(serialization_alias='captured_at')
+            events: list[Event] = Field(min_length=3, max_length=3)
+
+        @cloud('demo', schedule='*/30 * * * *', device='phone',
+               files_folder='/atc',
+               files={
+                   'event_1_map.JPEG': 'events.0.map_image',
+                   'event_1_transcript.png': 'events.0.transcript_image',
+                   'event_2_map.jpg': 'events.1.map_image',
+                   'event_2_transcript.jpg': 'events.1.transcript_image',
+                   'event_3_map.jpg': 'events.2.map_image',
+                   'event_3_transcript.jpg': 'events.2.transcript_image',
+               },
+               webhook='abcdef00-0000-4000-8000-000000000001')
+        def task(value: Input) -> Output:
+            raise AssertionError('entry point ran')
+    """))
+    try:
+        assert runpy.run_path(str(path), run_name="file_schedule")["task"].remote
+    finally:
+        take("file_schedule")
+    doc = build_document(package(path), "fn", 7, device="phone")
+    assert doc["on"] == {"schedule": {"cron": "*/30 * * * *", "timezone": "UTC"}}
+    assert doc["devices"] == ["phone"]
+    assert doc["settings"] == {
+        "recording": {"mode": "off"},
+        "delivery": {"destination": "mobilerun", "folder": "/atc"},
+    }
+    function, *uploads, webhook = doc["steps"]
+    jpg, png, *_ = uploads
+    assert function["id"] == function["name"] == "function"
+    assert function["with"]["version"] == 7
+    assert [step["id"] for step in uploads] == [f"upload_{n}" for n in range(1, 7)]
+    assert all(step["uses"] == "files.upload" for step in uploads)
+    assert jpg == {
+        "id": "upload_1",
+        "name": "upload_1",
+        "uses": "files.upload",
+        "with": {
+            "filename": "event_1_map.JPEG",
+            "mimeType": "image/jpeg",
+            "content": "{{steps.function.body.result.events.0.map_image}}",
+            "contentEncoding": "base64",
+        },
+    }
+    assert png == {
+        "id": "upload_2",
+        "name": "upload_2",
+        "uses": "files.upload",
+        "with": {
+            "filename": "event_1_transcript.png",
+            "mimeType": "image/png",
+            "content": "{{steps.function.body.result.events.0.transcript_image}}",
+            "contentEncoding": "base64",
+        },
+    }
+    assert webhook["uses"] == "webhooks.send"
+    assert webhook["with"] == {
+        "endpointId": "abcdef00-0000-4000-8000-000000000001",
+        "data": {
+            "result": {
+                "captured_at": "{{steps.function.body.result.captured_at}}",
+                "events": [
+                    {
+                        "event-title": f"{{{{steps.function.body.result.events.{i}.event-title}}}}",
+                        "tags": f"{{{{steps.function.body.result.events.{i}.tags}}}}",
+                        "map_image": {
+                            "path": f"/atc/event_{i + 1}_map.{extension}",
+                            "fileId": f"{{{{steps.upload_{2 * i + 1}.body.fileId}}}}",
+                        },
+                        "transcript_image": {
+                            "path": f"/atc/event_{i + 1}_transcript.{transcript}",
+                            "fileId": f"{{{{steps.upload_{2 * i + 2}.body.fileId}}}}",
+                        },
+                    }
+                    for i, (extension, transcript) in enumerate(
+                        [("JPEG", "png"), ("jpg", "jpg"), ("jpg", "jpg")]
+                    )
+                ],
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "exclude", ["exclude=True", "exclude_if=lambda value: not value"]
+)
+def test_webhook_rejects_omittable_serialized_fields_with_defaults(tmp_path, exclude):
+    from mobilerun.sandbox.deployment import build_document
+
+    path = tmp_path / "routine.py"
+    path.write_text(dedent(f"""\
+        from pydantic import BaseModel, Field
+        from mobilerun.sandbox import cloud
+
+        class Input(BaseModel):
+            pass
+
+        class Output(BaseModel):
+            image: str
+            note: str = Field(default='', {exclude})
+
+        @cloud('demo', files_folder='images', files={{'map.jpg': 'image'}},
+               webhook='abcdef00-0000-4000-8000-000000000001')
+        def task(value: Input) -> Output:
+            raise AssertionError('entry point ran')
+    """))
+    with pytest.raises(SandboxDeclarationError, match="Webhook result objects"):
+        build_document(package(path), "fn", 1, device=None)
+
+
+@pytest.mark.parametrize("duck_type", ["annotation", "serializer"])
+@pytest.mark.parametrize("expand", [True, False])
+def test_webhook_rejects_duck_typed_serialization_only_on_expanded_branches(
+    tmp_path, duck_type, expand
+):
+    from mobilerun.sandbox.deployment import build_document
+
+    path = tmp_path / "routine.py"
+    source_field = "event.image" if expand else "image"
+    event_type = "SerializeAsAny[Event]" if duck_type == "annotation" else "Event"
+    serializer = "" if duck_type == "annotation" else dedent("""\
+        @field_serializer('event')
+        def serialize_event(self, event):
+            return event.model_dump(serialize_as_any=True)
+    """)
+    path.write_text(dedent(f"""\
+        from pydantic import BaseModel, SerializeAsAny, field_serializer
+        from mobilerun.sandbox import cloud
+
+        class Input(BaseModel):
+            pass
+
+        class Event(BaseModel):
+            image: str
+
+        class Output(BaseModel):
+            image: str
+            event: {event_type}
+
+        @cloud('demo', files_folder='images', files={{'map.jpg': {source_field!r}}},
+               webhook='abcdef00-0000-4000-8000-000000000001')
+        def task(value: Input) -> Output:
+            raise AssertionError('entry point ran')
+    """).replace("\n@cloud", "\n" + indent(serializer, "    ") + "\n@cloud"))
+    artifact = package(path)
+    if expand:
+        with pytest.raises(
+            SandboxDeclarationError, match="custom or duck-typed serializers"
+        ):
+            build_document(artifact, "fn", 1, device=None)
+    else:
+        doc = build_document(artifact, "fn", 1, device=None)
+        assert doc["steps"][-1]["with"]["data"] == {
+            "result": {
+                "image": {
+                    "path": "/images/map.jpg",
+                    "fileId": "{{steps.upload_1.body.fileId}}",
+                },
+                "event": "{{steps.function.body.result.event}}",
+            }
+        }
+
+
 def test_static_declaration_rejects_receiver_url_without_echo(tmp_path):
     path = tmp_path / "routine.py"
     path.write_text(
@@ -143,8 +447,8 @@ async def test_before_validator_can_fill_required_schedule_field(
     from dataclasses import replace
     from unittest.mock import Mock
 
+    from mobilerun.errors import BillingRequired
     from mobilerun.sandbox import deployment, packaging
-    from mobilerun.sandbox.errors import SandboxConfirmationRequired
     from mobilerun.sandbox.models import Artifact
 
     path = tmp_path / "task.py"
@@ -177,9 +481,11 @@ async def test_before_validator_can_fill_required_schedule_field(
         "raw": raw,
         "edited": replace(inspected, source=inspected.source + "\n"),
     }[supplied]
-    with pytest.raises(SandboxConfirmationRequired):
-        await deployment.deploy_file(path, device_free=True, artifact=artifact)
-    assert inspect.call_count == (0 if supplied == "inspected" else 1)
+    with pytest.raises(BillingRequired):
+        await deployment.deploy_file(
+            path, device_free=True, artifact=artifact, billing="no_commerce"
+        )
+    inspect.assert_not_called()
 
 
 def test_schedule_inspects_real_model_before_cloud(tmp_path, monkeypatch):
@@ -216,7 +522,7 @@ def test_schedule_inspects_real_model_before_cloud(tmp_path, monkeypatch):
     validate({}, package(source).input_schema)
     source.write_text(template.replace("OPTIONS", ", schedule='* * * * *'"))
     with pytest.raises(SandboxDeclarationError, match="count") as caught:
-        asyncio.run(deployment.deploy_file(source, device_free=True, yes=True))
+        asyncio.run(deployment.deploy_file(source, device_free=True))
     assert "private-validator-detail" not in str(caught.value)
     assert "12" not in str(caught.value)
     source.write_text(

@@ -124,15 +124,20 @@ def register(url: str | None, event_types: tuple[str, ...], as_json: bool) -> No
         not endpoint.event_types or DEFAULT_WEBHOOK_EVENT in endpoint.event_types
     )
     if not created:
+        missing_events = (
+            set(event_types).difference(endpoint.event_types)
+            if endpoint.event_types
+            else set()
+        )
         reason = None
         if endpoint.health == "blocked":
             reason = "the endpoint is blocked"
         elif endpoint.state != "ACTIVE":
             reason = f"the endpoint is {endpoint.state.lower()}"
-        elif not receives_results:
-            reason = f"its filter excludes {DEFAULT_WEBHOOK_EVENT}"
+        elif missing_events:
+            reason = f"its filter excludes {', '.join(sorted(missing_events))}"
         if reason:
-            message = f"Cannot receive flow results: {reason}."
+            message = f"Cannot reuse webhook: {reason}."
             click.echo(message, err=as_json)
             if as_json:
                 click.echo(json.dumps({**data, "error": message}, ensure_ascii=False))

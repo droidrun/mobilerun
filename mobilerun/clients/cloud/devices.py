@@ -1,5 +1,6 @@
 """Functional cloud device SDK boundaries."""
 
+from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
 from datetime import datetime
 from typing import Literal, TypedDict, Unpack, cast
@@ -33,7 +34,6 @@ from mobilerun.clients.cloud.billing import (
 )
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.clients.cloud.errors import cloud_error
-from mobilerun.errors.cloud import BillingError
 from mobilerun.models.billing import Billing, Plan
 from mobilerun.utils.redaction import secret_scope
 
@@ -268,16 +268,40 @@ async def resume(
     **params: Unpack[RequestOptions],
 ) -> None:
     """Resume an existing phone without starting minute billing unless authorized."""
-    if billing is not Billing.PAID:
-        info = await retrieve(device_id, billing=billing, client=client)
-        if info.billing_strategy != Plan.SUBSCRIPTION:
-            raise BillingError(
-                operation="resume", code="invalid_billing", required_billing="paid"
-            )
-    try:
-        return await client.devices.resume(device_id, **params)
-    except APIError as exc:
-        raise cloud_error(exc, "Resume cloud phone", device=True) from exc
+    operation = await _prepare_resume(
+        device_id, billing=billing, client=client, **params
+    )
+    return await operation(billing)
+
+
+@requires(Billing.PAID, operation="Resume cloud phone")
+def _require_paid_resume(*, billing: Billing) -> None:
+    """Reject restricted billing before a potentially metered resume."""
+
+
+async def _prepare_resume(
+    device_id: str,
+    *,
+    billing: Billing,
+    client: AsyncMobilerun,
+    **params: Unpack[RequestOptions],
+) -> Callable[[Billing], Awaitable[None]]:
+    """Resolve the billing strategy once, outside any retry of the mutation."""
+    needs_paid = (
+        billing is Billing.PAID
+        or (await retrieve(device_id, billing=billing, client=client)).billing_strategy
+        != Plan.SUBSCRIPTION
+    )
+
+    async def resume_prepared(mode: Billing) -> None:
+        if needs_paid:
+            _require_paid_resume(billing=mode)
+        try:
+            return await client.devices.resume(device_id, **params)
+        except APIError as exc:
+            raise cloud_error(exc, "Resume cloud phone", device=True) from exc
+
+    return resume_prepared
 
 
 @requires(Billing.NO_COMMERCE)

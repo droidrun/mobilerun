@@ -89,7 +89,3 @@ class SandboxRunError(SandboxError):
 
 class SandboxRunTimeout(SandboxRunError, TimeoutError):
     """A sandbox run exceeded its deadline."""
-
-
-class SandboxConfirmationRequired(SandboxError):
-    """A mutation needs explicit confirmation."""

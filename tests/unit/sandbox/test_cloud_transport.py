@@ -112,6 +112,79 @@ async def test_create_document_stages_and_verifies_disabled():
 
 
 @pytest.mark.anyio
+async def test_create_document_stages_file_actions_and_delivery():
+    client = flow_sdk()
+    w = client.workflows
+    w.action_catalog.list = AsyncMock(
+        return_value={
+            "items": [
+                {"stepName": "functions.run", "id": "catalog"},
+                {"stepName": "files.upload", "id": "files-catalog"},
+            ],
+            "pagination": {"hasNext": False},
+        }
+    )
+    w.triggers = SimpleNamespace(create=AsyncMock(return_value={"data": {"id": "t"}}))
+    w.actions = SimpleNamespace(
+        create=AsyncMock(
+            side_effect=[{"data": {"id": "a"}}, {"data": {"id": "upload"}}]
+        )
+    )
+    w.flows.create = AsyncMock(return_value={"data": {"id": "f"}})
+    w.flows.retrieve = AsyncMock(return_value={"data": {"id": "f", "enabled": False}})
+    delivery = {"destination": "mobilerun", "folder": "/images"}
+    params = {
+        "filename": "map.jpg",
+        "mimeType": "image/jpeg",
+        "content": "{{steps.function.body.result.image}}",
+        "contentEncoding": "base64",
+    }
+    doc = {
+        **DOCUMENT,
+        "settings": {"recording": {"mode": "off"}, "delivery": delivery},
+        "steps": [
+            *DOCUMENT["steps"],
+            {
+                "id": "upload_1",
+                "name": "upload_1",
+                "uses": "files.upload",
+                "with": params,
+            },
+        ],
+    }
+    result = await clients.create_document(
+        doc, "key", billing=Billing.PAID, client=client
+    )
+    assert result["actionIds"] == ["a", "upload"]
+    assert w.flows.create.await_args.kwargs["delivery"] == delivery
+    assert w.flows.create.await_args.kwargs["actions"][-1] == {
+        "action_id": "upload",
+        "position": 1,
+        "key": "upload_1",
+    }
+    assert w.actions.create.await_args.kwargs == {
+        "catalog_entry_id": "files-catalog",
+        "name": "upload_1",
+        "params": params,
+        "idempotency_key": "key:action:1",
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "delivery", [{"destination": "mobilerun", "folder": "/new"}, None]
+)
+async def test_update_flow_delivery_forwards_value_and_key(delivery):
+    client = flow_sdk()
+    await clients.update_flow_delivery(
+        "f", delivery, "key", billing=Billing.PAID, client=client
+    )
+    client.workflows.flows.update.assert_awaited_once_with(
+        "f", delivery=delivery, idempotency_key="key"
+    )
+
+
+@pytest.mark.anyio
 async def test_unsupported_document_fails_before_client_creation(monkeypatch):
     factory = AsyncMock()
     monkeypatch.setattr(clients, "cloud_client", factory)

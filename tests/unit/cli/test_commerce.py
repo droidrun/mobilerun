@@ -55,23 +55,6 @@ def test_create_forwards_plan(monkeypatch, group, module, name, fake_number_clie
     assert create.call_args.kwargs["plan"] == "rent"
 
 
-@pytest.mark.parametrize("group,module", [("number", number), ("mailbox", mailbox)])
-def test_rent_included_fails_before_api(monkeypatch, group, module, fake_number_client):
-    import mobilerun.clients.cloud.mailboxes as mailboxes
-    import mobilerun.clients.cloud.numbers as numbers
-
-    sdk = AsyncMock()
-    monkeypatch.setattr(
-        numbers if group == "number" else mailboxes, "cloud_client", sdk
-    )
-    result = CliRunner().invoke(
-        cli, [group, "create", "--yes", "--billing", "included", "--plan", "rent"]
-    )
-    assert result.exit_code != 0
-    assert "paid" in result.output.lower()
-    sdk.assert_not_called()
-
-
 @pytest.mark.parametrize(
     "group,module,name,args",
     [
@@ -654,23 +637,11 @@ def test_number_messages_countries_and_send(monkeypatch):
     result = runner.invoke(number.number, ["countries", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == [{"body": "US"}]
-    assert runner.invoke(number.number, ["send", "n1", "+123", "Hi"]).exit_code != 0
-    send.assert_not_awaited()
     result = runner.invoke(
-        number.number, ["send", "n1", "+123", "Hi", "--yes", "--billing", "paid"]
+        number.number, ["send", "n1", "+123", "Hi", "--billing", "paid"]
     )
     assert result.exit_code == 0, result.output
-    send.assert_awaited_once()
-
-
-def test_send_requires_paid_billing(monkeypatch):
-    send = AsyncMock()
-    monkeypatch.setattr(number.cloud_numbers, "send", send)
-    result = CliRunner().invoke(
-        number.number, ["send", "n1", "+123", "Hi", "--yes", "--billing", "no_commerce"]
-    )
-    assert result.exit_code != 0
-    send.assert_not_awaited()
+    send.assert_awaited_once_with("n1", "+123", "Hi", billing=Billing.PAID)
 
 
 def test_create_reports_address_and_state(monkeypatch):
@@ -735,7 +706,7 @@ def test_proxy_json_buy_bind(monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["id"] == "p1"
-    assert "Continue?" in result.stderr and "Complete payment" in result.stderr
+    assert "Continue?" not in result.stderr and "Complete payment" in result.stderr
     result = runner.invoke(proxy.proxy, ["bind", "p1", "d1", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {
@@ -861,4 +832,4 @@ def test_confirmed_number_mailbox_create_json_and_checkout_stderr(monkeypatch):
         result = CliRunner().invoke(group, ["create", "--json"], input="y\n")
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout)["id"] == "r1"
-        assert "Continue?" in result.stderr and "Complete payment" in result.stderr
+        assert "Continue?" not in result.stderr and "Complete payment" in result.stderr

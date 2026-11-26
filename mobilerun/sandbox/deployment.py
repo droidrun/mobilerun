@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import time
+import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -31,7 +32,6 @@ from mobilerun.utils.paths import local_store_path
 from . import clients
 from .errors import (
     FlowStagingError,
-    SandboxConfirmationRequired,
     SandboxDeclarationError,
     SandboxDeploymentConflict,
     SandboxDeploymentError,
@@ -39,12 +39,14 @@ from .errors import (
     SandboxRunTimeout,
 )
 from .models import (
+    FILE_MIME_TYPES,
+    FILE_UPLOAD_USES,
     WEBHOOK_REGISTER_HINT,
     Artifact,
-    DeploymentPreview,
     DeploymentReceipt,
     Endpoint,
     OwnershipReceipt,
+    is_result_path_part,
     resolve_billing,
     validate_device,
     webhook_endpoint_id,
@@ -318,6 +320,79 @@ class ReceiptStore:
             ) from None
 
 
+def _result_template(path: str = "") -> str:
+    return "{{steps.function.body.result" + path + "}}"
+
+
+_FileReferences = dict[tuple[str, ...], dict[str, str]]
+
+
+def _webhook_result(output: JSON | None, references: _FileReferences) -> Any:
+    """Project the inspected serialization schema without templating file bytes."""
+    invalid_path = "Webhook files must point to required, non-null strings through supported fields"
+
+    def project(schema: Any, path: str, pending: _FileReferences) -> Any:
+        if not pending:
+            return _result_template(path)
+        if (
+            not isinstance(schema, dict)
+            or schema.get("nullable") is True
+            or ({"anyOf", "oneOf"} & schema.keys())
+        ):
+            raise SandboxDeclarationError(invalid_path)
+        if () in pending:
+            if schema.get("type") != "string" or len(pending) != 1:
+                raise SandboxDeclarationError(invalid_path)
+            return pending[()]
+        if schema.get("x-mobilerun-dynamic-serializer"):
+            raise SandboxDeclarationError(
+                "Webhook result branches on file paths cannot use custom or duck-typed serializers"
+            )
+
+        children: dict[str, _FileReferences] = {}
+        for (part, *rest), reference in pending.items():
+            children.setdefault(part, {})[tuple(rest)] = reference
+        if schema.get("type") == "object":
+            fields = schema.get("properties", {})
+            required = set(schema.get("required", []))
+            if not children.keys() <= required or not children.keys() <= fields.keys():
+                raise SandboxDeclarationError(invalid_path)
+            if schema.get("additionalProperties", False) is not False:
+                raise SandboxDeclarationError(
+                    "Webhook result objects on file paths cannot allow extra properties"
+                )
+            if (
+                schema.get("x-mobilerun-omittable-fields")
+                or not fields.keys() <= required
+            ):
+                raise SandboxDeclarationError(
+                    "Webhook result objects on file paths must require every serialized property"
+                )
+            if not all(is_result_path_part(field) for field in fields):
+                raise SandboxDeclarationError(
+                    "Webhook result contains a field that cannot be addressed by a workflow template"
+                )
+            return {
+                field: project(child, f"{path}.{field}", children.get(field, {}))
+                for field, child in fields.items()
+            }
+        if schema.get("type") == "array":
+            length = schema.get("minItems")
+            if type(length) is not int or length != schema.get("maxItems"):
+                raise SandboxDeclarationError(
+                    "Webhook files require fixed-length lists on file paths; set min_length and max_length to the same value"
+                )
+            if not all(part.isdecimal() and int(part) < length for part in children):
+                raise SandboxDeclarationError(invalid_path)
+            return [
+                project(schema.get("items"), f"{path}.{i}", children.get(str(i), {}))
+                for i in range(length)
+            ]
+        raise SandboxDeclarationError(invalid_path)
+
+    return project(output, "", references)
+
+
 def build_document(
     artifact: Artifact,
     function_id: str,
@@ -344,7 +419,12 @@ def build_document(
         "steps": [
             {
                 "id": "function",
-                "name": decl.name + settings.MOBILERUN_SANDBOX_ACTION_SUFFIX,
+                # Legacy templates resolve steps by action name, not by ID.
+                "name": (
+                    "function"
+                    if decl.files or decl.webhook is not None
+                    else decl.name + settings.MOBILERUN_SANDBOX_ACTION_SUFFIX
+                ),
                 "uses": "functions.run",
                 "with": {
                     "functionId": function_id,
@@ -357,6 +437,46 @@ def build_document(
     }
     if device is not None:
         result["devices"] = [device]
+    webhook_result = _result_template()
+    if decl.files and decl.files_folder is not None:
+        folder = "/" + decl.files_folder.removeprefix("/")
+        stored_folder = unicodedata.normalize("NFC", folder)
+        result["settings"]["delivery"] = {
+            "destination": "mobilerun",
+            "folder": folder,
+        }
+        references: _FileReferences = {}
+        for index, (filename, path) in enumerate(decl.files.items(), 1):
+            upload_id = f"upload_{index}"
+            result["steps"].append(
+                {
+                    "id": upload_id,
+                    "name": upload_id,
+                    "uses": FILE_UPLOAD_USES,
+                    "with": {
+                        "filename": filename,
+                        "mimeType": FILE_MIME_TYPES[Path(filename).suffix.lower()],
+                        "content": _result_template(f".{path}"),
+                        "contentEncoding": "base64",
+                    },
+                }
+            )
+            if decl.webhook is not None:
+                uploaded_path = f"{stored_folder}/{filename}"
+                if "{{" in uploaded_path:
+                    raise SandboxDeclarationError(
+                        "Webhook file paths cannot contain template syntax"
+                    )
+                # A field may be uploaded under more than one name; link to the first.
+                references.setdefault(
+                    tuple(path.split(".")),
+                    {
+                        "path": uploaded_path,
+                        "fileId": f"{{{{steps.{upload_id}.body.fileId}}}}",
+                    },
+                )
+        if decl.webhook is not None:
+            webhook_result = _webhook_result(artifact.output_schema, references)
     if decl.webhook is not None:
         result["steps"].append(
             {
@@ -365,7 +485,7 @@ def build_document(
                 "uses": "webhooks.send",
                 "with": {
                     "endpointId": webhook_endpoint_id(decl.webhook),
-                    "data": {"result": "{{steps.function.body.result}}"},
+                    "data": {"result": webhook_result},
                 },
             }
         )
@@ -437,6 +557,12 @@ def equivalent_document(actual: JSON, desired: JSON) -> bool:
             if "on" in d and "devices" not in d and a.get("devices"):
                 return False
             if (
+                "recording" in d
+                and "delivery" not in d
+                and a.get("delivery") is not None
+            ):
+                return False
+            if (
                 "on" in d
                 and d["on"].get("custom") == {}
                 and a.get("on", {}).get("custom", {}).get("inputs") is not None
@@ -462,9 +588,14 @@ def equivalent_document(actual: JSON, desired: JSON) -> bool:
     return compare(actual, desired)
 
 
-@requires(Billing.PAID)
+@requires(Billing.PAID, operation="Sandbox deployment, endpoint run, or activation")
 def _require_paid(*, billing: Billing) -> None:
     """Check commerce authorization before creating local or remote resources."""
+
+
+async def _check_deploy_billing(billing: Billing) -> None:
+    """Let interactive callers retry authorization without retrying inspection or deploy."""
+    _require_paid(billing=billing)
 
 
 def _schema_children(schema: JSON) -> Iterator[Any]:
@@ -614,12 +745,12 @@ async def deploy_file(
     device: str | None = None,
     device_free: bool = False,
     billing: Billing | str | None = None,
-    yes: bool = False,
-    confirm: Callable[[DeploymentPreview], bool] | None = None,
     artifact: Artifact | None = None,
 ) -> DeploymentReceipt:
     """Deploy a new function and optionally stage a first owned flow."""
     validate_device(device)
+    mode = resolve_billing(billing)
+    _require_paid(billing=mode)
     if artifact is None:
         artifact = package(path)
     elif artifact.declaration.schedule is not None:
@@ -641,11 +772,6 @@ async def deploy_file(
     )
     if decl.has_endpoint and _has_ref(artifact.input_schema):
         raise SandboxDeclarationError("Endpoint schema contains unsupported $ref")
-    mode = resolve_billing(billing)
-    preview = DeploymentPreview(decl.name, selected, decl.schedule, mode)
-    if not yes and (confirm is None or confirm(preview) is not True):
-        raise SandboxConfirmationRequired("Sandbox deployment requires confirmation")
-    _require_paid(billing=mode)
     scope = current_scope()
     store = ReceiptStore(scope, decl.name)
     with store.lock():
@@ -1120,6 +1246,16 @@ def _deployment(
     )
 
 
+def _without_webhook(document: JSON) -> JSON:
+    intent = copy.deepcopy(document)
+    intent["steps"] = [
+        step for step in intent["steps"] if step["uses"] != "webhooks.send"
+    ]
+    # Adding/removing the sink can rename the function for legacy templates.
+    intent["steps"][0].pop("name")
+    return intent
+
+
 async def _redeploy(
     store: ReceiptStore,
     receipt: OwnershipReceipt,
@@ -1137,7 +1273,7 @@ async def _redeploy(
             "Sandbox ownership is incomplete", receipt=receipt
         )
     _identifier(receipt.function_id)
-    _identifier(receipt.flow_id)
+    flow_id = _identifier(receipt.flow_id)
     _identifier(receipt.trigger_id)
     for action_id in receipt.action_ids:
         _identifier(action_id)
@@ -1166,18 +1302,22 @@ async def _redeploy(
         )
     actual = await clients.get_document(receipt.flow_id, billing=mode)
     if state:
+        requested = build_document(
+            artifact, receipt.function_id, state["version"], device=selected
+        )
+        desired_changed = not _same_json(requested, state["desired"])
+        retarget = (
+            state.get("webhook_unusable")
+            and desired_changed
+            and requested is not None
+            and _same_json(
+                _without_webhook(requested), _without_webhook(state["desired"])
+            )
+        )
         if (
             state["digest"] != artifact.digest
             or state["device"] != selected
-            or not _same_json(
-                build_document(
-                    artifact,
-                    receipt.function_id,
-                    state["version"],
-                    device=selected,
-                ),
-                state["desired"],
-            )
+            or (desired_changed and not retarget)
         ):
             raise SandboxDeploymentConflict(
                 "Finish the pending sandbox deployment first", receipt=receipt
@@ -1197,6 +1337,18 @@ async def _redeploy(
                 changed = copy.deepcopy(candidates[0])
                 changed[field] = state["desired"].get(field, [])
                 candidates.append(changed)
+        delivery_candidates = []
+        if "delivery" in state["done"]:
+            delivery_candidates = candidates
+        elif state.get("pending") == "delivery":
+            delivery_candidates = [copy.deepcopy(candidates[0])]
+            candidates.extend(delivery_candidates)
+        for candidate in delivery_candidates:
+            settings = candidate.setdefault("settings", {})
+            if delivery := state["desired"].get("settings", {}).get("delivery"):
+                settings["delivery"] = delivery
+            else:
+                settings.pop("delivery", None)
         if not any(equivalent_document(actual, c) for c in candidates):
             raise SandboxDeploymentConflict(
                 "Sandbox remote state diverged", receipt=receipt
@@ -1204,14 +1356,45 @@ async def _redeploy(
         version = state["version"]
         await _wait_ready(receipt.function_id, version, mode, receipt)
         desired = state["desired"]
+        if retarget and requested is not None:
+            await _check_activation_webhook(requested, receipt, mode)
+            if (await clients.validate_document(requested, billing=mode)).get(
+                "valid"
+            ) is not True:
+                raise SandboxDeploymentError(
+                    "Sandbox flow validation failed", receipt=receipt
+                )
+            # The observed document is a verified cutover state, not new ownership.
+            # Keep every known action until the replacement is confirmed active.
+            state.update(
+                before=actual,
+                desired=requested,
+                action_payloads=await clients.prepare_action_payloads(
+                    requested, billing=mode
+                ),
+                old_ids=list(bindings),
+                retire_ids=list(receipt.action_ids),
+                new_ids=[],
+                done=[],
+                pending=None,
+                webhook_unusable=False,
+                retarget_generation=len(receipt.stages),
+            )
+            receipt = _checkpoint(store, receipt, state)
+            desired = requested
     else:
-        if store.yaml_path.exists():
-            authored = yaml.safe_load(store.yaml_path.read_text(encoding="utf-8"))
-            if not equivalent_document(actual, authored):
+        has_yaml = store.yaml_path.exists()
+        authored = _read_authored_document(store, receipt)
+        if has_yaml or authored is not None:
+            if (
+                not isinstance(authored, dict)
+                or (not has_yaml and not _has_authored_steps(authored))
+                or not equivalent_document(actual, authored)
+            ):
                 raise SandboxDeploymentConflict(
                     "Sandbox remote document changed", receipt=receipt
                 )
-        pinned = _pinned_version(receipt.function_id, actual)
+        pinned = _pinned_version(receipt.function_id, actual, for_redeploy=True)
         version = pinned
         source = await clients.get_source(receipt.function_id, version, billing=mode)
         if source != artifact.source:
@@ -1237,7 +1420,7 @@ async def _redeploy(
             if artifact.declaration.webhook and not store.yaml_path.exists():
                 store.write_yaml(desired)
             return _deployment(receipt, artifact, version, "unchanged")
-        if not store.yaml_path.exists():
+        if authored is None:
             raise SandboxDeploymentConflict(
                 "Sandbox authored document evidence is missing", receipt=receipt
             )
@@ -1301,7 +1484,10 @@ async def _redeploy(
         state["pending"] = stage
         save()
         # Includes the full desired document, so device/schema-only changes get new keys.
-        digest = _hash(json.dumps([state["desired"], state["old_ids"]], sort_keys=True))
+        identity = [state["desired"], state["old_ids"]]
+        if "retarget_generation" in state:
+            identity.append(state["retarget_generation"])
+        digest = _hash(json.dumps(identity, sort_keys=True))
         key = stage_key(store.scope, receipt.name, digest, stage)
         receipt = store.record_stage(receipt, stage, key)
         return key
@@ -1311,16 +1497,32 @@ async def _redeploy(
         state["pending"] = None
         save()
 
+    delivery = desired.get("settings", {}).get("delivery")
+    delivery_changed = not _same_json(
+        state["before"].get("settings", {}).get("delivery"), delivery
+    )
+
+    async def update_delivery() -> None:
+        if delivery_changed and "delivery" not in state["done"]:
+            key = intent("delivery")
+            await clients.update_flow_delivery(
+                _identifier(receipt.flow_id), delivery, key, billing=mode
+            )
+            done("delivery")
+
     try:
-        # Re-prove shutdown on every recovery, including an uncertain enable.
-        key = stage_key(store.scope, receipt.name, artifact.digest, "disable")
-        receipt = store.record_stage(receipt, "disable", key)
-        await clients.disable_flow(receipt.flow_id, billing=mode)
-        if (await _flow(receipt.flow_id, mode))["enabled"] is not False:
-            raise ValueError("Shutdown not confirmed")
-        if "disable" not in state["done"]:
-            state["done"].append("disable")
-            save()
+        activated = "enable" in state["done"]
+        if not activated:
+            # Re-prove shutdown, including after an uncertain enable. Once enable
+            # is confirmed, retries only verify the live flow and retire old actions.
+            key = stage_key(store.scope, receipt.name, artifact.digest, "disable")
+            receipt = store.record_stage(receipt, "disable", key)
+            await clients.disable_flow(receipt.flow_id, billing=mode)
+            if (await _flow(receipt.flow_id, mode))["enabled"] is not False:
+                raise ValueError("Shutdown not confirmed")
+            if "disable" not in state["done"]:
+                state["done"].append("disable")
+                save()
         for index, payload in enumerate(payloads):
             stage = f"create:{index}"
             if stage in state["done"]:
@@ -1338,9 +1540,13 @@ async def _redeploy(
                 action_ids=tuple(dict.fromkeys([*receipt.action_ids, action_id])),
             )
             done(stage)
+        # The service permits uploads without delivery, but not the reverse.
+        if delivery is None:
+            await update_delivery()
         if "replace" not in state["done"]:
             if (await _flow(receipt.flow_id, mode))["enabled"] is not False:
                 raise ValueError("Shutdown no longer confirmed")
+            await _check_activation_webhook(desired, receipt, mode)
             key = intent("replace")
             refs = [
                 dict(action_id=a, position=i, key=desired["steps"][i]["id"])
@@ -1380,23 +1586,37 @@ async def _redeploy(
                 receipt.flow_id, desired.get("devices", []), key, billing=mode
             )
             done("devices")
-        intent("verify")
+        if delivery is not None:
+            await update_delivery()
+        if not activated:
+            intent("verify")
         await _unshared(receipt, mode)
-        if (await _flow(receipt.flow_id, mode))[
+        expected_enabled = state["enabled"] if activated else False
+        if (await _flow(flow_id, mode))[
             "enabled"
-        ] is not False or not equivalent_document(
-            await clients.get_document(receipt.flow_id, billing=mode), desired
+        ] is not expected_enabled or not equivalent_document(
+            await clients.get_document(flow_id, billing=mode), desired
         ):
             raise ValueError("Cutover verification failed")
         verified = tuple(
-            a.get("actionId")
-            for a in await clients.list_actions(receipt.flow_id, billing=mode)
+            a.get("actionId") for a in await clients.list_actions(flow_id, billing=mode)
         )
         if verified != tuple(state["new_ids"]):
             raise ValueError("Cutover bindings changed")
-        done("verify")
+        if not activated:
+            done("verify")
+        if state["enabled"] and not activated:
+            await _check_activation_webhook(desired, receipt, mode)
+            intent("enable")
+            await clients.enable_flow(flow_id, billing=mode)
+            if (await _flow(flow_id, mode))["enabled"] is not True:
+                raise ValueError("Enable not confirmed")
+            done("enable")
         unresolved = []
-        for action_id in state["old_ids"]:
+        retire_ids: list[str] = (
+            state["retire_ids"] if "retire_ids" in state else state["old_ids"]
+        )
+        for action_id in retire_ids:
             stage = "delete:" + action_id
             if stage in state["done"]:
                 continue
@@ -1413,16 +1633,6 @@ async def _redeploy(
             receipt, action_ids=tuple(state["new_ids"]), digest=artifact.digest
         )
         store.write_yaml(desired)
-        if state["enabled"]:
-            await _unshared(receipt, mode)
-            if (await _flow(receipt.flow_id, mode))["enabled"] is not False:
-                raise ValueError("Shutdown no longer confirmed")
-            await _check_activation_webhook(desired, receipt, mode)
-            intent("enable")
-            await clients.enable_flow(receipt.flow_id, billing=mode)
-            if (await _flow(receipt.flow_id, mode))["enabled"] is not True:
-                raise ValueError("Enable not confirmed")
-            done("enable")
         state["complete"] = True
         save()
         warnings = (
@@ -1430,13 +1640,38 @@ async def _redeploy(
         )
         return _deployment(receipt, artifact, version, "pushed", warnings)
     except Exception as exc:
-        # Do not claim rollback. Read the actual state and expose it in durable evidence.
+        # A confirmed activation must not be undone by a cleanup failure.
         try:
-            key = stage_key(
-                store.scope, receipt.name, artifact.digest, "failure:shutdown"
+            restore_old = (
+                isinstance(exc, _WebhookBindingError)
+                and state["enabled"]
+                and not {"replace", "delivery"}.intersection(state["done"])
+                and state.get("pending") not in ("replace", "delivery")
             )
-            receipt = store.record_stage(receipt, "failure:shutdown", key)
-            await clients.disable_flow(receipt.flow_id, billing=mode)
+            if restore_old:
+                # Only definitions were created; no live binding or settings changed.
+                await _unshared(receipt, mode)
+                current = await clients.get_document(flow_id, billing=mode)
+                current_ids = [
+                    row.get("actionId")
+                    for row in await clients.list_actions(flow_id, billing=mode)
+                ]
+                if current_ids != state["old_ids"] or not equivalent_document(
+                    current, state["before"]
+                ):
+                    raise ValueError("Previous workflow state changed")
+                await _check_activation_webhook(state["before"], receipt, mode)
+                key = stage_key(
+                    store.scope, receipt.name, artifact.digest, "restore:enable"
+                )
+                receipt = store.record_stage(receipt, "restore:enable", key)
+                await clients.enable_flow(flow_id, billing=mode)
+            elif "enable" not in state["done"]:
+                key = stage_key(
+                    store.scope, receipt.name, artifact.digest, "failure:shutdown"
+                )
+                receipt = store.record_stage(receipt, "failure:shutdown", key)
+                await clients.disable_flow(receipt.flow_id, billing=mode)
         except Exception:
             pass
         try:
@@ -1445,7 +1680,10 @@ async def _redeploy(
             enabled = "uncertain"
         state["warning"] = f"Cutover incomplete; flow enabled={enabled}"
         if isinstance(exc, _WebhookBindingError):
-            state["warning"] += f". {exc}"
+            state["webhook_unusable"] = True
+            state[
+                "warning"
+            ] += f". {exc}. Redeploy with a usable endpoint ID or remove webhook=."
         save()
         raise SandboxDeploymentError(state["warning"], receipt=receipt) from None
 
@@ -1797,6 +2035,36 @@ async def _owned_remote(
     return receipt, flow
 
 
+def _read_authored_document(store: ReceiptStore, receipt: OwnershipReceipt) -> Any:
+    """Read local YAML or the most recent completed deployment's document."""
+    if store.yaml_path.exists():
+        try:
+            return yaml.safe_load(store.yaml_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, yaml.YAMLError):
+            raise SandboxDeploymentConflict(
+                "Sandbox document evidence is unreadable", receipt=receipt
+            ) from None
+    for entry in reversed(receipt.stages):
+        state = json.loads(entry)
+        if state.get("complete") and state.get("stage") in ("initial", "cutover"):
+            key = "document" if state["stage"] == "initial" else "desired"
+            return state.get(key)
+    return None
+
+
+def _has_authored_steps(document: Any) -> bool:
+    # Equivalence allows extra remote fields, so require authored action bodies.
+    steps = document.get("steps") if isinstance(document, dict) else None
+    return (
+        isinstance(steps, list)
+        and bool(steps)
+        and all(
+            isinstance(step, dict) and {"id", "name", "uses", "with"} <= step.keys()
+            for step in steps
+        )
+    )
+
+
 async def _activation_document(
     store: ReceiptStore, receipt: OwnershipReceipt, flow: JSON, mode: Billing
 ) -> JSON:
@@ -1807,40 +2075,15 @@ async def _activation_document(
         for step in live_steps
         if isinstance(step, dict)
     )
-    if store.yaml_path.exists():
-        try:
-            authored = yaml.safe_load(store.yaml_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, yaml.YAMLError):
-            raise SandboxDeploymentConflict(
-                "Sandbox document evidence is unreadable", receipt=receipt
-            ) from None
-    else:
-        authored = None
-        for entry in reversed(receipt.stages):
-            state = json.loads(entry)
-            if state.get("complete") and state.get("stage") in ("initial", "cutover"):
-                key = "document" if state["stage"] == "initial" else "desired"
-                authored = state.get(key)
-                break
-        if authored is None and not has_webhook:
-            return document
-    if has_webhook:
-        steps = authored.get("steps") if isinstance(authored, dict) else None
-        # The comparison allows extra remote fields. Require authored action bodies
-        # so a partial document cannot omit the endpoint or the result template.
-        if (
-            not isinstance(steps, list)
-            or not steps
-            or any(
-                not isinstance(step, dict)
-                or not {"id", "name", "uses", "with"} <= step.keys()
-                for step in steps
-            )
-        ):
-            raise SandboxDeploymentConflict(
-                "Missing authored webhook flow evidence; redeploy before activation",
-                receipt=receipt,
-            )
+    has_yaml = store.yaml_path.exists()
+    authored = _read_authored_document(store, receipt)
+    if not has_yaml and authored is None and not has_webhook:
+        return document
+    if has_webhook and not _has_authored_steps(authored):
+        raise SandboxDeploymentConflict(
+            "Missing authored webhook flow evidence; redeploy before activation",
+            receipt=receipt,
+        )
     if not isinstance(authored, dict) or not equivalent_document(document, authored):
         raise SandboxDeploymentConflict(
             "Sandbox remote document changed; redeploy before activation",
@@ -1849,21 +2092,37 @@ async def _activation_document(
     return document
 
 
-def _pinned_version(function_id: str, document: JSON) -> int:
+def _pinned_version(
+    function_id: str, document: JSON, *, for_redeploy: bool = False
+) -> int:
+    def is_webhook(step: Any) -> bool:
+        return (
+            isinstance(step, dict)
+            and step.get("uses") == "webhooks.send"
+            and step.get("id") == WEBHOOK_STEP_ID
+        )
+
     steps = document.get("steps", [])
+    optional_steps = steps[1:] if isinstance(steps, list) else []
+    if optional_steps and is_webhook(optional_steps[-1]):
+        optional_steps = optional_steps[:-1]
+    elif optional_steps and is_webhook(optional_steps[0]):
+        if not for_redeploy:
+            raise SandboxDeploymentConflict(
+                "Sandbox webhook precedes file uploads; redeploy before activation"
+            )
+        optional_steps = optional_steps[1:]
     if (
         not isinstance(steps, list)
-        or len(steps) not in (1, 2)
-        or (
-            len(steps) == 2
-            and (
-                not isinstance(steps[1], dict)
-                or steps[1].get("uses") != "webhooks.send"
-                or steps[1].get("id") != WEBHOOK_STEP_ID
-            )
-        )
+        or not steps
         or not isinstance(steps[0], dict)
         or steps[0].get("uses") != "functions.run"
+        or any(
+            not isinstance(step, dict)
+            or step.get("uses") != FILE_UPLOAD_USES
+            or step.get("id") != f"upload_{index}"
+            for index, step in enumerate(optional_steps, 1)
+        )
     ):
         raise SandboxDeploymentConflict(
             "Sandbox flow must contain its owned function step"

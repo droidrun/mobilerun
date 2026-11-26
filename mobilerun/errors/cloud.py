@@ -3,7 +3,8 @@
 from collections.abc import Awaitable, Callable
 from typing import ClassVar, Generic, Literal, TypeVar
 
-from mobilerun.errors.base import CloudError, CredentialError
+from mobilerun.errors.base import CloudError, CredentialError, _billing_operation_label
+from mobilerun.models.billing import Billing
 from mobilerun.models.checkout import Checkout
 
 T = TypeVar("T")
@@ -80,6 +81,31 @@ class CloudTimeout(CloudAPIError, TimeoutError):
 
 class BillingError(CloudAPIError, ValueError):
     """The billing policy does not authorize this operation."""
+
+
+class BillingRequired(BillingError):
+    """A valid billing mode was rejected by a preflight guard."""
+
+    safe_rendering: ClassVar[bool] = True
+
+    def __init__(self, *, needed: Billing, given: Billing, operation: str) -> None:
+        self.needed = Billing(needed)
+        self.given = Billing(given)
+        super().__init__(
+            operation=operation,
+            code="billing_required",
+            required_billing=self.needed.value,
+            detail=self.given.value,
+        )
+
+    @property
+    def confirmation(self) -> str:
+        """Describe the operation and the billing mode required for a retry."""
+        warning = " (charges may apply)" if self.needed is Billing.PAID else ""
+        return (
+            f"{_billing_operation_label(self.operation)} requires higher billing. "
+            f"Retry with {self.needed.value} billing{warning}?"
+        )
 
 
 class IncludedCapacityUnavailable(BillingError):

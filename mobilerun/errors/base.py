@@ -12,6 +12,7 @@ CloudErrorCode = Literal[
     "missing_token",
     "auth_failed",
     "invalid_billing",
+    "billing_required",
     "billing_override",
     "payment_failed",
     "checkout_missing",
@@ -169,6 +170,7 @@ _BILLING_OPERATIONS = frozenset(
         "retrieve",
         "run",
         "run_task",
+        "Sandbox deployment, endpoint run, or activation",
         "save",
         "screenshots",
         "send",
@@ -194,6 +196,14 @@ def _reference(value: str | None) -> str | None:
         if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value)
         else None
     )
+
+
+def _billing_operation_label(operation: str) -> str:
+    if type(operation) is str and (
+        operation in _BILLING_OPERATIONS or operation in _OPERATIONS
+    ):
+        return operation
+    return "Cloud request"
 
 
 class MobilerunError(Exception):
@@ -296,7 +306,22 @@ class CloudError(MobilerunError):
             "unsupported_number_country": "The requested country is not available. Choose one from `mobilerun number countries`.",
             "device_type_unavailable": "The requested cloud phone type is unavailable.",
         }
-        if code == "invalid_billing":
+        if code == "billing_required":
+            label = _billing_operation_label(operation)
+            modes = ("no_commerce", "included", "paid")
+            given = detail if type(detail) is str and detail in modes else "unknown"
+            needed = (
+                required_billing
+                if type(required_billing) is str and required_billing in modes
+                else "paid"
+            )
+            rendered = (
+                f"{label}: given billing={given!r}; requires billing={needed!r}. "
+                f'Pass --billing {needed} (CLI) or billing="{needed}" (Python). '
+                "Where supported, --yes (CLI) or yes=True (Python) authorizes only one retry. "
+                f"MOBILERUN_BILLING={needed} changes the default only."
+            )
+        elif code == "invalid_billing":
             label = operation if operation in _BILLING_OPERATIONS else "Cloud request"
             mode = (
                 required_billing

@@ -67,6 +67,10 @@ messages = await device.number.messages()
 await device.number.send("+15555550123", "Test message")
 ```
 
+Sending may incur charges. The typed call uses the number's configured billing
+mode without prompting. The device-action CLI can authorize a retry of the
+preflight-guarded send without changing that configured mode.
+
 Wrappers delegate `number`; `DevicePool.number` returns resources in device order.
 
 Owned numbers bound to an owned phone are unbound and released when the phone

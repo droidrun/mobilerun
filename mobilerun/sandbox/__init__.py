@@ -27,12 +27,10 @@ __all__ = (
     "Remote",
     "Run",
     "routine",
-    "DeploymentPreview",
     "DeploymentReceipt",
     "Endpoint",
     "OwnershipReceipt",
     "SandboxError",
-    "SandboxConfirmationRequired",
     "SandboxDeclarationError",
     "SandboxDeploymentConflict",
     "SandboxDeploymentError",
@@ -47,7 +45,6 @@ def __getattr__(name: str) -> Any:
         return getattr(import_module(".app", __name__), name)
     if name in (
         "routine",
-        "DeploymentPreview",
         "DeploymentReceipt",
         "Endpoint",
         "OwnershipReceipt",
@@ -55,7 +52,6 @@ def __getattr__(name: str) -> Any:
         return getattr(import_module(".models", __name__), name)
     if name in (
         "SandboxError",
-        "SandboxConfirmationRequired",
         "SandboxDeclarationError",
         "SandboxDeploymentConflict",
         "SandboxDeploymentError",

@@ -1,18 +1,73 @@
 """One opt-in policy for every billable cloud resource."""
 
-from collections.abc import Callable, Mapping
+import sys
+from collections.abc import Awaitable, Callable, Mapping
 from functools import wraps
 from inspect import signature
 from typing import ParamSpec, TypeVar
 
-from mobilerun.errors.cloud import BillingError
+from mobilerun.errors.cloud import BillingError, BillingRequired
 from mobilerun.models.billing import Billing, Plan, ResourcePlan
 
 P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def requires(minimum: Billing) -> Callable[[Callable[P, R]], Callable[P, R]]:
+def _billing_prompt_is_interactive() -> bool:
+    stdin, stderr = sys.stdin, sys.stderr
+    return (
+        stdin is not None and stderr is not None and stdin.isatty() and stderr.isatty()
+    )
+
+
+async def _confirm_billing(error: BillingRequired) -> bool:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.output import create_output
+
+    session: PromptSession[str] = PromptSession(output=create_output(stdout=sys.stderr))
+    try:
+        answer = await session.prompt_async(f"{error.confirmation} [y/N] ")
+    except EOFError:
+        return False
+    return answer.strip().casefold() in {"y", "yes"}
+
+
+async def with_billing_retry(
+    operation: Callable[[Billing], Awaitable[R]],
+    billing: Billing | str,
+    *,
+    yes: bool = False,
+    prompt: Callable[[BillingRequired], Awaitable[bool]] = _confirm_billing,
+    is_interactive: Callable[[], bool] | None = None,
+) -> tuple[R, Billing]:
+    """Retry one operation whose billing checks run before any side effects.
+
+    Pass a callback accepting the mode for this attempt. Return the result and
+    the effective mode. Without consent or a terminal on stdin and stderr,
+    re-raise BillingRequired.
+    """
+
+    mode = Billing(billing)
+    try:
+        return await operation(mode), mode
+    except BillingRequired as error:
+        if mode is Billing.PAID or error.given is not mode or error.needed is mode:
+            raise
+        needed = error.needed
+        if yes is not True:
+            interactive = (
+                _billing_prompt_is_interactive()
+                if is_interactive is None
+                else is_interactive()
+            )
+            if not interactive or not await prompt(error):
+                raise
+    return await operation(needed), needed
+
+
+def requires(
+    minimum: Billing, *, operation: str | None = None
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Declare and enforce a boundary's minimum commerce mode before any work."""
 
     def decorate(function: Callable[P, R]) -> Callable[P, R]:
@@ -47,8 +102,6 @@ def requires(minimum: Billing) -> Callable[[Callable[P, R]], Callable[P, R]]:
                     plan = bound.arguments.get("plan")
                     if plan is not None and ResourcePlan(plan) is ResourcePlan.RENT:
                         needed = Billing.PAID
-                if list(Billing).index(mode) < list(Billing).index(needed):
-                    raise ValueError
             except (ValueError, TypeError) as exc:
                 error = BillingError(
                     operation=function.__name__,
@@ -57,6 +110,10 @@ def requires(minimum: Billing) -> Callable[[Callable[P, R]], Callable[P, R]]:
                     detail=given,
                 )
                 raise error from exc
+            if list(Billing).index(mode) < list(Billing).index(needed):
+                raise BillingRequired(
+                    needed=needed, given=mode, operation=operation or function.__name__
+                )
             bound.arguments["billing"] = mode
             return function(*bound.args, **bound.kwargs)
 

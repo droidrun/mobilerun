@@ -7,15 +7,15 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import SecretStr
+from mobilerun_functions.schema import output_schema
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from mobilerun.core.webhooks import WebhookEndpoint
-from mobilerun.errors.cloud import CloudResourceNotFound
+from mobilerun.errors.cloud import BillingRequired, CloudResourceNotFound
 from mobilerun.sandbox import deployment as deploy
 from mobilerun.sandbox.errors import (
     FlowCapabilityError,
     FlowStagingError,
-    SandboxConfirmationRequired,
     SandboxDeclarationError,
     SandboxDeploymentConflict,
     SandboxDeploymentError,
@@ -125,6 +125,174 @@ def test_invalid_cron_fails_locally():
         build_document(artifact(schedule="bad"), "function", 1, device=None)
 
 
+@pytest.mark.anyio
+async def test_webhook_file_list_must_be_fixed_length_before_deploy(env, hooks):
+    class Event(BaseModel):
+        image: str
+
+    class Output(BaseModel):
+        events: list[Event] = Field(min_length=1, max_length=3)
+
+    decl = CloudDeclaration(
+        "demo", webhook=HOOK_ID, files={"map.jpg": "events.0.image"}, files_folder="atc"
+    )
+    packaged = replace(
+        env.artifact, declaration=decl, output_schema=output_schema(Output)
+    )
+    with pytest.raises(
+        SandboxDeclarationError, match=r"fixed.length.*min_length.*max_length"
+    ):
+        await deploy.deploy_file(env.path, artifact=packaged)
+    env.fake.create_function.assert_not_awaited()
+    hooks.get.assert_not_awaited()
+
+
+def test_webhook_keeps_fixed_list_items_without_files_as_whole_values():
+    class Event(BaseModel):
+        image: str
+        title: str
+
+    class Output(BaseModel):
+        events: list[Event] = Field(min_length=2, max_length=2)
+
+    packaged = replace(
+        artifact(
+            webhook=HOOK_ID, files={"map.jpg": "events.0.image"}, files_folder="atc"
+        ),
+        output_schema=output_schema(Output),
+    )
+    doc = deploy.build_document(packaged, "f", 1, device=None)
+    assert doc["steps"][-1]["with"]["data"] == {
+        "result": {
+            "events": [
+                {
+                    "image": {
+                        "path": "/atc/map.jpg",
+                        "fileId": "{{steps.upload_1.body.fileId}}",
+                    },
+                    "title": "{{steps.function.body.result.events.0.title}}",
+                },
+                "{{steps.function.body.result.events.1}}",
+            ]
+        }
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("shape", ["extra", "exclude_if"])
+async def test_webhook_rejects_expanded_objects_with_unstable_keys(env, hooks, shape):
+    if shape == "extra":
+
+        class Event(BaseModel):
+            model_config = ConfigDict(extra="allow")
+            image: str
+
+    else:
+
+        class Event(BaseModel):
+            model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+            image: str
+            note: str = Field(default="", exclude_if=lambda note: not note)
+
+    class Output(BaseModel):
+        event: Event
+
+    declaration = CloudDeclaration(
+        "demo", webhook=HOOK_ID, files={"map.jpg": "event.image"}, files_folder="atc"
+    )
+    packaged = replace(
+        env.artifact, declaration=declaration, output_schema=output_schema(Output)
+    )
+    with pytest.raises(SandboxDeclarationError, match="Webhook result objects"):
+        await deploy.deploy_file(env.path, artifact=packaged)
+    env.fake.create_function.assert_not_awaited()
+    hooks.get.assert_not_awaited()
+
+
+def test_webhook_file_path_normalizes_folder_without_changing_filename():
+    class Output(BaseModel):
+        image: str
+
+    filename = "re\u0301sume\u0301.jpg"
+    packaged = replace(
+        artifact(
+            webhook=HOOK_ID, files={filename: "image"}, files_folder="atc/cafe\u0301"
+        ),
+        output_schema=output_schema(Output),
+    )
+    doc = deploy.build_document(packaged, "f", 1, device=None)
+    assert doc["steps"][1]["with"]["filename"] == filename
+    assert (
+        doc["steps"][-1]["with"]["data"]["result"]["image"]["path"]
+        == f"/atc/café/{filename}"
+    )
+
+
+def test_webhook_uses_first_upload_when_a_field_has_multiple_filenames():
+    class Output(BaseModel):
+        image: str
+        other: str
+
+    packaged = replace(
+        artifact(
+            webhook=HOOK_ID,
+            files={"other.jpg": "other", "first.jpg": "image", "second.png": "image"},
+            files_folder="atc",
+        ),
+        output_schema=output_schema(Output),
+    )
+    doc = deploy.build_document(packaged, "f", 1, device=None)
+    assert [step["with"]["filename"] for step in doc["steps"][1:-1]] == [
+        "other.jpg",
+        "first.jpg",
+        "second.png",
+    ]
+    assert doc["steps"][-1]["with"]["data"]["result"]["image"] == {
+        "path": "/atc/first.jpg",
+        "fileId": "{{steps.upload_2.body.fileId}}",
+    }
+
+
+def test_legacy_file_webhook_order_can_only_be_read_for_redeploy():
+    document = {
+        "steps": [
+            {
+                "id": "function",
+                "uses": "functions.run",
+                "with": {"functionId": "f", "version": 7},
+            },
+            {"id": "webhook", "uses": "webhooks.send"},
+            {"id": "upload_1", "uses": "files.upload"},
+        ]
+    }
+    with pytest.raises(SandboxDeploymentConflict, match="redeploy"):
+        deploy._pinned_version("f", document)
+    assert deploy._pinned_version("f", document, for_redeploy=True) == 7
+
+
+@pytest.mark.parametrize(
+    ("filename", "folder"),
+    [
+        ("{{steps.function.body.result.image}}.jpg", "atc"),
+        ("map.jpg", "atc/{{meta.shortDate}}"),
+    ],
+)
+def test_webhook_file_path_cannot_embed_a_template(filename, folder):
+    class Output(BaseModel):
+        image: str
+
+    packaged = replace(
+        artifact(
+            webhook=HOOK_ID,
+            files={filename: "image"},
+            files_folder=folder,
+        ),
+        output_schema=output_schema(Output),
+    )
+    with pytest.raises(SandboxDeclarationError, match="template syntax"):
+        deploy.build_document(packaged, "f", 1, device=None)
+
+
 @pytest.mark.parametrize(
     "declaration", [CloudDeclaration(""), CloudDeclaration("x", endpoint="yes")]
 )
@@ -172,11 +340,46 @@ def owned(e, *, flow=False):
 
 @pytest.mark.anyio
 async def test_consent_before_any_cloud_call(env):
-    for kwargs in ({}, {"confirm": lambda preview: False}):
-        with pytest.raises(SandboxConfirmationRequired):
-            await deploy.deploy_file(env.path, **kwargs)
+    for billing in ("no_commerce", "included"):
+        with pytest.raises(BillingRequired, match="--yes"):
+            await deploy.deploy_file(env.path, billing=billing)
     env.fake.list_functions.assert_not_awaited()
     assert not env.store.directory.exists()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("billing", [None, "paid"])
+async def test_paid_deployment_skips_confirmation(env, monkeypatch, billing):
+    monkeypatch.setenv(
+        "MOBILERUN_BILLING", "paid" if billing is None else "no_commerce"
+    )
+    kwargs = {} if billing is None else {"billing": billing}
+    assert (await deploy.deploy_file(env.path, **kwargs)).status == "created"
+    env.fake.create_document.assert_awaited_once()
+
+
+def test_sdk_declined_deploy_writes_no_receipt_and_makes_no_cloud_calls(
+    env, monkeypatch
+):
+    from functools import partial
+
+    from mobilerun.clients.cloud.billing import with_billing_retry
+    from mobilerun.sandbox import app
+
+    monkeypatch.setattr(app, "package", lambda _: env.artifact)
+    prompt = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        app,
+        "with_billing_retry",
+        partial(with_billing_retry, prompt=prompt, is_interactive=lambda: True),
+    )
+
+    with pytest.raises(BillingRequired):
+        app.deploy(env.path, billing="included")
+
+    prompt.assert_awaited_once()
+    assert not env.store.directory.exists()
+    assert all(not fake.called for fake in vars(env.fake).values())
 
 
 @pytest.mark.anyio
@@ -186,14 +389,14 @@ async def test_device_selection_and_invalid_schema_precede_cloud(env, monkeypatc
         deploy, "package", lambda path: replace(env.artifact, declaration=schedule)
     )
     with pytest.raises(SandboxDeclarationError):
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     monkeypatch.setattr(
         deploy,
         "package",
         lambda path: replace(env.artifact, input_schema={"$ref": "#/$defs/X"}),
     )
     with pytest.raises(SandboxDeclarationError):
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     env.fake.list_functions.assert_not_awaited()
 
 
@@ -204,10 +407,10 @@ async def test_duplicate_and_foreign_function_rejected(env):
         {"id": "g", "name": "demo"},
     ]
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     env.fake.list_functions.return_value = [{"id": "f", "name": "demo"}]
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     env.fake.create_function.assert_not_awaited()
     env.fake.create_document.assert_not_awaited()
 
@@ -226,7 +429,6 @@ async def test_invalid_webhook_prevents_all_cloud_calls(env, hooks, target):
             artifact=replace(
                 env.artifact, declaration=CloudDeclaration("demo", webhook=target)
             ),
-            yes=True,
         )
     assert (
         str(error.value)
@@ -245,7 +447,7 @@ async def test_initial_retry_rechecks_endpoint_before_new_staging(env, hooks, de
     )
     env.fake.validate_document.return_value = {"valid": False}
     with pytest.raises(SandboxDeploymentError, match="validation failed"):
-        await deploy.deploy_file(env.path, artifact=artifact, yes=True)
+        await deploy.deploy_file(env.path, artifact=artifact)
 
     env.fake.validate_document.return_value = {"valid": True}
     env.fake.create_document.return_value["actionIds"].append("send")
@@ -256,7 +458,7 @@ async def test_initial_retry_rechecks_endpoint_before_new_staging(env, hooks, de
     with pytest.raises(
         SandboxDeploymentError, match="not found" if deleted else "blocked"
     ):
-        await deploy.deploy_file(env.path, artifact=artifact, yes=True)
+        await deploy.deploy_file(env.path, artifact=artifact)
     env.fake.prepare_action_payloads.assert_not_awaited()
     env.fake.create_document.assert_not_awaited()
 
@@ -273,10 +475,10 @@ async def test_staging_replays_before_rechecking_deleted_borrowed_endpoint(env, 
         staged,
     ]
     with pytest.raises(SandboxDeploymentError, match="staging failed"):
-        await deploy.deploy_file(env.path, artifact=artifact, yes=True)
+        await deploy.deploy_file(env.path, artifact=artifact)
     hooks.get.side_effect = CloudResourceNotFound(status=404)
     with pytest.raises(SandboxDeploymentError, match="not found"):
-        await deploy.deploy_file(env.path, artifact=artifact, yes=True)
+        await deploy.deploy_file(env.path, artifact=artifact)
     assert (
         env.fake.create_document.await_args_list[0]
         == env.fake.create_document.await_args_list[1]
@@ -320,7 +522,7 @@ async def test_paused_initial_webhook_and_explicit_enable(env, hooks):
     fake.create_document.return_value["actionIds"].append("send")
     fake.enable_flow.side_effect = RuntimeError()
     with pytest.raises(SandboxDeploymentError, match="activation"):
-        await deploy.deploy_file(env.path, artifact=art, yes=True)
+        await deploy.deploy_file(env.path, artifact=art)
     fake.list_functions.return_value = [
         fake.create_function.return_value | {"name": "demo"}
     ]
@@ -334,7 +536,7 @@ async def test_paused_initial_webhook_and_explicit_enable(env, hooks):
     fake.disable_flow = AsyncMock()
     await deploy.set_enabled("demo", False)
     hooks.reset_mock()
-    await deploy.deploy_file(env.path, artifact=art, yes=True)
+    await deploy.deploy_file(env.path, artifact=art)
     hooks.get.assert_not_awaited()
     fake.enable_flow.reset_mock()
     hooks.get.side_effect = lambda id: endpoint(id, health="blocked")
@@ -360,7 +562,6 @@ async def test_existing_endpoint_id_stages_result_step(env, hooks):
         artifact=replace(
             env.artifact, declaration=CloudDeclaration("demo", webhook=HOOK_ID)
         ),
-        yes=True,
     )
     doc = env.fake.create_document.await_args.args[0]
     assert doc["steps"][-1]["uses"] == "webhooks.send"
@@ -380,7 +581,6 @@ async def test_unknown_webhook_id_has_registration_hint(env, hooks):
             artifact=replace(
                 env.artifact, declaration=CloudDeclaration("demo", webhook=HOOK_ID)
             ),
-            yes=True,
         )
     assert (
         str(error.value)
@@ -407,7 +607,6 @@ async def test_reused_webhook_must_be_usable(env, hooks, fields, message):
                 env.artifact,
                 declaration=CloudDeclaration("demo", webhook=HOOK_ID),
             ),
-            yes=True,
         )
     assert "mobilerun webhook register <url>" in str(error.value)
     env.fake.create_function.assert_not_awaited()
@@ -415,7 +614,7 @@ async def test_reused_webhook_must_be_usable(env, hooks, fields, message):
 
 @pytest.mark.anyio
 async def test_new_endpoint_stages_persists_and_enables(env):
-    result = await deploy.deploy_file(env.path, yes=True)
+    result = await deploy.deploy_file(env.path)
     assert (result.status, result.function_id, result.version, result.flow_id) == (
         "created",
         "f",
@@ -432,7 +631,7 @@ async def test_new_endpoint_stages_persists_and_enables(env):
 async def test_staging_failure_records_partial_ids_and_no_yaml(env):
     env.fake.create_document.side_effect = FlowStagingError("trigger", ["action"], None)
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     assert error.value.receipt.trigger_id == "trigger"
     assert env.store.read().action_ids == ("action",)
     assert not env.store.yaml_path.exists()
@@ -442,7 +641,7 @@ async def test_staging_failure_records_partial_ids_and_no_yaml(env):
 @pytest.mark.anyio
 async def test_identical_ready_reuses_version(env):
     owned(env)
-    result = await deploy.deploy_file(env.path, yes=True)
+    result = await deploy.deploy_file(env.path)
     assert result.status == "unchanged" and result.version == 1
     env.fake.create_version.assert_not_awaited()
 
@@ -455,7 +654,7 @@ async def test_same_source_not_ready_never_activates(env, status, monkeypatch):
     times = iter([0.0, 121.0])
     monkeypatch.setattr(deploy.time, "monotonic", lambda: next(times, 121.0))
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     env.fake.enable_flow.assert_not_awaited()
 
 
@@ -467,7 +666,7 @@ async def test_changed_source_creates_and_polls_exact_version(env):
         {"version": 1, "status": "ready"},
         {"version": 2, "status": "ready"},
     ]
-    result = await deploy.deploy_file(env.path, yes=True)
+    result = await deploy.deploy_file(env.path)
     assert (result.status, result.version) == ("pushed", 2)
     assert env.fake.get_version.await_args_list[-1].args == ("f", 2)
 
@@ -476,7 +675,7 @@ async def test_changed_source_creates_and_polls_exact_version(env):
 async def test_enable_failure_exposes_persisted_receipt(env):
     env.fake.enable_flow.side_effect = RuntimeError("sensitive upstream detail")
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     assert error.value.receipt.flow_id == "flow"
     assert "sensitive" not in str(error.value)
     assert env.store.read().flow_id == "flow"
@@ -488,7 +687,7 @@ async def test_pending_inspection_eventually_ready(env):
         {"version": 1, "status": "pending_inspection"},
         {"version": 1, "status": "ready"},
     ]
-    result = await deploy.deploy_file(env.path, yes=True)
+    result = await deploy.deploy_file(env.path)
     assert result.version == 1
 
 
@@ -496,7 +695,7 @@ async def test_pending_inspection_eventually_ready(env):
 async def test_malformed_staging_response_keeps_known_ids(env):
     env.fake.create_document.return_value = {"flowId": "flow", "triggerId": "trigger"}
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     assert env.store.read().flow_id == "flow"
     assert env.store.read().trigger_id == "trigger"
     assert not env.store.yaml_path.exists()
@@ -509,13 +708,9 @@ async def test_explicit_device_free_schedule_is_staged_and_enabled(env, monkeypa
     monkeypatch.setattr(
         deploy, "package", lambda path: replace(env.artifact, declaration=declaration)
     )
-    seen = []
-    result = await deploy.deploy_file(
-        env.path, device_free=True, confirm=lambda preview: seen.append(preview) or True
-    )
+    result = await deploy.deploy_file(env.path, device_free=True)
     doc = env.fake.create_document.await_args.args[0]
     assert "devices" not in doc
-    assert seen[0].device is None
     assert result.endpoint is None
     env.fake.enable_flow.assert_awaited_once()
 
@@ -524,7 +719,7 @@ async def test_explicit_device_free_schedule_is_staged_and_enabled(env, monkeypa
 async def test_flow_validation_failure_does_not_stage(env):
     env.fake.validate_document.return_value = {"valid": False}
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     assert error.value.receipt.function_id == "f"
     env.fake.create_document.assert_not_awaited()
     assert not env.store.yaml_path.exists()
@@ -534,7 +729,7 @@ async def test_flow_validation_failure_does_not_stage(env):
 async def test_unowned_flow_blocks_before_creating_function(env):
     env.fake.list_flows.return_value = [{"id": "other", "name": "demo · flow"}]
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     env.fake.create_function.assert_not_awaited()
     assert not env.store.yaml_path.exists()
 
@@ -543,7 +738,7 @@ async def test_unowned_flow_blocks_before_creating_function(env):
 async def test_unconfirmed_enable_is_not_reported_as_success(env):
     env.fake.enable_flow.return_value = {"id": "flow", "enabled": False}
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.deploy_file(env.path, yes=True)
+        await deploy.deploy_file(env.path)
     assert error.value.receipt.flow_id == "flow"
 
 
@@ -558,10 +753,10 @@ async def test_initial_creation_recovers_original_keys_not_visible_names(
     with pytest.raises(
         SandboxDeploymentError if failure == "lost" else ProcessInterrupted
     ):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     assert e.store.read().stages
     first_keys = dict(e.cloud.create_calls)
-    result = await deploy.deploy_file(e.path, yes=True)
+    result = await deploy.deploy_file(e.path)
     assert result.function_id == "f" and result.flow_id == "flow"
     calls = [key for resource, key in e.cloud.create_calls if resource == stage]
     assert len(calls) == 2 and calls[0] == calls[1] == first_keys[stage]
@@ -574,7 +769,7 @@ async def test_initial_unknown_action_blocks_function_cleanup(initial_cloud):
     e = initial_cloud
     e.cloud.fail = "action"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     receipt = e.store.read()
     assert receipt.trigger_id == "trigger" and not receipt.action_ids
     with pytest.raises(SandboxDeploymentError, match="creation.*uncertain"):
@@ -588,7 +783,7 @@ async def test_pending_initial_intent_cannot_be_changed(initial_cloud, monkeypat
     e = initial_cloud
     e.cloud.fail = "flow"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     before = list(e.cloud.create_calls)
     monkeypatch.setattr(
         deploy,
@@ -596,7 +791,7 @@ async def test_pending_initial_intent_cannot_be_changed(initial_cloud, monkeypat
         lambda p: replace(e.artifact, source="different", digest="different"),
     )
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     assert e.cloud.create_calls == before
 
 
@@ -651,7 +846,7 @@ async def test_endpoint_default_instance_ref_is_not_a_schema_reference(
             },
         ),
     )
-    result = await deploy.deploy_file(env.path, yes=True)
+    result = await deploy.deploy_file(env.path)
     assert result.flow_id == "flow"
 
 
@@ -662,7 +857,7 @@ async def test_initial_action_replays_payload_after_catalog_changes(initial_clou
     sdk.actions.create = AsyncMock(wraps=sdk.actions.create)
     e.cloud.fail = "action"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     first = sdk.actions.create.await_args.kwargs
     payload = {k: v for k, v in first.items() if k != "idempotency_key"}
     journal = deploy._initial(e.store.read())
@@ -675,7 +870,7 @@ async def test_initial_action_replays_payload_after_catalog_changes(initial_clou
             }
         }
     )
-    await deploy.deploy_file(e.path, yes=True)
+    await deploy.deploy_file(e.path)
     assert sdk.actions.create.await_count == 2
     assert sdk.actions.create.await_args.kwargs == first
     sdk.action_catalog.list.assert_not_awaited()
@@ -695,13 +890,13 @@ async def test_interrupted_receipt_export_cannot_activate_until_replayed(
 
     monkeypatch.setattr(deploy.ReceiptStore, "write_yaml", stop)
     with pytest.raises(ProcessInterrupted):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     assert e.store.read().flow_id == "flow" and e.store.read().action_ids == ("action",)
     with pytest.raises(SandboxDeploymentConflict):
         await deploy.set_enabled("demo", True)
     assert "enable" not in e.cloud.calls
     monkeypatch.setattr(deploy.ReceiptStore, "write_yaml", original)
-    await deploy.deploy_file(e.path, yes=True)
+    await deploy.deploy_file(e.path)
     assert e.cloud.flow["enabled"] is True
 
 
@@ -713,7 +908,7 @@ async def test_pending_create_does_not_adopt_conflicting_visible_name(
     e = initial_cloud
     e.cloud.fail = resource
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     if resource == "function":
         monkeypatch.setattr(
             e.cloud,
@@ -727,7 +922,7 @@ async def test_pending_create_does_not_adopt_conflicting_visible_name(
             AsyncMock(return_value=[{**e.cloud.flow, "id": "foreign"}]),
         )
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     keys = [key for stage, key in e.cloud.create_calls if stage == resource]
     assert len(keys) == 2 and keys[0] == keys[1]
     assert "enable" not in e.cloud.calls
@@ -747,7 +942,7 @@ async def test_cleanup_initial_stage_with_all_creation_ids_known_is_allowed(
 
     monkeypatch.setattr(deploy.ReceiptStore, "write_yaml", stop)
     with pytest.raises(ProcessInterrupted):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     await deploy.cleanup_owned(e.store.read(), delete_function=True)
     assert not e.cloud.function_exists and not e.cloud.trigger_exists
 
@@ -763,14 +958,14 @@ async def test_initial_cleanup_keeps_resolution_evidence_after_partial_deletion(
 
     monkeypatch.setattr(deploy.ReceiptStore, "write_yaml", stop)
     with pytest.raises(ProcessInterrupted):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     e.cloud.fail = "delete_action"
     with pytest.raises(SandboxDeploymentError):
         await deploy.cleanup_owned(e.store.read(), delete_function=True)
     assert e.store.read().flow_id is None
     before = list(e.cloud.create_calls)
     with pytest.raises(SandboxDeploymentConflict, match="cleanup"):
-        await deploy.deploy_file(e.path, yes=True)
+        await deploy.deploy_file(e.path)
     assert e.cloud.create_calls == before
     await deploy.cleanup_owned(e.store.read(), delete_function=True)
     assert e.store.read().function_id is None
@@ -779,10 +974,10 @@ async def test_initial_cleanup_keeps_resolution_evidence_after_partial_deletion(
 @pytest.mark.anyio
 async def test_deploy_after_completed_cleanup_is_a_new_create_intent(initial_cloud):
     e = initial_cloud
-    await deploy.deploy_file(e.path, yes=True)
+    await deploy.deploy_file(e.path)
     original_keys = dict(e.cloud.create_calls)
     await deploy.cleanup_owned(e.store.read(), delete_function=True)
-    result = await deploy.deploy_file(e.path, yes=True)
+    result = await deploy.deploy_file(e.path)
     assert result.flow_id == "flow" and e.cloud.flow["enabled"] is True
     new_keys = dict(e.cloud.create_calls)
     assert all(new_keys[kind] != key for kind, key in original_keys.items())
@@ -801,7 +996,7 @@ async def test_unchanged_owned_disabled_flow_has_no_mutation(
             e.artifact, declaration=CloudDeclaration("demo", endpoint=endpoint)
         ),
     )
-    result = await deploy.deploy_file(Path("fake.py"), yes=True)
+    result = await deploy.deploy_file(Path("fake.py"))
     assert result.status == "unchanged" and result.flow_id == "flow"
     assert result.endpoint.trigger_id == "trigger"
     e.fake.disable_flow.assert_not_awaited()
@@ -816,7 +1011,7 @@ async def test_altered_action_bindings_conflict_before_version_create(setup_depl
     e.fake.list_actions.return_value = [{"actionId": "foreign"}]
     e.fake.get_source.return_value = "old source"
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     e.fake.list_actions.assert_awaited_once()
     e.fake.create_version.assert_not_awaited()
     e.fake.disable_flow.assert_not_awaited()
@@ -844,7 +1039,7 @@ def webhook_cutover(changed):
         artifact = replace(
             changed.artifact, declaration=CloudDeclaration("demo", webhook=url)
         )
-        return await deploy.deploy_file(Path("fake.py"), artifact=artifact, yes=True)
+        return await deploy.deploy_file(Path("fake.py"), artifact=artifact)
 
     return deploy_to
 
@@ -901,9 +1096,43 @@ async def test_cutover_recovers_lost_webhook_action_before_activation(
     assert len(requests) == 2 and requests[0] == requests[1]
     hooks.get.assert_awaited_once_with(HOOK_ID)
     assert cloud.keys[requests[0][1]] in changed.store.read().action_ids
-    assert "enable" not in cloud.calls
+    assert cloud.flow["enabled"] is True and cloud.bindings == ["action"]
     await deploy.cleanup_owned(changed.store.read())
     assert not cloud.actions
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("check", [2, 3], ids=["before-replace", "before-enable"])
+@pytest.mark.parametrize("retarget", [True, False], ids=["new-id", "remove"])
+async def test_deleted_webhook_can_be_retargeted_in_place(
+    changed, hooks, webhook_cutover, check, retarget
+):
+    cloud = changed.cloud
+    old_ids = tuple(cloud.bindings)
+    new_endpoint = "abcdef00-0000-4000-8000-000000000002"
+
+    async def get_endpoint(endpoint_id):
+        if endpoint_id == HOOK_ID and hooks.get.await_count >= check:
+            raise CloudResourceNotFound(status=404)
+        return endpoint(endpoint_id)
+
+    hooks.get.side_effect = get_endpoint
+    with pytest.raises(SandboxDeploymentError, match="not found"):
+        await webhook_cutover(HOOK_ID)
+    if check == 2:
+        assert tuple(cloud.bindings) == old_ids
+        assert cloud.flow["enabled"] is True
+    else:
+        assert tuple(cloud.bindings) != old_ids
+    assert all(action_id in cloud.actions for action_id in old_ids)
+
+    result = await webhook_cutover(new_endpoint if retarget else None)
+    assert result.flow_id == "flow" and cloud.flow["enabled"] is True
+    if retarget:
+        assert cloud.document["steps"][-1]["with"]["endpointId"] == new_endpoint
+    else:
+        assert [step["uses"] for step in cloud.document["steps"]] == ["functions.run"]
+    assert set(cloud.actions) == set(cloud.bindings) == set(result.action_ids)
 
 
 @pytest.mark.anyio
@@ -928,6 +1157,182 @@ async def test_redeploy_add_change_remove_endpoint_id(changed, hooks, webhook_cu
         assert changed.store.yaml_path.exists()
     await deploy.cleanup_owned(changed.store.read())
     assert all(call[0] == "get" for call in hooks.mock_calls)
+
+
+@pytest.mark.anyio
+async def test_redeploy_add_move_remove_file_delivery(changed, hooks):
+    cloud = changed.cloud
+    replace_actions = cloud.replace_flow_actions
+
+    async def replace_typed(flow_id, refs, key, **kwargs):
+        uses = [cloud.actions[ref["action_id"]]["uses"] for ref in refs]
+        if "webhooks.send" in uses:
+            producer = cloud.actions[refs[0]["action_id"]]
+            assert producer["name"] == "function"
+            assert uses[-1] == "webhooks.send"
+        assert not cloud.document["settings"].get("delivery") or "files.upload" in uses
+        await replace_actions(flow_id, refs, key, **kwargs)
+        for step, ref in zip(cloud.document["steps"], refs, strict=True):
+            action = cloud.actions[ref["action_id"]]
+            step["uses"] = action["uses"]
+
+    async def update_delivery(flow_id, delivery, key, **kwargs):
+        assert not cloud.flow["enabled"]
+        assert delivery is None or any(
+            step["uses"] == "files.upload" for step in cloud.document["steps"]
+        )
+        cloud.document["settings"]["delivery"] = delivery
+        cloud.hit("delivery")
+
+    cloud.replace_flow_actions = replace_typed
+    cloud.update_flow_delivery = AsyncMock(side_effect=update_delivery)
+    cloud.prepare_action_payloads.side_effect = lambda document, **kwargs: [
+        {
+            "name": step["name"],
+            "uses": step["uses"],
+            "params": step["with"],
+        }
+        for step in document["steps"]
+    ]
+    for folder in (None, "first", "second", None):
+        artifact = replace(
+            changed.artifact,
+            output_schema={
+                "type": "object",
+                "properties": {"image": {"type": "string"}},
+                "required": ["image"],
+            },
+            declaration=CloudDeclaration(
+                "demo",
+                webhook=HOOK_ID,
+                files_folder=folder,
+                files={"map.jpg": "image"} if folder else None,
+            ),
+        )
+        if folder == "first" or (
+            folder is None and cloud.document["settings"].get("delivery")
+        ):
+            cloud.fail = "delivery"
+            with pytest.raises(SandboxDeploymentError):
+                await deploy.deploy_file(Path("fake.py"), artifact=artifact)
+            assert not cloud.flow["enabled"]
+        result = await deploy.deploy_file(Path("fake.py"), artifact=artifact)
+        expected = (
+            {"destination": "mobilerun", "folder": f"/{folder}"} if folder else None
+        )
+        assert cloud.document["settings"].get("delivery") == expected
+        assert [step["uses"] for step in cloud.document["steps"]] == (
+            ["functions.run", "files.upload", "webhooks.send"]
+            if folder
+            else ["functions.run", "webhooks.send"]
+        )
+        assert cloud.document["steps"][-1]["with"]["data"] == {
+            "result": (
+                {
+                    "image": {
+                        "path": f"/{folder}/map.jpg",
+                        "fileId": "{{steps.upload_1.body.fileId}}",
+                    }
+                }
+                if folder
+                else "{{steps.function.body.result}}"
+            )
+        }
+        assert result.action_ids == tuple(cloud.bindings)
+        assert result.version == 1 and result.flow_id == "flow"
+        changed.store.yaml_path.unlink()
+        await deploy.set_enabled("demo", True)
+        assert (
+            await deploy.deploy_file(Path("fake.py"), artifact=artifact)
+        ).status == "unchanged"
+    added, add_retry, _, removed, remove_retry = (
+        cloud.update_flow_delivery.await_args_list
+    )
+    assert added == add_retry and removed == remove_retry
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("authored_yaml", [True, False])
+async def test_redeploy_upgrades_legacy_file_webhook_order(
+    changed, hooks, authored_yaml
+):
+    cloud, store = changed.cloud, changed.store
+    artifact = replace(
+        changed.artifact,
+        declaration=CloudDeclaration(
+            "demo", webhook=HOOK_ID, files={"map.jpg": "image"}, files_folder="atc"
+        ),
+        output_schema={
+            "type": "object",
+            "properties": {"image": {"type": "string"}},
+            "required": ["image"],
+        },
+    )
+    document = deploy.build_document(artifact, "f", 1, device=None)
+    by_id = {step["id"]: step for step in document["steps"]}
+    by_id["webhook"]["with"]["data"] = {"result": "{{steps.function.body.result}}"}
+    document["steps"] = [by_id[key] for key in ("function", "webhook", "upload_1")]
+    cloud.document = deepcopy(document)
+    cloud.flow["enabled"] = False
+    cloud.bindings = ["old-function", "old-webhook", "old-upload"]
+    cloud.actions = {
+        action_id: {"id": action_id, "name": step["name"], "params": step["with"]}
+        for action_id, step in zip(cloud.bindings, document["steps"], strict=True)
+    }
+    receipt = store.read()
+    store.write(
+        replace(
+            receipt,
+            action_ids=tuple(cloud.bindings),
+            stages=(
+                json.dumps(
+                    {
+                        "stage": "initial",
+                        "complete": True,
+                        "document": document,
+                    }
+                ),
+            ),
+        )
+    )
+    if authored_yaml:
+        store.write_yaml(document)
+    else:
+        store.yaml_path.unlink()
+
+    prepare = cloud.prepare_action_payloads
+    prepare.side_effect = lambda doc, **kwargs: [
+        {"name": step["name"], "params": step["with"], "uses": step["uses"]}
+        for step in doc["steps"]
+    ]
+    replace_actions = cloud.replace_flow_actions
+
+    async def replace_typed(flow_id, refs, key, **kwargs):
+        await replace_actions(flow_id, refs, key, **kwargs)
+        for step, ref in zip(cloud.document["steps"], refs, strict=True):
+            step["uses"] = cloud.actions[ref["action_id"]]["uses"]
+
+    cloud.replace_flow_actions = replace_typed
+
+    with pytest.raises(SandboxDeploymentConflict, match="precedes file uploads"):
+        await deploy.set_enabled("demo", True)
+    assert not cloud.flow["enabled"]
+    result = await deploy.deploy_file(Path("fake.py"), artifact=artifact)
+    assert result.status == "pushed"
+    assert [step["id"] for step in cloud.document["steps"]] == [
+        "function",
+        "upload_1",
+        "webhook",
+    ]
+    assert cloud.document["steps"][-1]["with"]["data"] == {
+        "result": {
+            "image": {
+                "path": "/atc/map.jpg",
+                "fileId": "{{steps.upload_1.body.fileId}}",
+            }
+        }
+    }
+    assert (await deploy.set_enabled("demo", True))["enabled"] is True
 
 
 @pytest.mark.anyio
@@ -969,11 +1374,11 @@ async def test_enable_webhook_without_yaml_requires_authored_evidence(
 @pytest.mark.anyio
 async def test_changed_cutover(changed):
     e = changed
-    result = await deploy.deploy_file(Path("fake.py"), device="phone", yes=True)
+    result = await deploy.deploy_file(Path("fake.py"), device="phone")
     assert result.version == 2
     assert e.cloud.flow["enabled"] is True
     assert e.cloud.calls.index("disable") < e.cloud.calls.index("create")
-    assert e.cloud.calls.index("delete_action") < e.cloud.calls.index("enable")
+    assert e.cloud.calls.index("enable") < e.cloud.calls.index("delete_action")
     assert "action" not in e.cloud.actions
     assert e.store.read().action_ids == tuple(e.cloud.bindings)
 
@@ -987,14 +1392,16 @@ async def test_cutover_lost_response_recovery(changed, stage):
     e = changed
     e.cloud.fail = stage
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.deploy_file(Path("fake.py"), device="phone", yes=True)
+        await deploy.deploy_file(Path("fake.py"), device="phone")
     assert error.value.receipt.function_id == "f"
     assert e.store.read().stages
-    if stage != "enable":
+    if stage == "delete_action":
+        assert e.cloud.flow["enabled"] is True
+    elif stage != "enable":
         assert "enable" not in e.cloud.calls
         assert e.cloud.flow["enabled"] is False
     keys = dict(e.cloud.keys)
-    await deploy.deploy_file(Path("fake.py"), device="phone", yes=True)
+    await deploy.deploy_file(Path("fake.py"), device="phone")
     if keys:
         assert e.cloud.keys == keys
     assert e.cloud.flow["enabled"] is True
@@ -1029,7 +1436,7 @@ async def test_uncertain_shutdown_never_creates_or_enables(changed, monkeypatch)
 
     monkeypatch.setattr(e.cloud, "disable_flow", no_shutdown)
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     assert "enabled=True" in str(error.value)
     assert "create" not in e.cloud.calls and "enable" not in e.cloud.calls
 
@@ -1039,7 +1446,7 @@ async def test_divergent_remote_document_fails_before_mutation(changed):
     e = changed
     e.cloud.document["on"] = {"custom": {"inputs": {"foreign": True}}}
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     assert "disable" not in e.cloud.calls
     assert e.cloud.version == 1
 
@@ -1049,11 +1456,11 @@ async def test_pending_cutover_rejects_divergence(changed):
     e = changed
     e.cloud.fail = "replace"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     e.cloud.document["on"] = {"custom": {"foreign": True}}
     e.cloud.calls.clear()
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     assert "enable" not in e.cloud.calls and "disable" not in e.cloud.calls
 
 
@@ -1062,7 +1469,7 @@ async def test_deployers_conflict_on_identity_lock(changed):
     e = changed
     with e.store.lock():
         with pytest.raises(SandboxDeploymentConflict):
-            await deploy.deploy_file(Path("fake.py"), yes=True)
+            await deploy.deploy_file(Path("fake.py"))
     assert "disable" not in e.cloud.calls
 
 
@@ -1081,12 +1488,12 @@ async def test_verification_failure_retains_disabled_progress(changed, monkeypat
 
     monkeypatch.setattr(e.cloud, "get_document", fail_verify)
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     assert error.value.receipt.action_ids == ("action", "new0")
     assert e.cloud.bindings == ["new0"]
     assert e.cloud.flow["enabled"] is False
     assert "enable" not in e.cloud.calls
-    await deploy.deploy_file(Path("fake.py"), yes=True)
+    await deploy.deploy_file(Path("fake.py"))
     assert e.cloud.flow["enabled"] is True
 
 
@@ -1094,7 +1501,7 @@ async def test_verification_failure_retains_disabled_progress(changed, monkeypat
 async def test_changed_disabled_flow_stays_disabled(changed):
     e = changed
     e.cloud.flow["enabled"] = False
-    result = await deploy.deploy_file(Path("fake.py"), yes=True)
+    result = await deploy.deploy_file(Path("fake.py"))
     assert e.cloud.flow["enabled"] is False
     assert "enable" not in e.cloud.calls
     assert result.warnings
@@ -1150,8 +1557,8 @@ async def test_action_intent_is_durable_before_lost_response(changed, monkeypatc
     monkeypatch.setattr(e.cloud, "disable_flow", disable_with_journal)
     e.cloud.fail = "create"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
-    await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
+    await deploy.deploy_file(Path("fake.py"))
     assert len(keys) == 2 and keys[0] == keys[1]
 
 
@@ -1169,7 +1576,7 @@ async def test_trigger_and_explicit_device_removal(changed, monkeypatch, kind):
     monkeypatch.setattr(
         deploy, "package", lambda p: replace(e.artifact, declaration=declaration)
     )
-    await deploy.deploy_file(Path("fake.py"), device_free=True, yes=True)
+    await deploy.deploy_file(Path("fake.py"), device_free=True)
     assert e.cloud.document["on"] == (
         {"schedule": {"cron": "0 * * * *", "timezone": "UTC"}}
         if kind == "schedule"
@@ -1199,7 +1606,7 @@ async def test_shared_dependencies_reject_cutover_and_cleanup(
 
     monkeypatch.setattr(e.cloud, "list_flows", flows)
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     with pytest.raises(SandboxDeploymentError):
         await deploy.cleanup_owned(e.receipt)
     assert e.cloud.flow["enabled"] is True
@@ -1215,11 +1622,11 @@ async def test_two_failed_shutdown_retries_preserve_inflight_stage(
     e = changed
     e.cloud.fail = "trigger"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     e.cloud.fail = "disable"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
-    await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
+    await deploy.deploy_file(Path("fake.py"))
     assert e.cloud.flow["enabled"] is True
 
 
@@ -1228,7 +1635,7 @@ async def test_old_cutover_receipt_requires_manual_recovery(changed):
     e = changed
     e.cloud.fail = "create"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     pending = deploy._cutover(e.store.read())
     pending.pop("action_payloads")
     receipt = deploy._checkpoint(e.store, e.store.read(), pending)
@@ -1236,7 +1643,7 @@ async def test_old_cutover_receipt_requires_manual_recovery(changed):
     e.cloud.calls.clear()
 
     with pytest.raises(SandboxDeploymentConflict) as resume:
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     with pytest.raises(SandboxDeploymentConflict) as cleanup:
         await deploy.cleanup_owned(receipt, delete_function=True)
     assert str(resume.value) == str(cleanup.value)
@@ -1252,7 +1659,7 @@ async def test_cleanup_pending_unknown_action_reports_uncertainty(changed):
     e = changed
     e.cloud.fail = "create"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     receipt, yaml, calls = (
         e.store.read(),
         e.store.yaml_path.read_bytes(),
@@ -1262,7 +1669,7 @@ async def test_cleanup_pending_unknown_action_reports_uncertainty(changed):
         await deploy.cleanup_owned(receipt, delete_function=True)
     assert e.store.read() == receipt and e.store.yaml_path.read_bytes() == yaml
     assert e.cloud.calls == calls
-    await deploy.deploy_file(Path("fake.py"), yes=True)
+    await deploy.deploy_file(Path("fake.py"))
     await deploy.cleanup_owned(e.store.read(), delete_function=True)
     assert not e.cloud.actions and e.store.read().function_id is None
 
@@ -1284,7 +1691,7 @@ async def test_uncertain_enable_attempts_shutdown_and_reports_actual_state(chang
     e = changed
     e.cloud.fail = "enable"
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.deploy_file(Path("fake.py"), yes=True)
+        await deploy.deploy_file(Path("fake.py"))
     assert e.cloud.flow["enabled"] is False
     assert "enabled=False" in str(error.value)
     assert deploy._cutover(error.value.receipt)["warning"] == str(error.value)

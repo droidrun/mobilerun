@@ -22,7 +22,7 @@ from mobilerun.clients.cloud.payments import (
 )
 from mobilerun.config.settings import get_settings
 from mobilerun.core.devices.base import Device
-from mobilerun.core.extensions import Extension, action
+from mobilerun.core.extensions import BillingRetry, Extension, action
 from mobilerun.core.extensions.registry import Binding
 from mobilerun.core.phone_number.base import PhoneNumber
 from mobilerun.errors import (
@@ -298,12 +298,23 @@ class CloudPhoneNumber(PhoneNumber):
             **self._connection,
         )
 
-    @action()
+    async def _send_with_billing(
+        self, policy: BillingRetry | None, /, to: str, text: str
+    ) -> numbers.MessageSendResponse:
+        async def send_with_mode(mode: Billing) -> numbers.MessageSendResponse:
+            return await numbers.send(
+                self.id, to, text, billing=mode, **self._connection
+            )
+
+        if policy is None:
+            return await send_with_mode(self._billing)
+        result, _ = await policy(send_with_mode, self._billing)
+        return result
+
+    @action(billing_retry=_send_with_billing)
     async def send(self, to: str, text: str) -> numbers.MessageSendResponse:
         """Send an SMS message to a phone number."""
-        return await numbers.send(
-            self.id, to, text, billing=self._billing, **self._connection
-        )
+        return await self._send_with_billing(None, to, text)
 
     @action()
     async def wait_for_code(

@@ -34,25 +34,41 @@ An enabled schedule can incur future charges without your CLI running. The
 default billing mode is `paid`; `MOBILERUN_BILLING` changes the default and an
 explicit `--billing` or `billing=` overrides it. Deploy, fire, and enable
 require `paid`; reads, polling, disable, and owned cleanup allow `no_commerce`.
+With `paid`, deploy, fire, and enable don't ask for billing confirmation. If a
+billing guard rejects `included` or `no_commerce`, the CLI asks before retrying
+once with `paid`. Declining stops the operation. Without a terminal, pass
+`--yes` to approve the retry or choose `--billing paid` from the start.
 
 ```sh
-mobilerun sandbox deploy hello.py --yes
-mobilerun sandbox fire hello --input '{"name":"world"}' --yes
+mobilerun sandbox deploy hello.py --billing paid
+mobilerun sandbox fire hello --input '{"name":"world"}' --billing paid
 mobilerun sandbox path --json
 ```
 
 `fire` invokes an endpoint and returns the invocation ID
 without waiting. It does not fire cron triggers. Use `mobilerun sandbox list`
 to inspect deployments, `mobilerun sandbox runs hello` for recent executions,
-and `mobilerun sandbox enable hello --yes` or `mobilerun sandbox disable hello --yes`
-to toggle an owned flow. Mutations require interactive confirmation or `--yes`.
+and `mobilerun sandbox enable hello` or `mobilerun sandbox disable hello --yes`
+to toggle an owned flow. Disabling has its own confirmation, separate from billing.
 `fire` accepts `--input-file FILE` instead of `--input`.
 
 Importing a declaration, or executing it as `__main__`, does not itself deploy
 anything. An ordinary call to `hello(Input(name="world"))` runs locally. To
-deploy from Python, explicitly call `deploy("hello.py", yes=True)` after importing
-`deploy` from `mobilerun.sandbox`; a confirmation callback is an alternative to
-`yes=True`.
+deploy from Python, explicitly call `deploy("hello.py", billing="paid")` after
+importing `deploy` from `mobilerun.sandbox`. `deploy()`, `remote.fire()`,
+`remote(...)`, and `remote.enable()` ask before retrying with `paid` if a guard
+rejects lower billing. Without a terminal, pass `billing="paid"`. For
+`deploy()` and `remote.enable()` only, `yes=True` also approves a retry
+without prompting. Declining or reaching the guard without a terminal or prior
+approval raises `BillingRequired` before the operation makes changes.
+Deploy checks billing before inspecting the script, so declining does not run
+user code during inspection.
+
+**Migration:** `DeploymentPreview`, `SandboxConfirmationRequired`, and
+`deploy(confirm=...)` were removed. Run custom confirmation callbacks outside
+`deploy()`. A mode that is too low raises `BillingRequired` if not escalated;
+`paid` needs no confirmation. `remote.fire()` and `remote(...)` treat `yes` as
+payload. Pass `billing="paid"` for non-interactive consent on those calls.
 
 ## Examples
 
@@ -234,7 +250,8 @@ print(run.result().message)  # Validated as Output.
 `hello.remote(...)` fires and waits in one call. `cloud["hello"]` is a lazy,
 untyped handle: it returns plain JSON rather than the declared Pydantic model.
 Neither handle deploys on demand. A payload field named `billing` or `input`
-belongs inside the explicit `input={...}` mapping, not in keyword arguments.
+belongs inside the explicit `input={...}` mapping. `yes` is a payload keyword,
+not billing consent: `remote.fire(yes=True, billing="paid")` sends `{"yes": true}`.
 Use either that mapping (or a Pydantic model) or payload keywords, not both.
 
 `Run.result(timeout=300)` shares one deadline across invocation lookup and
@@ -335,10 +352,69 @@ def report(input: ReportInput) -> ReportOutput:
     return ReportOutput(count=input.count)
 ```
 
-`ReportInput` and `ReportOutput` are your Pydantic models. Deploying a function and running its flow can incur charges. After a successful function step, the flow queues a `workflow.step.emit` event with the return value in `data.result`. Flow success confirms queuing, not HTTP delivery. Failed functions do not emit a result.
+`ReportInput` and `ReportOutput` are your Pydantic models. Deploying a function and running its flow can incur charges. After a successful function step, the flow queues a `workflow.step.emit` event with the return value in `data.result`. If you also declare `files`, the flow uploads them first and replaces each base64 file value in `data.result` with an object containing `path` and `fileId`. Flow success confirms queuing, not HTTP delivery. Failed functions do not emit a result.
 
-The endpoint must be active, not blocked, and subscribed to `workflow.step.emit` (or all events). Changing the ID updates the flow action, not the endpoint.
+The endpoint must be active, not blocked, and subscribed to `workflow.step.emit` (or all events). Changing the ID updates the flow action, not the endpoint. If it becomes unusable during cutover, redeploy the same function with a usable ID or remove `webhook=`. The deployment keeps its flow ID and retains old actions until the replacement is confirmed.
 
 If `flow.yaml` is missing, enabling a webhook flow checks the live flow against the last completed deployment in the receipt. If that evidence is missing or doesn't match, redeploy before enabling. If cleanup reports an uncertain action create, retry the original deploy before cleaning up so it can recover the action ID.
 
 `run.snapshot.get("webhookStatus")` reports only an observed webhook step: `pending`, `running`, `succeeded`, `failed`, `skipped`, or `cancelled`. No webhook step means no status field. `Run.result()` warns if the webhook failed, was skipped, or was cancelled, but still returns a successful function result. `succeeded` means the event was queued, not that HTTP delivery was confirmed.
+
+### Save images from a function result
+
+Pass `files` to map filenames to dotted result paths and `files_folder` to
+choose the destination folder in Mobilerun. This works with a schedule or an
+endpoint (including the default endpoint) and can be combined with `webhook=`.
+
+```python
+from pydantic import BaseModel, Field
+
+class Event(BaseModel):
+    map_screenshot: str
+
+class ReportOutput(BaseModel):
+    events: list[Event] = Field(min_length=1, max_length=1)
+
+@cloud(
+    "event-report",
+    schedule="*/30 * * * *",
+    device="<device-id>",
+    files={"event_1_map.jpg": "events.0.map_screenshot"},
+    files_folder="atc",
+)
+def report(input: ReportInput, ctx: Context) -> ReportOutput:
+    ...
+```
+
+The return annotation must be a non-optional Pydantic model. Each path must
+use the model's serialization names (`serialization_alias` or `alias` when
+set) and point to a required, non-null string containing a base64-encoded image. For a
+list index, set `min_length` to at least the index plus one. Scheduled input
+must accept `{}`. With `webhook=`, lists on a file path must be fixed-length:
+set `min_length` and `max_length` to the same value so the result can keep
+its list shape without sending the image data. Objects on file paths cannot
+allow extra keys (`extra="allow"`) or have conditionally omitted properties
+(`Field(exclude=True)` or `Field(exclude_if=...)`). Ordinary defaulted fields,
+including nullable fields defaulting to `None`, are included. Branches without
+files are passed through unchanged. Branches rebuilt for the webhook cannot
+use `SerializeAsAny` or custom serializers that could change their shape.
+Other keys on rebuilt objects can use aliases like `event-title`. Empty keys,
+keys with surrounding whitespace, dots or braces, and `__proto__`,
+`constructor`, or `prototype` (case-insensitive) are not supported in these
+lookups. The dotted paths in `files` use identifier names and array indices.
+Filenames must be case-insensitively unique, at most 255
+UTF-16 code units, contain no surrounding whitespace, directory separators,
+or control characters, and end in `.jpg`, `.jpeg`, or `.png`. The folder must
+name at least one segment. Use at
+most 1024 UTF-16 code units including the leading `/`, with no empty or `.`
+segments, `..` anywhere, or control characters. The example uploads
+`event_1_map.jpg` into `/atc` after the function succeeds. With `webhook=`, the
+folder and filenames must be literal (no `{{...}}` placeholders), and the
+webhook queues only after the uploads succeed. In this example,
+`data.result.events[0].map_screenshot` is an object with `path` set to
+`/atc/event_1_map.jpg` and `fileId` set to the upload's ID. The `fileId` is
+valid when the webhook arrives. The backend writes the Mobilerun folder copy
+at `path` only after the run finishes successfully, so the copy may appear
+later or not at all if copying fails. For a field uploaded under multiple
+filenames, both values refer to the first listed upload.
+A webhook failure does not prevent uploads. Deploying and running can incur charges.

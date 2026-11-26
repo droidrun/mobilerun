@@ -127,12 +127,16 @@ class Extension:
     def _action_entries(self) -> tuple[Action, ...]:
         entries = []
         for name, declaration in self._declarations.items():
-            # Resolve a declared method statically; never scan instance properties.
-            member = next(
-                vars(base)[name] for base in type(self).__mro__ if name in vars(base)
-            )
+            member = inspect.getattr_static(type(self), name)
+            target, retry = getattr(member, "_billing_handler", (None, None))
             entries.append(
-                Action.compile(self.name, name, member.__get__(self), declaration)
+                Action.compile(
+                    self.name,
+                    name,
+                    member.__get__(self),
+                    declaration,
+                    retry_call=retry.__get__(self) if target is member else None,
+                )
             )
         return tuple(entries)
 

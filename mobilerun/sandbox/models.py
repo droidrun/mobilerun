@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, ParamSpec, TypeVar
 from uuid import UUID
 
@@ -28,6 +31,21 @@ def routine(func: Callable[P, R]) -> Callable[P, R]:
 
 JSON = dict[str, Any]
 WEBHOOK_REGISTER_HINT = "mobilerun webhook register <url>"
+FILES_RETURN_ERROR = "files require a non-optional Pydantic BaseModel return annotation"
+FILE_UPLOAD_USES = "files.upload"
+FILE_MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+_FILE_FIELD_PART = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|0|[1-9][0-9]*")
+_UNSAFE_FIELD_PARTS = {"__proto__", "prototype", "constructor"}
+
+
+def is_result_path_part(part: str) -> bool:
+    """Check a literal key in the worker's dot-separated template syntax."""
+    return (
+        bool(part)
+        and part == part.strip().strip("\ufeff").strip()
+        and not any(char in part for char in ".{}")
+        and part.lower() not in _UNSAFE_FIELD_PARTS
+    )
 
 
 def webhook_endpoint_id(value: str) -> str:
@@ -47,6 +65,14 @@ def validate_device(device: str | None) -> None:
         raise SandboxDeclarationError("Device must be a nonempty string")
 
 
+def _utf16_length(value: str) -> int:
+    return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+
+
+def _has_control_chars(value: str) -> bool:
+    return any(unicodedata.category(char) == "Cc" for char in value)
+
+
 @dataclass(frozen=True)
 class CloudDeclaration:
     name: str
@@ -54,6 +80,8 @@ class CloudDeclaration:
     device: str | None = None
     endpoint: bool | None = None
     webhook: str | None = field(default=None, repr=False)
+    files: dict[str, str] | None = None
+    files_folder: str | None = None
 
     @property
     def has_endpoint(self) -> bool:
@@ -79,6 +107,56 @@ class CloudDeclaration:
             raise SandboxDeclarationError("Endpoint must be a boolean or None")
         if self.schedule is not None and self.endpoint is True:
             raise SandboxDeclarationError("Choose either a schedule or an endpoint")
+        self._validate_files()
+
+    def _validate_files(self) -> None:
+        if self.files is not None and not isinstance(self.files, dict):
+            raise SandboxDeclarationError("files must be a dict of filenames to fields")
+        if not self.files:
+            return
+        if self.schedule is None and not self.has_endpoint:
+            raise SandboxDeclarationError("files require a flow trigger")
+        folder = self.files_folder
+        if (
+            not isinstance(folder, str)
+            or not folder.removeprefix("/").strip()
+            or ".." in folder
+            or _has_control_chars(folder)
+            or any(part in {"", "."} for part in folder.removeprefix("/").split("/"))
+            # JavaScript's schema counts the leading slash and UTF-16 code units.
+            or _utf16_length("/" + folder.removeprefix("/")) > 1024
+        ):
+            raise SandboxDeclarationError(
+                "files_folder must be a safe folder path of at most 1024 characters including the leading slash"
+            )
+        seen = set()
+        for filename, path in self.files.items():
+            if (
+                not isinstance(filename, str)
+                or not 1 <= _utf16_length(filename) <= 255
+                or filename != filename.strip().strip("\ufeff")
+                or "/" in filename
+                or "\\" in filename
+                or _has_control_chars(filename)
+            ):
+                raise SandboxDeclarationError(
+                    "file filename must be a safe single path segment"
+                )
+            if Path(filename).suffix.lower() not in FILE_MIME_TYPES:
+                raise SandboxDeclarationError(
+                    "unsupported file extension; use .jpg, .jpeg, or .png"
+                )
+            normalized = filename.casefold()
+            if normalized in seen:
+                raise SandboxDeclarationError(
+                    "file filename collision (case-insensitive)"
+                )
+            seen.add(normalized)
+            if not isinstance(path, str) or not all(
+                _FILE_FIELD_PART.fullmatch(part) and is_result_path_part(part)
+                for part in path.split(".")
+            ):
+                raise SandboxDeclarationError("invalid output field in files")
 
 
 @dataclass(frozen=True)
@@ -88,14 +166,6 @@ class Artifact:
     digest: str
     input_schema: JSON
     output_schema: JSON | None
-
-
-@dataclass(frozen=True)
-class DeploymentPreview:
-    name: str
-    device: str | None
-    schedule: str | None
-    billing: Billing
 
 
 @dataclass(frozen=True)

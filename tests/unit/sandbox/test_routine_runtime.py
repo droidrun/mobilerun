@@ -87,16 +87,11 @@ def test_sandbox_directory_default_override_empty(tmp_path, monkeypatch):
 
 
 def test_contract_dataclasses_and_errors():
-    from mobilerun.models.billing import Billing
     from mobilerun.sandbox import errors, models
 
     declaration = models.CloudDeclaration("hello")
     artifact = models.Artifact(declaration, "source", "digest", {}, None)
     assert artifact.declaration == declaration
-    assert (
-        models.DeploymentPreview("hello", None, None, Billing.PAID).billing
-        == Billing.PAID
-    )
     endpoint = models.Endpoint("https://example.test", "trigger")
     receipt = models.DeploymentReceipt(
         "hello", "f", 1, "created", None, None, (), "digest", endpoint, ()
@@ -120,7 +115,6 @@ def test_contract_dataclasses_and_errors():
     for cls in (
         errors.SandboxDeclarationError,
         errors.SandboxPackagingError,
-        errors.SandboxConfirmationRequired,
     ):
         assert isinstance(cls("safe"), errors.SandboxError)
     for cls in (errors.SandboxDeploymentError, errors.SandboxDeploymentConflict):

@@ -11,6 +11,7 @@ from .base import (
 )
 from .cloud import (
     BillingError,
+    BillingRequired,
     CloudAPIError,
     CloudAuthenticationError,
     CloudAuthRequired,
@@ -78,6 +79,7 @@ __all__ = [
     "DeviceError",
     "OperatorError",
     "BillingError",
+    "BillingRequired",
     "IncludedCapacityUnavailable",
     "PaymentRequired",
     "ProxyNotActive",

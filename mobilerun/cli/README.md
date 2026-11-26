@@ -33,7 +33,7 @@ mobilerun
 ├── mailbox: code, create, included, list, release, status
 ├── mcp: install, uninstall, list
 ├── number: bind, code, countries, create, included, list, messages, release, send, status, unbind
-├── proxy: bind, buy, list, release, status
+├── proxy: bind, buy, included, list, release, status
 ├── skills: install, list, show, uninstall
 ├── webhook: delete, get, list, register
 └── workspace: apps (list, remove, upload), files (download, list, rm, upload)
@@ -43,9 +43,14 @@ mobilerun
 
 Cloud resources and agent runs can incur charges. Device commands select an explicit
 device first, then a saved default or a discovered device; see [device commands](devices/README.md).
-Interactive confirmations use a Yes/No selector, with No selected for paid and
-destructive actions. Use `--yes` where available for non-interactive confirmation.
 Overwriting an existing credential requires an interactive confirmation.
+
+`number create`, `mailbox create`, `proxy buy`, `number send`, and `device cloud
+resume` ask only when a billing guard rejects the chosen mode. The prompt defaults
+to No; Yes retries the guarded operation once with the mode named in the prompt.
+No cancels with exit status 1. `--yes` approves that retry without a prompt;
+selecting `paid` authorizes charges up front. Destructive actions still require
+separate confirmation.
 
 ## Contents
 

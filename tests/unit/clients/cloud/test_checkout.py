@@ -4,11 +4,14 @@ import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace as NS
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
+from mobilerun_sdk import APIStatusError
 
 from mobilerun.clients.cloud import mailboxes, numbers, proxies
+from mobilerun.clients.cloud.billing import with_billing_retry
 from mobilerun.clients.cloud.client import AsyncMobilerun
 from mobilerun.clients.cloud.payments import (
     PaymentAdapter,
@@ -17,7 +20,11 @@ from mobilerun.clients.cloud.payments import (
 )
 from mobilerun.core.mailbox.cloud import CloudMailbox
 from mobilerun.core.phone_number.cloud import CloudPhoneNumber
-from mobilerun.errors import PaymentRequired
+from mobilerun.errors import (
+    BillingRequired,
+    IncludedCapacityUnavailable,
+    PaymentRequired,
+)
 from mobilerun.errors.cloud import BillingError
 from mobilerun.models.billing import Billing
 from mobilerun.models.checkout import PaymentSnapshot
@@ -62,11 +69,88 @@ def test_create_preference(resource, billing, plan, expected):
 def test_rent_requires_paid(resource, billing):
     create = AsyncMock()
     client = _plan_client(create)
-    with pytest.raises(BillingError) as exc:
+    with pytest.raises(BillingRequired) as exc:
         asyncio.run(resource.create(billing=billing, client=client, plan="rent"))
-    assert exc.value.code == "invalid_billing"
-    assert exc.value.required_billing == "paid"
+    assert (exc.value.needed, exc.value.given) == (Billing.PAID, Billing(billing))
     create.assert_not_awaited()
+
+
+@pytest.mark.parametrize("resource", [numbers, mailboxes])
+def test_authorized_rent_reaches_transport_only_once(resource):
+    data = NS(
+        number_id="num", state="active", checkout_url=None, id="box", status="active"
+    )
+    create = AsyncMock(return_value=NS(data=data))
+    client = _plan_client(create)
+
+    async def confirm(error):
+        assert error.needed is Billing.PAID
+        create.assert_not_called()
+        return True
+
+    result, mode = asyncio.run(
+        with_billing_retry(
+            lambda billing: resource.create(
+                billing=billing, client=client, plan="rent"
+            ),
+            Billing.INCLUDED,
+            prompt=confirm,
+            is_interactive=lambda: True,
+        )
+    )
+    assert result.data is data
+    assert mode is Billing.PAID
+    create.assert_awaited_once_with(billing_preference="rent")
+
+
+@pytest.mark.parametrize("resource", [numbers, mailboxes])
+def test_included_capacity_failure_never_replays_transport(resource):
+    body = {"code": "included_capacity_unavailable"}
+    response = httpx.Response(
+        409, json=body, request=httpx.Request("POST", "https://example.test")
+    )
+    create = AsyncMock(
+        side_effect=APIStatusError("No included capacity", response=response, body=body)
+    )
+    client = _plan_client(create)
+    with pytest.raises(IncludedCapacityUnavailable):
+        asyncio.run(
+            with_billing_retry(
+                lambda billing: resource.create(
+                    billing=billing, client=client, plan="auto"
+                ),
+                Billing.INCLUDED,
+                yes=True,
+            )
+        )
+    create.assert_awaited_once_with(billing_preference="included_only")
+
+
+def test_authorized_proxy_purchase_reaches_transport_only_once(monkeypatch):
+    response = NS(id="id", status="active", payment_url=None)
+    buy = AsyncMock(return_value=response)
+    context = AsyncMock()
+    context.__aenter__.return_value = NS(connect=NS(proxies=NS(buy=buy)))
+    client = Mock(return_value=context)
+    monkeypatch.setattr(proxies, "cloud_client", client)
+
+    async def confirm(error):
+        assert error.needed is Billing.PAID
+        client.assert_not_called()
+        buy.assert_not_called()
+        return True
+
+    result = asyncio.run(
+        with_billing_retry(
+            lambda billing: proxies.buy_proxy("US", billing=billing),
+            Billing.INCLUDED,
+            prompt=confirm,
+            is_interactive=lambda: True,
+        )
+    )
+    assert result == (response, Billing.PAID)
+    client.assert_called_once()
+    buy.assert_awaited_once_with(country="US", type="residential")
 
 
 @pytest.mark.parametrize("resource", [numbers, mailboxes])
@@ -462,7 +546,7 @@ def test_cli_interactive_paid_checkout(monkeypatch, resource, timeout):
     context.__aenter__.return_value = client
     monkeypatch.setattr(module, "cloud_client", lambda *args, **kwargs: context)
     result = CliRunner().invoke(cli, args, input="y\n")
-    assert "Continue?" in result.output
+    assert "Continue?" not in result.output
     assert f"Complete payment: {url}" in result.output
     assert opened == [url]
     if timeout:

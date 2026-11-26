@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import json
 import time
+from functools import partial
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -16,6 +17,7 @@ from pydantic import (
 )
 
 import mobilerun.sandbox as sandbox
+from mobilerun.clients.cloud.billing import with_billing_retry
 from mobilerun.models.billing import Billing
 from mobilerun.sandbox.errors import (
     SandboxDeclarationError,
@@ -47,6 +49,57 @@ def test_lazy_lookup_refreshes_after_redeploy(backend):
         3,
         "new-flow",
         "new",
+    )
+
+
+@pytest.mark.parametrize("operation", ["fire", "enable", "call"])
+def test_remote_mutations_retry_with_paid(backend, monkeypatch, operation):
+    from mobilerun.sandbox import app
+    from mobilerun.sandbox.deployment import _require_paid
+
+    prompt = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        app,
+        "with_billing_retry",
+        partial(with_billing_retry, prompt=prompt, is_interactive=lambda: True),
+    )
+    handle = sandbox.cloud["x"]
+    name = "set_enabled" if operation == "enable" else "fire_remote"
+    fake = backend[name]
+
+    async def guarded(*args, billing):
+        _require_paid(billing=billing)
+        return fake.return_value
+
+    fake.side_effect = guarded
+    if operation == "enable":
+        handle.enable(billing="included", yes=True)
+    else:
+        if operation == "fire":
+            assert handle.fire(billing="included", n=2).result() == {"n": 2}
+        else:
+            assert handle(billing="included", n=2) == {"n": 2}
+    assert [call.kwargs["billing"] for call in fake.await_args_list] == [
+        Billing.INCLUDED,
+        Billing.PAID,
+    ]
+    if operation != "enable":
+        prompt.assert_awaited_once()
+        assert backend["wait_result"].await_args.kwargs["billing"] is Billing.PAID
+    else:
+        prompt.assert_not_awaited()
+
+
+@pytest.mark.parametrize("typed", [False, True])
+@pytest.mark.parametrize("method", ["fire", "__call__"])
+def test_remote_yes_keyword_is_payload(backend, typed, method):
+    class Vote(BaseModel):
+        yes: bool
+
+    handle = sandbox.Remote("x", Vote) if typed else sandbox.cloud["x"]
+    getattr(handle, method)(yes=True, billing="paid")
+    backend["fire_remote"].assert_awaited_once_with(
+        "x", {"yes": True}, billing=Billing.PAID
     )
 
 
@@ -298,27 +351,81 @@ def test_active_event_loop_does_not_create_coroutine(backend, recwarn):
 
 
 def test_explicit_deploy_is_exported_even_after_loading_submodule(monkeypatch):
+    import mobilerun.sandbox.app as app
     import mobilerun.sandbox.deployment as operations
 
     receipt = object()
     fake = AsyncMock(return_value=receipt)
+    artifact = object()
+    monkeypatch.setattr(app, "package", lambda _: artifact)
     monkeypatch.setattr(operations, "deploy_file", fake)
-    monkeypatch.setenv("MOBILERUN_BILLING", "no_commerce")
+    monkeypatch.setenv("MOBILERUN_BILLING", "paid")
 
-    def confirm(preview):
-        return True
-
-    assert sandbox.deploy("main.py", device_free=True, confirm=confirm) is receipt
+    assert sandbox.deploy("main.py", device_free=True) is receipt
     fake.assert_awaited_once_with(
         Path("main.py"),
         device=None,
         device_free=True,
-        billing=Billing.NO_COMMERCE,
-        yes=False,
-        confirm=confirm,
+        billing=Billing.PAID,
+        artifact=artifact,
     )
     assert sandbox.deploy("main.py", billing="paid", yes=True) is receipt
     assert fake.await_args.kwargs["billing"] == Billing.PAID
+
+
+@pytest.mark.parametrize(
+    ("mode", "tty", "answer", "yes", "attempts"),
+    [
+        (Billing.PAID, True, None, False, [Billing.PAID]),
+        (Billing.INCLUDED, True, "y", False, [Billing.INCLUDED, Billing.PAID]),
+        (Billing.INCLUDED, True, "n", False, [Billing.INCLUDED]),
+        (Billing.NO_COMMERCE, False, None, False, [Billing.NO_COMMERCE]),
+        (Billing.NO_COMMERCE, False, None, True, [Billing.NO_COMMERCE, Billing.PAID]),
+    ],
+)
+def test_sdk_deploy_escalation(monkeypatch, mode, tty, answer, yes, attempts):
+    from mobilerun.errors import BillingRequired
+    from mobilerun.sandbox import app, deployment
+
+    seen = []
+    prompts = []
+    packaged = []
+    inspected = object()
+
+    def package(path):
+        assert attempts[-1] is Billing.PAID, "rejected deploy must not inspect source"
+        assert prompts == ([] if answer is None else [answer])
+        packaged.append(path)
+        return inspected
+
+    async def deploy(path, *, device, device_free, billing, artifact):
+        assert artifact is inspected
+        seen.append(billing)
+        deployment._require_paid(billing=billing)
+        return "created"
+
+    async def prompt(_error):
+        assert answer is not None
+        prompts.append(answer)
+        return answer == "y"
+
+    monkeypatch.setattr(
+        app,
+        "with_billing_retry",
+        partial(with_billing_retry, prompt=prompt, is_interactive=lambda: tty),
+    )
+    monkeypatch.setattr(deployment, "deploy_file", deploy)
+    monkeypatch.setattr(app, "package", package)
+    if attempts[-1] is Billing.PAID:
+        assert sandbox.deploy("main.py", billing=mode, yes=yes) == "created"
+    else:
+        with pytest.raises(BillingRequired, match="yes=True") as caught:
+            sandbox.deploy("main.py", billing=mode, yes=yes)
+        assert (caught.value.given, caught.value.needed) == (mode, Billing.PAID)
+    accepted = attempts[-1] is Billing.PAID
+    assert seen == ([Billing.PAID] if accepted else [])
+    assert packaged == ([Path("main.py")] if accepted else [])
+    assert prompts == ([] if answer is None else [answer])
 
 
 @pytest.mark.parametrize(
@@ -339,13 +446,13 @@ def test_obsolete_sandbox_error_class_is_gone():
 
 
 def test_python_deploy_rejects_blank_device_before_packaging(monkeypatch):
-    from mobilerun.sandbox import deployment
+    from mobilerun.sandbox import app
     from mobilerun.sandbox.errors import SandboxDeclarationError
 
     def tripwire(path):
         pytest.fail("invalid device reached packaging")
 
-    monkeypatch.setattr(deployment, "package", tripwire)
+    monkeypatch.setattr(app, "package", tripwire)
     with pytest.raises(SandboxDeclarationError, match="Device"):
         sandbox.deploy("main.py", device=" \t", yes=True)
 
@@ -353,8 +460,8 @@ def test_python_deploy_rejects_blank_device_before_packaging(monkeypatch):
 def test_deploy_file_previews_supplied_artifact_without_rereading(
     tmp_path, monkeypatch
 ):
+    from mobilerun.errors import BillingRequired
     from mobilerun.sandbox import deployment
-    from mobilerun.sandbox.errors import SandboxConfirmationRequired
     from mobilerun.sandbox.models import Artifact, CloudDeclaration
 
     path = tmp_path / "changed.py"
@@ -364,9 +471,7 @@ def test_deploy_file_previews_supplied_artifact_without_rereading(
         deployment, "package", lambda _: pytest.fail("unexpected repackaging")
     )
 
-    def deny(preview):
-        assert preview.name == "confirmed"
-        return False
-
-    with pytest.raises(SandboxConfirmationRequired):
-        asyncio.run(deployment.deploy_file(path, confirm=deny, artifact=artifact))
+    with pytest.raises(BillingRequired):
+        asyncio.run(
+            deployment.deploy_file(path, artifact=artifact, billing="no_commerce")
+        )
