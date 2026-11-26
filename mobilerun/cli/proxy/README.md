@@ -7,9 +7,9 @@ using the proxy lose it. Pass `--yes` for automation and `--json` for JSON outpu
 `proxy buy` and `proxy bind` also support `--json`. Checkout and binding
 progress are written to stderr.
 
-Proxy purchases can incur charges. `proxy buy --billing paid` allows charges
-without a billing prompt. In `included` or `no_commerce`, the command asks before
-retrying once with `paid`. Use `--yes` to approve that retry in automation.
+Proxy purchases can incur charges. `proxy buy` asks for confirmation before
+purchasing in `paid` mode or retrying once with `paid` from a restricted mode.
+Pass `--yes` to confirm without prompting; non-interactive purchases require it.
 
 ```sh
 mobilerun proxy list --json

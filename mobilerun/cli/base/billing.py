@@ -48,15 +48,19 @@ async def invoke_with_billing(
     )
 
 
-async def confirm_paid_action(operation: str, *, yes: bool) -> None:
-    """Ask before a paid action, or require explicit consent in automation."""
-    if yes:
-        return
-    if not billing_prompt_is_interactive():
+def require_consent_possible(*, yes: bool) -> None:
+    """Refuse early when consent was not given and no terminal can ask for it."""
+    if not yes and not billing_prompt_is_interactive():
         raise BillingConsentError(
             "Refusing to proceed without confirmation; pass --yes."
         )
-    await _confirm(f"{operation} with paid billing (charges may apply)?")
+
+
+async def confirm_paid_action(operation: str, *, yes: bool) -> None:
+    """Ask before a paid action, or require explicit consent in automation."""
+    require_consent_possible(yes=yes)
+    if not yes:
+        await _confirm(f"{operation} with paid billing (charges may apply)?")
 
 
 async def _confirm(message: str) -> bool:

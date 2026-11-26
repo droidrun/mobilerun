@@ -11,7 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 from mobilerun.cli.app import cli
-from mobilerun.cli.base import choices, menu
+from mobilerun.cli.base import billing, choices, menu, safety
 from mobilerun.cli.mailbox import group as mailbox
 from mobilerun.cli.phone_number import group as number
 from mobilerun.cli.proxy import group as proxy
@@ -254,7 +254,8 @@ def test_country_capacity_auth_error_is_not_swallowed(
     monkeypatch.setattr(number, "is_interactive", lambda: True)
     picker = AsyncMock()
     monkeypatch.setattr(number, "select_prompt", picker)
-    result = CliRunner().invoke(number.number, [command])
+    args = [command, "--yes"] if command == "create" else [command]
+    result = CliRunner().invoke(number.number, args)
     assert fake_number_client == ["enter", "exit"]
     assert result.exit_code != 0
     assert "HTTP 401" in result.stderr
@@ -273,7 +274,7 @@ def test_empty_country_inventory(monkeypatch, command, fake_number_client):
         AsyncMock(return_value=NS(data=NS(items=[]))),
     )
     monkeypatch.setattr(number, "is_interactive", lambda: True)
-    args = [command] + (["--json"] if command == "included" else [])
+    args = [command, "--json" if command == "included" else "--yes"]
     result = CliRunner().invoke(number.number, args)
     if command == "included":
         assert result.exit_code == 0 and json.loads(result.stdout) == []
@@ -678,10 +679,7 @@ def test_create_reports_address_and_state(monkeypatch):
 
 
 def test_proxy_json_buy_bind(monkeypatch):
-    from mobilerun.cli.base import menu
-
-    monkeypatch.setattr(menu, "is_interactive", lambda: True)
-    from mobilerun.cli.base import safety
+    monkeypatch.setattr(billing, "billing_prompt_is_interactive", lambda: True)
 
     async def confirm(message, **kwargs):
         print(message)
@@ -702,11 +700,11 @@ def test_proxy_json_buy_bind(monkeypatch):
     result = runner.invoke(
         proxy.proxy,
         ["buy", "--country", "US", "--billing", "paid", "--json"],
-        input="y\n",
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["id"] == "p1"
-    assert "Continue?" not in result.stderr and "Complete payment" in result.stderr
+    assert "Buy Connect proxy with paid billing (charges may apply)?" in result.stderr
+    assert "Complete payment" in result.stderr
     result = runner.invoke(proxy.proxy, ["bind", "p1", "d1", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {
@@ -794,10 +792,7 @@ def test_create_warning_does_not_expose_unexpected_exception_text(monkeypatch):
 
 
 def test_confirmed_number_mailbox_create_json_and_checkout_stderr(monkeypatch):
-    from mobilerun.cli.base import menu
-
-    monkeypatch.setattr(menu, "is_interactive", lambda: True)
-    from mobilerun.cli.base import safety
+    monkeypatch.setattr(billing, "billing_prompt_is_interactive", lambda: True)
 
     async def confirm(message, **kwargs):
         print(message)
@@ -829,7 +824,10 @@ def test_confirmed_number_mailbox_create_json_and_checkout_stderr(monkeypatch):
                 )
             ),
         )
-        result = CliRunner().invoke(group, ["create", "--json"], input="y\n")
+        result = CliRunner().invoke(group, ["create", "--billing", "paid", "--json"])
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout)["id"] == "r1"
-        assert "Continue?" not in result.stderr and "Complete payment" in result.stderr
+        assert f"Create {group.name} with paid billing (charges may apply)?" in (
+            result.stderr
+        )
+        assert "Complete payment" in result.stderr

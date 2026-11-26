@@ -501,7 +501,9 @@ def test_cli_interactive_paid_checkout(monkeypatch, resource, timeout):
 
     url = "https://example.test/pay"
     opened = []
-    monkeypatch.setattr("mobilerun.cli.base.menu.is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "mobilerun.cli.base.billing.billing_prompt_is_interactive", lambda: True
+    )
 
     async def confirm(message, **kwargs):
         print(message)

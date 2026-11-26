@@ -209,7 +209,7 @@ async def proxy_status(proxy_id: str, billing: str, as_json: bool) -> None:
 
 @proxy.command("buy", help="Buy a Connect proxy.")
 @click.option("--json", "as_json", is_flag=True)
-@click.option("--yes", "-y", is_flag=True, help="Confirm without prompting.")
+@click.option("--yes", "-y", is_flag=True, help="Confirm charges without prompting.")
 @click.option(
     "--payment-timeout",
     type=click.FloatRange(min=0, min_open=True),
@@ -248,6 +248,7 @@ async def proxy_buy(
         ),
         Billing(billing),
         yes=yes,
+        confirm_paid="Buy Connect proxy",
     )
     if as_json:
         click.echo(

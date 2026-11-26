@@ -118,7 +118,7 @@ async def mailbox_list(billing: str, as_json: bool) -> None:
     show_default=True,
     help="auto = included first, then rent if billing is paid; included = never rent; rent = always rent (requires paid billing).",
 )
-@click.option("--yes", "-y", is_flag=True, help="Confirm without prompting.")
+@click.option("--yes", "-y", is_flag=True, help="Confirm billing without prompting.")
 @click.option(
     "--payment-timeout",
     type=click.FloatRange(min=0, min_open=True),
@@ -142,6 +142,7 @@ async def mailbox_create(
         ),
         Billing(billing),
         yes=yes,
+        confirm_paid=None if plan == "included" else "Create mailbox",
     )
     try:
         data = (await cloud_mailboxes.retrieve(item.id, billing=mode)).data

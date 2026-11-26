@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import sys
+from contextlib import nullcontext, redirect_stdout
 
 import click
 from rich.text import Text
@@ -24,6 +26,7 @@ from mobilerun.cli.base.prompts import (
 from mobilerun.cli.base.run import coro
 from mobilerun.clients.cloud import devices
 from mobilerun.clients.cloud import numbers as cloud_numbers
+from mobilerun.clients.cloud.billing import billing_prompt_is_interactive
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.clients.cloud.numbers import list_numbers
 from mobilerun.config.settings import get_settings
@@ -223,7 +226,7 @@ async def number_list(billing: str, as_json: bool) -> None:
     show_default=True,
     help="auto = included first, then rent if billing is paid; included = never rent; rent = always rent (requires paid billing).",
 )
-@click.option("--yes", "-y", is_flag=True, help="Confirm without prompting.")
+@click.option("--yes", "-y", is_flag=True, help="Confirm billing without prompting.")
 @click.option(
     "--payment-timeout",
     type=click.FloatRange(min=0, min_open=True),
@@ -241,7 +244,10 @@ async def number_create(
     plan: str,
     as_json: bool,
 ) -> None:
-    if not country and is_interactive():
+    # With --json the picker draws on stderr, so stdout carries only the result.
+    picker_is_interactive = billing_prompt_is_interactive if as_json else is_interactive
+    if not country and picker_is_interactive():
+        # Show countries and included quota first: they decide whether this costs.
         available = await cloud_numbers.countries(billing=Billing(billing))
         in_stock = [item for item in available.data.items if item.in_stock]
         remaining = await _included_counts([item.country for item in in_stock], billing)
@@ -261,7 +267,8 @@ async def number_create(
             raise click.ClickException(
                 "No phone number countries are currently in stock."
             )
-        country = await select_prompt("Choose a number country", choices)
+        with redirect_stdout(sys.stderr) if as_json else nullcontext():
+            country = await select_prompt("Choose a number country", choices)
         if country is None:
             raise click.Abort()
     item, mode = await invoke_with_billing(
@@ -277,6 +284,7 @@ async def number_create(
         ),
         Billing(billing),
         yes=yes,
+        confirm_paid=None if plan == "included" else "Create number",
     )
     try:
         data = (await cloud_numbers.retrieve(item.id, billing=mode)).data

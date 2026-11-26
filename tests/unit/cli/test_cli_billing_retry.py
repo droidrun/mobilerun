@@ -18,6 +18,7 @@ from mobilerun.cli.app import cli as app
 from mobilerun.cli.base import menu, safety
 from mobilerun.cli.base.billing import billing_option, invoke_with_billing
 from mobilerun.cli.devices.base import selection
+from mobilerun.cli.phone_number import group as number_cli
 from mobilerun.clients.cloud import mailboxes, numbers, proxies
 from mobilerun.clients.cloud.billing import requires
 from mobilerun.core.devices.base import Device
@@ -126,15 +127,15 @@ def test_cli_billing_retry(monkeypatch, mode, ttys, yes, answer, exit_code, atte
 
 
 @pytest.mark.parametrize(
-    "command,mode,interactive,yes,answer,runs,exit_code",
+    "command,plan,mode,interactive,yes,answer,runs,exit_code",
     [
-        (command, *case)
-        for command in (
-            "number create",
-            "mailbox create",
-            "proxy buy",
-            "number send",
-            "resume",
+        (command, plan, *case)
+        for command, plan in (
+            ("number create", "rent"),
+            ("mailbox create", "rent"),
+            ("proxy buy", None),
+            ("number send", None),
+            ("resume", None),
         )
         for case in (
             ("included", True, False, True, 1, 0),
@@ -145,12 +146,21 @@ def test_cli_billing_retry(monkeypatch, mode, ttys, yes, answer, exit_code, atte
         )
     ]
     + [
-        (command, "paid", True, False, None, 1, 0)
-        for command in ("number create", "mailbox create", "proxy buy")
+        (command, "included", "paid", interactive, False, None, 1, 0)
+        for command in ("number create", "mailbox create")
+        for interactive in (True, False)
     ]
     + [
-        (command, "paid", interactive, yes, answer, runs, exit_code)
-        for command in ("number send", "resume")
+        (command, plan, "paid", interactive, yes, answer, runs, exit_code)
+        for command, plan in (
+            ("number create", None),  # default auto can rent
+            ("number create", "rent"),
+            ("mailbox create", None),
+            ("mailbox create", "rent"),
+            ("proxy buy", None),
+            ("number send", None),
+            ("resume", None),
+        )
         for interactive, yes, answer, runs, exit_code in (
             (True, False, True, 1, 0),
             (True, False, False, 0, 1),
@@ -161,7 +171,7 @@ def test_cli_billing_retry(monkeypatch, mode, ttys, yes, answer, exit_code, atte
     ],
 )
 def test_resource_cli_retries_only_guarded_operation(
-    monkeypatch, command, mode, interactive, yes, answer, runs, exit_code
+    monkeypatch, command, plan, mode, interactive, yes, answer, runs, exit_code
 ):
     data = NS(
         number_id="num",
@@ -207,16 +217,16 @@ def test_resource_cli_retries_only_guarded_operation(
         monkeypatch.setattr(module, "cloud_client", client)
     args = command.split()
     if command == "number create":
-        args += ["--country", "US", "--plan", "rent"]
-    elif command == "mailbox create":
-        args += ["--plan", "rent"]
+        args += ["--country", "US"]
     elif command == "proxy buy":
         mutate.return_value = NS(id="proxy", status="active", payment_url=None)
         args += ["--country", "US"]
     elif command == "number send":
         args += ["number-id", "+15550100", "hello"]
-    else:
+    elif command == "resume":
         args = ["device", "cloud", "resume", "aa111111-1111-1111-1111-111111111111"]
+    if plan is not None:
+        args += ["--plan", plan]
 
     result = TTYRunner(interactive, interactive, interactive).invoke(
         app, [*args, *(["--yes"] if yes else [])]
@@ -227,6 +237,8 @@ def test_resource_cli_retries_only_guarded_operation(
     assert metadata.await_count == (command == "resume")
     if command != "resume":
         assert client_entries == [Billing.PAID] * (runs + details.await_count)
+    if plan == "included":
+        assert mutate.await_args.kwargs["billing_preference"] == "included_only"
     if answer is False:
         assert "Cancelled" in result.stderr
     elif exit_code and mode == "paid":
@@ -236,6 +248,89 @@ def test_resource_cli_retries_only_guarded_operation(
             hint in result.stderr
             for hint in ("--yes", "yes=True", "MOBILERUN_BILLING=paid")
         )
+
+
+@pytest.mark.parametrize(
+    "mode,plan,error",
+    [
+        ("paid", "auto", "without confirmation; pass --yes"),
+        ("included", "rent", "--yes"),
+        ("no_commerce", "auto", "--yes"),
+    ],
+)
+def test_number_create_json_refuses_without_country_lookup(
+    monkeypatch, mode, plan, error
+):
+    countries = AsyncMock(side_effect=AssertionError("unexpected country lookup"))
+    monkeypatch.setattr(numbers, "countries", countries)
+
+    result = TTYRunner(True, True, False).invoke(
+        app, ["number", "create", "--billing", mode, "--plan", plan, "--json"]
+    )
+
+    assert result.exit_code == 1
+    assert error in result.stderr
+    assert result.stdout == ""
+    countries.assert_not_called()
+
+
+@pytest.mark.parametrize("stdout_tty", [True, False])
+def test_number_create_json_picker_runs_before_escalation_on_stderr(
+    monkeypatch, stdout_tty
+):
+    events = []
+
+    async def confirm(message, *, default):
+        events.append("confirm")
+        return True
+
+    async def countries(*, billing):
+        events.append("countries")
+        assert billing is Billing.INCLUDED
+        return NS(
+            data=NS(items=[NS(country="us", name="United States", in_stock=True)])
+        )
+
+    async def pick(message, choices):
+        events.append("pick")
+        click.echo(message)
+        return choices[0].value
+
+    async def create(**kwargs):
+        events.append("create")
+        assert kwargs["country"] == "us" and kwargs["billing_preference"] == "rent"
+        return NS(data=NS(number_id="num", state="active", checkout_url=None))
+
+    monkeypatch.setattr(safety, "confirm_prompt_async", confirm)
+    monkeypatch.setattr(numbers, "countries", countries)
+    monkeypatch.setattr(number_cli, "_included_counts", AsyncMock(return_value=[2]))
+    monkeypatch.setattr(number_cli, "select_prompt", pick)
+
+    @asynccontextmanager
+    async def client(*args, **kwargs):
+        assert kwargs["billing"] is Billing.PAID
+        yield NS(
+            numbers=NS(
+                create=create,
+                retrieve=AsyncMock(
+                    return_value=NS(data=NS(state="active", phone_number="+15550100"))
+                ),
+            )
+        )
+
+    monkeypatch.setattr(numbers, "cloud_client", client)
+    result = TTYRunner(True, stdout_tty, True).invoke(
+        app, ["number", "create", "--plan", "rent", "--billing", "included", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events == ["countries", "pick", "confirm", "create"]
+    assert "Choose a number country" in result.stderr
+    assert json.loads(result.stdout) == {
+        "id": "num",
+        "status": "active",
+        "phone_number": "+15550100",
+    }
 
 
 @pytest.mark.parametrize("mode", ["paid", "included", "no_commerce"])

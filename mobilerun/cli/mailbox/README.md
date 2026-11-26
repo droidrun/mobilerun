@@ -12,9 +12,11 @@ mobilerun mailbox create --billing paid --plan rent
 ```
 
 Plans: `auto` uses included quota first; `included` never rents; `rent` requires paid billing.
-`--billing paid` allows charges without a prompt. If a billing guard rejects the
-selected mode, the command can retry once with the required mode after consent. Use `--yes`
-to approve that retry in automation. Exhausted included quota is not retried.
+In `paid` mode, `auto` and `rent` ask for confirmation because they can incur
+charges. `included` does not require paid confirmation. If a billing guard
+rejects the mode, the command can retry once after consent. Pass `--yes` to approve
+without prompting; it is required in non-interactive shells when confirmation
+is needed. Exhausted included quota is not retried.
 
 `mailbox status MAILBOX` shows its address and lifecycle state; `mailbox code
 MAILBOX` waits for a verification code. Create, status and release support `--json`.

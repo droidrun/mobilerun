@@ -15,9 +15,11 @@ mobilerun number unbind NUMBER_ID
 ```
 
 Plans: `auto` uses included quota first; `included` never rents; `rent` requires paid billing.
-`--billing paid` allows charges up front. When a billing guard rejects the
-selected mode, the command can retry once with the required mode after consent. Use `--yes`
-to approve that retry in automation. Exhausted included quota is not retried.
+In `paid` mode, `auto` and `rent` ask for confirmation because they can incur
+charges. `included` does not require paid confirmation. If a billing guard
+rejects the mode, the command can retry once after consent. Pass `--yes` to approve
+without prompting; it is required in non-interactive shells when confirmation
+is needed. Exhausted included quota is not retried.
 Without `--country`, `number included` lists the remaining included quota for all
 countries. Interactive `number create` shows the included quota alongside each
 in-stock country; quota is a snapshot, not a reservation.
