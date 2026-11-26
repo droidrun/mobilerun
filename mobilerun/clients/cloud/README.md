@@ -15,6 +15,7 @@
 - `errors.py` — Sanitized cloud API errors.
 - `devices.py`, `numbers.py`, `mailboxes.py`, `proxies.py` — Resource operations.
 - `secrets.py` — Credential-vault SDK operations; core owns caching and package policy.
+- `webhooks.py` — Endpoint registration, lookup, listing, deletion, and signed test delivery for [CloudWebhooks](../../core/webhooks/README.md).
 - `tasks.py` — Task calls, streaming, status and artifact SDK access.
 - `apps.py` — APK upload, reuse and retrieval.
 
@@ -84,6 +85,7 @@ before hitting a billing guard.
 | `proxies.buy_proxy` | `PAID` |
 | `proxies.disconnect_device`, `device_status`, `list_proxies`, `get_proxy` | `NO_COMMERCE` |
 | `secrets.list_secrets`, `list_package`, `create_package`, `save`, `create_field`, `update`, `delete` | `NO_COMMERCE` |
+| `webhooks.register_webhook`, `list_webhooks`, `get_webhook`, `ping_webhook`, `delete_webhook` | `NO_COMMERCE` |
 | `apps.get_app`, `upload_app`, `list_installs`, `install`, `uninstall` | `NO_COMMERCE` |
 | `files.upload_file`, `list_files`, `download_file`, `delete_file`, `push_device_file`, `list_device_files`, `download_device_file`, `delete_device_file` | `NO_COMMERCE` |
 | `tasks.run` | `INCLUDED` (consumes task credits) |

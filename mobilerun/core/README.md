@@ -1,6 +1,6 @@
 # core/
 
-**Purpose:** Shared device, state, and operator abstractions.
+**Purpose:** Shared device, state, and operator abstractions, plus organization resources such as webhook endpoints.
 
 **What belongs here / what doesn't:** Put platform-neutral contracts and device orchestration here, not feature or CLI logic.
 
@@ -28,4 +28,4 @@ print(state.formatted_text)
 
 **Depends on / used by:** Uses clients and other shared packages; used by devices and features.
 
-See [devices](devices/README.md), [state](state/README.md), and [Workspace](WORKSPACE.md).
+See [devices](devices/README.md), [state](state/README.md), [webhooks](webhooks/README.md), and [Workspace](WORKSPACE.md).

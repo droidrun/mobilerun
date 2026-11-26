@@ -16,6 +16,19 @@ TODO: Add local/cloud pool ordering, agent/context provider, skills and remainin
 phone and resets it; collect only until explicitly approved. The typed-output
 task smoke also checks lazy trajectory and screenshot reads.
 
+## Webhook CLI
+
+`test_webhook_cli_lifecycle` needs a valid `MOBILERUN_API_KEY` and access to
+`webhook.site`. It creates a temporary receiver, registers and lists a new
+endpoint, and checks that the receiver captured the test POST sent by `ping`.
+Cleanup deletes both resources created by
+the test. Endpoint registration does not purchase resources. Review the cloud
+operation before running:
+
+```sh
+source ~/.agent-env; .venv/bin/pytest --smoke tests/unit/smoke/test_webhook_cli.py -v -s
+```
+
 ## Sandbox cloud functions
 
 The sandbox endpoint smoke requires the `sandbox` and `dev` extras, a valid
@@ -30,7 +43,12 @@ source ~/.agent-env; .venv/bin/pytest --smoke tests/unit/smoke/test_sandbox_func
 ```
 
 `test_device_free_sandbox_webhook` is a separate paid check; it also needs
-`MOBILERUN_SMOKE_WEBHOOK_URL` pointing to a dedicated HTTPS receiver you control.
+`MOBILERUN_SMOKE_WEBHOOK_URL` set to a dedicated, unused
+`https://webhook.site/<uuid>` receiver you control. It registers a fresh
+endpoint, passes its ID to `@cloud`, and verifies the workflow result POST at the
+receiver. It deletes the endpoint in `finally` and verifies it is gone; you own
+the receiver and are responsible for its cleanup.
+
 `test_device_free_sandbox_files` is another paid check. Use a saved-routine-files
 capable environment (staging or develop). It verifies a PNG saved to a unique
 folder, checks that redeploying without `files` removes delivery, and deletes

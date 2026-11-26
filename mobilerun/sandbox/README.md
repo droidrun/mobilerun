@@ -1,7 +1,8 @@
 # Sandbox cloud functions
 
 Sandbox is a self-contained Mobilerun plugin for deploying typed Python functions
-as authenticated endpoints or UTC schedules.
+as authenticated endpoints or UTC schedules. Flows can also send results to a
+[webhook](#send-a-function-result-to-a-webhook).
 Install the `sandbox` extra (`pip install 'mobilerun[sandbox]'`) and configure
 cloud credentials before deploying. The extra pins `mobilerun-functions` 0.1.0
 with device support.
@@ -338,21 +339,31 @@ to identify resources and verify ownership before changing or deleting them.
 See the [smoke test instructions](../../tests/unit/smoke/README.md#sandbox-cloud-functions)
 for the paid, device-free lifecycle check and its cleanup procedure.
 
+## Results and files
+
 ### Send a function result to a webhook
 
-Register the receiver, then pass the returned endpoint ID:
+[Register an HTTPS receiver](../cli/webhook/README.md), then pass the returned endpoint UUID, not the URL:
 
 ```sh
-mobilerun webhook register https://…
+mobilerun webhook register https://receiver.example/results
 ```
+
+For the [device-free example](#device-free-example), change the decorator to:
 
 ```python
-@cloud("daily-report", webhook="<id>")
-def report(input: ReportInput) -> ReportOutput:
-    return ReportOutput(count=input.count)
+@cloud("hello", webhook="<endpoint-id>")
 ```
 
-`ReportInput` and `ReportOutput` are your Pydantic models. Deploying a function and running its flow can incur charges. After a successful function step, the flow queues a `workflow.step.emit` event with the return value in `data.result`. If you also declare `files`, the flow uploads them first and replaces each base64 file value in `data.result` with an object containing `path` and `fileId`. Flow success confirms queuing, not HTTP delivery. Failed functions do not emit a result.
+Replace `<endpoint-id>` with the actual UUID. If you pass a URL, declaration validation fails with a `mobilerun webhook register <url>` hint. Sandbox does not register or delete webhook endpoints. `webhook=` requires an endpoint or schedule; it cannot be used for a function-only deployment.
+
+**Cost:** Deploying a function and running its flow can incur charges. After a successful function step, the appended `webhooks.send` step queues a signed POST with the return value in `data.result`, for example:
+
+```json
+{"type": "workflow.step.emit", "data": {"result": {"message": "hello world"}}}
+```
+
+If you also declare `files`, the flow uploads them first and replaces each base64 file value in `data.result` with an object containing `path` and `fileId`. Flow success confirms queuing, not HTTP delivery. Failed functions do not emit a result.
 
 The endpoint must be active, not blocked, and subscribed to `workflow.step.emit` (or all events). Changing the ID updates the flow action, not the endpoint. If it becomes unusable during cutover, redeploy the same function with a usable ID or remove `webhook=`. The deployment keeps its flow ID and retains old actions until the replacement is confirmed.
 

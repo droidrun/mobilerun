@@ -101,6 +101,7 @@ asyncio.run(main())
 - **Reasoning:** Use `--reasoning` for manager–executor planning.
 - **Tracing:** Inspect runs with Arize Phoenix, Langfuse, logs and saved trajectories.
 - **Structured output:** Return typed results from tasks.
+- **Webhooks:** Send [sandbox function results](mobilerun/sandbox/README.md#send-a-function-result-to-a-webhook) to an HTTPS receiver.
 - **App cards and custom tools:** The `mobilerun-agents` add-on supports app-specific guidance and custom agent actions; app guidance is also available in the skills repository.
 - **Docker:** The repository's [Dockerfile](Dockerfile) builds a container whose entrypoint is the Mobilerun CLI.
 
@@ -244,6 +245,17 @@ python -m tests.demos.mailbox_demo
 
 Send an SMS or email containing a code from another account when prompted. `phone_demo --bind` also creates a cloud phone. See [proxy_demo.py](tests/demos/proxy_demo.py) for selecting a proxy on an existing cloud phone; proxy use can cost money and changes that phone's configuration.
 
+### Cloud webhooks
+
+With cloud credentials configured, register an HTTPS receiver you control and test it using the returned endpoint ID:
+
+```bash
+mobilerun webhook register https://receiver.example/results
+mobilerun webhook ping ENDPOINT_ID
+```
+
+Save the one-time signing secret securely. Registration creates an endpoint but does not purchase resources. To deliver results, pass the ID to `@cloud("daily-report", webhook="<endpoint-id>")`. Deploying and running the sandbox flow can incur charges. See the [webhook CLI](mobilerun/cli/webhook/README.md) and [Python API](mobilerun/core/webhooks/README.md).
+
 ### Structured output
 
 **Cost:** the phone, proxy and cloud task can incur charges.
@@ -265,7 +277,7 @@ From a source checkout, run `python -m tests.demos.task_demo` for the complete c
 
 ## CLI overview
 
-Run `mobilerun --help` or `mobilerun COMMAND --help`. Command groups include `device`, `agent`, `macro`, `account`, `credentials`, `number`, `mailbox`, `proxy`, `workspace`, `skills`, `mcp`, and `doctor`. `mobilerun device connect <id>` saves a default device; `mobilerun device disconnect` clears it. Old command aliases are unavailable; use `mobilerun account login`, `mobilerun device list`, and `mobilerun agent run`. See the [CLI guide](mobilerun/cli/README.md).
+Run `mobilerun --help` or `mobilerun COMMAND --help`. Command groups include `device`, `agent`, `macro`, `account`, `credentials`, `number`, `mailbox`, `proxy`, `webhook`, `workspace`, `skills`, `mcp`, and `doctor`. `mobilerun device connect <id>` saves a default device; `mobilerun device disconnect` clears it. Old command aliases are unavailable; use `mobilerun account login`, `mobilerun device list`, and `mobilerun agent run`. See the [CLI guide](mobilerun/cli/README.md).
 
 ## Skills for coding agents
 

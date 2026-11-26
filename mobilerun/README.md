@@ -21,6 +21,7 @@ See the [demos](../tests/demos/README.md) for source-checkout examples and costs
 | [core/phone_number/](core/phone_number/README.md) | Phone number interface and cloud implementation. |
 | [core/mailbox/](core/mailbox/README.md) | Mailbox interface and cloud implementation. |
 | [core/proxy/](core/proxy/README.md) | Proxy interface, Connect and SOCKS5 implementations. |
+| [core/webhooks/](core/webhooks/README.md) | Organization webhook endpoint management. |
 | [core/state/](core/state/README.md) | UI state providers and models. |
 | [core/operator/](core/operator/README.md) | Operator interface. |
 | [clients/](clients/README.md) | Shared service clients. |
@@ -35,6 +36,7 @@ See the [demos](../tests/demos/README.md) for source-checkout examples and costs
 | [diagnostics/](diagnostics/README.md) | Diagnostics. |
 | [assets/](assets/README.md) | Shared bundled assets. |
 | [cli/](cli/README.md) | Root CLI and shared CLI helpers. |
+| [cli/webhook/](cli/webhook/README.md) | Register, list, inspect, ping, and delete webhook endpoints. |
 | [macro/](macro/README.md) | Recording and guarded replay. |
 | [sandbox/](sandbox/README.md) | Sandbox apps and tasks. |
 | [skills/](skills/README.md) | Bundled coding-agent skills. |
@@ -54,6 +56,7 @@ package; shared code never imports features.
 | Device error | `errors/device.py` |
 | Macro error | `macro/errors.py` |
 | Proxy CLI command | `cli/proxy/` |
+| Webhook CLI command | `cli/webhook/` |
 | Skills CLI | `skills/cli/` |
 
 ## Dependency direction
@@ -71,6 +74,7 @@ device. Behavior that only makes sense on a phone lives on the phone.
 | --- | --- | --- |
 | On the phone | Proxy selection/switching; operator selection/execution | `core/devices/cloud.py`, `core/proxy/`, `core/operator/` |
 | Binds itself | Phone numbers, mailboxes, credential providers | `core/phone_number/`, `core/mailbox/`, `core/credentials/` |
+| Organization-scoped | Webhook endpoints; no device binding | `core/webhooks/` |
 | Shared values | App, Billing/Plan, Credential, task/expectation results | `models/`; no SDK, IO or lifecycle |
 
 Use `await number.bind(phone)`, `await mailbox.bind(device)` and
@@ -94,6 +98,7 @@ shared base: models, core, clients, config, utils, errors, logs
     \             |              /
      +------> mobilerun-agents <-----+
 
+Webhook calls: cli/webhook/ -> core/webhooks/ -> clients/cloud/webhooks.py
 Feature CLIs register through `mobilerun.cli` distribution entry points.
 ```
 
@@ -149,6 +154,20 @@ the cloud device (`await CloudCredentials().bind(cloud)`). Cloud tasks use
 vault references, not secret values; local credential providers are rejected
 before API calls. A local `AgentOperator` driving a cloud phone remains allowed
 to use local credentials.
+
+### Cloud webhooks
+
+With cloud API credentials configured, list your organization's webhook endpoints without creating resources:
+
+```python
+from mobilerun.core.webhooks import CloudWebhooks
+
+async def webhook_example():
+    for endpoint in await CloudWebhooks(billing="no_commerce").list():
+        print(endpoint.id, endpoint.state)
+```
+
+Use a registered endpoint ID to [deliver sandbox function results](sandbox/README.md#send-a-function-result-to-a-webhook). Deploying and running that flow can incur charges.
 
 ## CLI device selection
 

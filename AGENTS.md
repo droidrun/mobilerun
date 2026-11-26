@@ -16,6 +16,7 @@ See [mobilerun/README.md](mobilerun/README.md) for the detailed package map,
 examples, and dependency diagram.
 
 - `mobilerun/core/`: device, state, operator and resource interfaces.
+- `mobilerun/core/webhooks/`: organization webhook endpoints; commands in `mobilerun/cli/webhook/`.
 - LLM-backed agent execution is in the separate `mobilerun-agents` package (not yet publicly published).
 - `mobilerun/clients/`: cloud, local and Portal service adapters.
 - `mobilerun/models/`, `config/`, `errors/`, `logs/`, `utils/`: shared types and support.
@@ -101,6 +102,7 @@ configured or installed by the project's development dependencies; if available,
 Smoke tests are opt-in and can use real devices, cloud resources and LLM tokens.
 **Ask the user before running any paid smoke test, cloud operation or LLM call.**
 Review [smoke setup, costs and cleanup](tests/unit/smoke/README.md) first.
+Webhook smoke tests use `webhook.site`; paid sandbox runs delete the webhook endpoints they create.
 
 ```bash
 # After approval: read-only checks can list cloud devices when a key is present.

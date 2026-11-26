@@ -35,7 +35,7 @@ mobilerun
 ├── number: bind, code, countries, create, included, list, messages, release, send, status, unbind
 ├── proxy: bind, buy, included, list, release, status
 ├── skills: install, list, show, uninstall
-├── webhook: delete, get, list, register
+├── webhook: delete, get, list, ping, register
 └── workspace: apps (list, remove, upload), files (download, list, rm, upload)
 ```
 
