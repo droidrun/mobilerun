@@ -15,6 +15,9 @@ them, and manage their workflows. Start with `mobilerun sandbox --help` or
 | `path` | Show the local sandbox store path. |
 
 Deploying, firing, and enabling can incur charges, even without a device.
+These commands ask once before proceeding with paid billing; `enable` asks for
+all selected workflows together. Pass `--yes` to approve without prompting.
+Non-interactive runs require `--yes`, even with `--billing paid`.
 Appearing in `list` does not establish ownership or authorize this plugin to mutate
 a function or its workflow. Mutations require verified local creation receipts.
 Set `endpoint=False` without a schedule to deploy without a flow, or use `schedule=`

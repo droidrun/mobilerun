@@ -35,10 +35,11 @@ An enabled schedule can incur future charges without your CLI running. The
 default billing mode is `paid`; `MOBILERUN_BILLING` changes the default and an
 explicit `--billing` or `billing=` overrides it. Deploy, fire, and enable
 require `paid`; reads, polling, disable, and owned cleanup allow `no_commerce`.
-With `paid`, deploy, fire, and enable don't ask for billing confirmation. If a
-billing guard rejects `included` or `no_commerce`, the CLI asks before retrying
-once with `paid`. Declining stops the operation. Without a terminal, pass
-`--yes` to approve the retry or choose `--billing paid` from the start.
+The CLI asks once before deploying, firing, or enabling with `paid`, including
+when retrying after a billing guard rejects `included` or `no_commerce`.
+An `enable` batch names all selected flows in one prompt. The default answer
+is No. Pass `--yes` to approve without prompting; `--billing paid` alone does
+not approve the action in a non-interactive session.
 
 ```sh
 mobilerun sandbox deploy hello.py --billing paid
@@ -68,8 +69,8 @@ user code during inspection.
 **Migration:** `DeploymentPreview`, `SandboxConfirmationRequired`, and
 `deploy(confirm=...)` were removed. Run custom confirmation callbacks outside
 `deploy()`. A mode that is too low raises `BillingRequired` if not escalated;
-`paid` needs no confirmation. `remote.fire()` and `remote(...)` treat `yes` as
-payload. Pass `billing="paid"` for non-interactive consent on those calls.
+`paid` needs no confirmation in the Python API. `remote.fire()` and `remote(...)`
+treat `yes` as payload. Pass `billing="paid"` for non-interactive consent on those calls.
 
 ## Examples
 

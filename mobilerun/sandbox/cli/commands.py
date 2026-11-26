@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from mobilerun.cli.base import menu, render
-from mobilerun.cli.base.billing import invoke_with_billing
+from mobilerun.cli.base.billing import invoke_with_billing, require_consent_possible
 from mobilerun.cli.base.errors import safe_error_message
 from mobilerun.cli.base.prompts import SelectChoice, select_prompt_async
 from mobilerun.cli.base.run import coro
@@ -42,7 +42,9 @@ _billing_option = click.option(
     help="Billing mode.",
 )
 _json_option = click.option("--json", "as_json", is_flag=True, help="Output JSON.")
-_yes_option = click.option("--yes", is_flag=True, help="Authorize without prompting.")
+_yes_option = click.option(
+    "--yes", is_flag=True, help="Confirm the action without prompting."
+)
 _source_file = click.Path(exists=True, dir_okay=False, readable=True, path_type=Path)
 
 
@@ -96,6 +98,12 @@ def _deployment_choices(ctx: click.Context) -> list[SelectChoice]:
 class _DeploymentArgument(menu.PromptingArgument):
     """Select deployed names without the generic argument's free-text fallback."""
 
+    def __init__(
+        self, *args: Any, requires_consent: bool = False, **kwargs: Any
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.requires_consent = requires_consent
+
     def process_value(self, ctx: click.Context, value: Any) -> Any:
         if (
             not self.value_is_missing(value)
@@ -105,6 +113,10 @@ class _DeploymentArgument(menu.PromptingArgument):
             return super().process_value(ctx, value)
 
         batch = self.nargs == -1
+        if self.requires_consent:
+            # Click processes explicitly supplied options before omitted arguments.
+            # Refuse before the remote lookup when billing consent cannot be asked.
+            require_consent_possible(yes=ctx.params.get("yes", False))
         choices = _deployment_choices(ctx)
         try:
             with redirect_stdout(sys.stderr):
@@ -134,13 +146,14 @@ _names_argument = click.argument(
 )
 
 
-async def _pick_device(*, as_json: bool) -> tuple[str | None, bool]:
+async def _pick_device(*, as_json: bool, yes: bool) -> tuple[str | None, bool]:
     from mobilerun.cli.devices.base.discovery import discover_devices
 
     if not menu.is_interactive():
         raise click.UsageError(
             "Pass --device ID or --device-free for a scheduled deployment."
         )
+    require_consent_possible(yes=yes)
     devices = await discover_devices(local=False, strict=True)
     # Disjoint choice values keep the device-free option distinct from device IDs.
     cloud = {f"device:{item.id}": item for item in devices if item.source == "cloud"}
@@ -231,19 +244,22 @@ async def deploy_command(
     if not device_free and device is None:
         device = declaration.device
         if device is None and declaration.schedule is not None:
-            device, device_free = await _pick_device(as_json=as_json)
+            device, device_free = await _pick_device(as_json=as_json, yes=yes)
+
+    target = f"device {device!r}" if device is not None else "device-free"
+    summary = f"Deploy {declaration.name!r} ({target})"
+    if declaration.schedule is not None:
+        summary += f" on schedule {declaration.schedule!r}"
 
     async def authorize(attempt: Billing) -> None:
         try:
             await _check_deploy_billing(attempt)
         except BillingRequired as exc:
-            target = f"device {device!r}" if device is not None else "device-free"
-            summary = f"Deploy {declaration.name!r} ({target})"
-            if declaration.schedule is not None:
-                summary += f" on schedule {declaration.schedule!r}"
             raise _TargetedBillingRequired(exc, summary) from exc
 
-    _, mode = await invoke_with_billing(authorize, _resolve_mode(billing), yes=yes)
+    _, mode = await invoke_with_billing(
+        authorize, _resolve_mode(billing), yes=yes, confirm_paid=summary
+    )
     artifact = package(file, source=source)
 
     receipt = await deploy_file(
@@ -322,7 +338,7 @@ def _payload(input_json: str | None, input_file: Path | None) -> dict[str, Any]:
 
 
 @click.command("fire")
-@_name_argument
+@click.argument("name", cls=_DeploymentArgument, requires_consent=True)
 @click.option("--input", "input_json", metavar="JSON", help="Input as a JSON object.")
 @click.option(
     "--input-file",
@@ -351,6 +367,7 @@ async def fire_command(
         lambda attempt: fire_remote(name, payload, billing=attempt),
         mode,
         yes=yes,
+        confirm_paid=f"Fire sandbox endpoint {name!r}",
     )
     invocation_id = result["invocation_id"]
     if as_json:
@@ -422,16 +439,17 @@ async def _set_enabled(
     targets = ", ".join(map(repr, names))
     warning = f"{verb} {targets}. Billing: {mode}."
     if enabled:
+        summary = f"Enable sandbox flows {targets}"
 
         async def authorize(attempt: Billing) -> None:
             try:
                 _require_paid(billing=attempt)
             except BillingRequired as exc:
-                raise _TargetedBillingRequired(
-                    exc, f"Enable sandbox flows {targets}"
-                ) from exc
+                raise _TargetedBillingRequired(exc, summary) from exc
 
-        _, mode = await invoke_with_billing(authorize, mode, yes=yes)
+        _, mode = await invoke_with_billing(
+            authorize, mode, yes=yes, confirm_paid=summary
+        )
     else:
         try:
             await confirm_action_async(
@@ -463,7 +481,14 @@ async def _set_enabled(
 
 
 @click.command("enable")
-@_names_argument
+@click.argument(
+    "name",
+    cls=_DeploymentArgument,
+    nargs=-1,
+    required=True,
+    metavar="NAME...",
+    requires_consent=True,
+)
 @_billing_option
 @_yes_option
 @_json_option

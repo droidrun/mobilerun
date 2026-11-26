@@ -1,3 +1,4 @@
+import asyncio
 import json
 import subprocess
 import sys
@@ -184,26 +185,127 @@ def test_noninteractive_no_commerce_disable_requires_yes():
     deploy.set_enabled.assert_not_awaited()
 
 
-@pytest.mark.parametrize("command", ["deploy", "fire", "enable"])
-def test_paid_mutations_do_not_require_yes(command, script, receipt, monkeypatch):
-    monkeypatch.setenv("MOBILERUN_BILLING", "paid")
-    deploy.fire_remote.side_effect = None
-    deploy.fire_remote.return_value = {"invocation_id": "inv-1"}
-    deploy.set_enabled.side_effect = None
-    deploy.set_enabled.return_value = {"enabled": command == "enable"}
-    result = invoke(command, script() if command == "deploy" else "demo", "--json")
-    assert result.exit_code == 0, result.output
-    operation = {"deploy": deploy.deploy_file, "fire": deploy.fire_remote}.get(
-        command, deploy.set_enabled
+@pytest.mark.parametrize(
+    ("command", "confirmation"),
+    [
+        ("deploy", "Deploy 'demo' (device-free)"),
+        ("fire", "Fire sandbox endpoint 'demo'"),
+        ("enable", "Enable sandbox flows 'demo', 'other'"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("interactive", "answer", "flags", "error"),
+    [
+        pytest.param(True, False, [], "Cancelled.", id="declined"),
+        pytest.param(True, True, [], None, id="accepted"),
+        pytest.param(False, None, ["--yes"], None, id="yes"),
+        pytest.param(False, None, [], "pass --yes", id="noninteractive"),
+        pytest.param(True, True, ["--billing", "included"], None, id="escalation"),
+    ],
+)
+def test_billable_commands_require_consent(
+    command,
+    confirmation,
+    interactive,
+    answer,
+    flags,
+    error,
+    script,
+    receipt,
+    monkeypatch,
+):
+    prompt = AsyncMock(return_value=answer)
+    monkeypatch.setattr(safety, "confirm_prompt_async", prompt)
+    paid_calls = []
+
+    async def guarded(*args, billing, **kwargs):
+        deploy._require_paid(billing=billing)
+        paid_calls.append((args, billing, prompt.await_count))
+        return receipt if command == "deploy" else {"invocation_id": "inv-1"}
+
+    path = script()
+    operation, args, calls = {
+        "deploy": (deploy.deploy_file, [str(path)], [(path,)]),
+        "fire": (deploy.fire_remote, ["demo"], [("demo", {})]),
+        "enable": (
+            deploy.set_enabled,
+            ["demo", "other"],
+            [("demo", True), ("other", True)],
+        ),
+    }[command]
+    operation.side_effect = guarded
+    result = BillingRunner(interactive).invoke(
+        cli, ["sandbox", command, *args, *flags, "--json"]
     )
-    operation.assert_awaited_once()
-    assert operation.await_args.kwargs["billing"] is Billing.PAID
+    if error:
+        assert result.exit_code == 1, result.output
+        assert error in result.stderr
+        operation.assert_not_awaited()
+        assert result.stdout == ""
+        assert paid_calls == []
+    else:
+        assert result.exit_code == 0, result.output
+        assert paid_calls == [
+            (args, Billing.PAID, int(answer is not None)) for args in calls
+        ]
+    if answer is None:
+        prompt.assert_not_awaited()
+    elif "included" in flags:
+        prompt.assert_awaited_once()
+        assert prompt.await_args.kwargs == {"default": False}
+        assert "paid" in prompt.await_args.args[0]
+    else:
+        prompt.assert_awaited_once_with(
+            f"{confirmation} with paid billing (charges may apply)?", default=False
+        )
+
+
+@pytest.mark.parametrize("command", ["deploy", "fire", "enable"])
+def test_billable_picker_skips_remote_lookup_without_billing_terminal(
+    command, script, monkeypatch
+):
+    monkeypatch.setattr(menu, "is_interactive", lambda: True)
+    args = [str(script("schedule='0 12 * * *'"))] if command == "deploy" else []
+    result = BillingRunner(interactive=False).invoke(cli, ["sandbox", command, *args])
+    assert result.exit_code == 1, result.output
+    assert (
+        result.stderr
+        == "Error: Refusing to proceed without confirmation; pass --yes.\n"
+    )
+    discovery.discover_devices.assert_not_awaited()
+    deploy.list_deployments.assert_not_awaited()
+
+
+@pytest.mark.parametrize("command", ["fire", "enable"])
+def test_billable_name_picker_honors_yes_before_lookup(command, monkeypatch):
+    monkeypatch.setattr(menu, "is_interactive", lambda: True)
+    deploy.list_deployments.side_effect = None
+    deploy.list_deployments.return_value = []
+    result = BillingRunner(interactive=False).invoke(cli, ["sandbox", command, "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "No deployed sandbox functions found." in result.stderr
+    deploy.list_deployments.assert_awaited_once_with(billing=Billing.PAID)
+
+
+@pytest.mark.parametrize("command", ["fire", "enable"])
+def test_billable_name_picker_refuses_cleanly_with_running_loop(command, monkeypatch):
+    monkeypatch.setattr(menu, "is_interactive", lambda: True)
+
+    async def run_cli():
+        return BillingRunner(interactive=False).invoke(cli, ["sandbox", command])
+
+    result = asyncio.run(run_cli())
+    assert result.exit_code == 1, result.output
+    assert (
+        result.stderr
+        == "Error: Refusing to proceed without confirmation; pass --yes.\n"
+    )
+    deploy.list_deployments.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
     ("billing", "interactive", "answer", "yes", "attempts", "exit_code"),
     [
-        ("paid", True, None, False, ["paid"], 0),
         ("included", True, True, False, ["included", "paid"], 0),
         ("included", True, False, False, ["included"], 1),
         ("no_commerce", False, None, False, ["no_commerce"], 1),
@@ -377,7 +479,7 @@ def test_endpoint_text_uses_required_schema_fields_and_never_prints_api_key(
 
 @pytest.mark.parametrize("pick_phone", [True, False])
 @pytest.mark.parametrize("selected", [True, False])
-def test_paid_picker_skips_consent_and_prompts_stay_off_json_stdout(
+def test_paid_picker_prompts_stay_off_json_stdout(
     pick_phone, selected, script, receipt, monkeypatch
 ):
     from mobilerun.sandbox.cli import commands
@@ -405,14 +507,25 @@ def test_paid_picker_skips_consent_and_prompts_stay_off_json_stdout(
     picker = AsyncMock(side_effect=pick)
     monkeypatch.setattr(commands, "select_prompt_async", picker)
 
-    confirmation = AsyncMock()
+    async def confirm(message, *, default):
+        click.echo(message)
+        return True
+
+    confirmation = AsyncMock(side_effect=confirm)
     monkeypatch.setattr(safety, "confirm_prompt_async", confirmation)
-    result = invoke("deploy", "--billing", "paid", "--json")
+    result = BillingRunner().invoke(
+        cli, ["sandbox", "deploy", "--billing", "paid", "--json"]
+    )
     assert result.exit_code == 0, result.output
     discovery.discover_devices.assert_awaited_once_with(local=False, strict=True)
     assert "File" in result.stderr and "device" in result.stderr.lower()
-    confirmation.assert_not_awaited()
     if selected:
+        target = "device 'cloud-id'" if pick_phone else "device-free"
+        assert "charges may apply" in result.stderr
+        confirmation.assert_awaited_once_with(
+            f"Deploy 'demo' ({target}) on schedule '0 12 * * *' with paid billing (charges may apply)?",
+            default=False,
+        )
         assert json.loads(result.stdout)["version"] == 3
         deploy.deploy_file.assert_awaited_once_with(
             path,
@@ -422,6 +535,7 @@ def test_paid_picker_skips_consent_and_prompts_stay_off_json_stdout(
             artifact=ANY,
         )
     else:
+        confirmation.assert_not_awaited()
         assert result.stdout == ""
         deploy.deploy_file.assert_not_awaited()
 
@@ -443,7 +557,9 @@ def test_fire_prompts_for_name_and_does_not_poll(monkeypatch):
     monkeypatch.setattr(safety, "confirm_prompt_async", AsyncMock(return_value=True))
     deploy.fire_remote.side_effect = None
     deploy.fire_remote.return_value = {"invocation_id": "inv-1", "ignored": 2}
-    result = invoke("fire", "--input", '{"billing": "payload"}', "--json")
+    result = BillingRunner().invoke(
+        cli, ["sandbox", "fire", "--input", '{"billing": "payload"}', "--json"]
+    )
     assert result.exit_code == 0, result.output
     assert "Name" in result.stderr
     assert json.loads(result.stdout) == {"invocation_id": "inv-1"}
@@ -484,7 +600,7 @@ def test_deploy_uses_same_artifact_after_file_changes(
         events.append("package")
         return package(*args, **kwargs)
 
-    async def pick_device(*, as_json):
+    async def pick_device(*, as_json, yes):
         events.append("device")
         path.write_text(path.read_text().replace("'demo'", "'changed'"))
         return device, device is None
@@ -659,16 +775,18 @@ def test_batch_multiselect_confirms_all_once(
     monkeypatch.setattr(safety, "confirm_prompt_async", confirm)
     deploy.set_enabled.side_effect = None
     deploy.set_enabled.return_value = {"id": "flow-1", "enabled": enabled}
-    result = invoke(command, "--billing", billing.value, "--json")
-    assert result.exit_code == 0, result.output
-    if billing is Billing.PAID:
-        confirm.assert_not_awaited()
+    result = BillingRunner().invoke(
+        cli, ["sandbox", command, "--billing", billing.value, "--json"]
+    )
+    assert result.exit_code == int(enabled and not consent), result.output
+    confirm.assert_awaited_once()
+    if enabled:
+        assert all(name in confirm.await_args.args[0] for name in ("demo", "other"))
     else:
         assert "demo" in result.stderr and "other" in result.stderr
-        confirm.assert_awaited_once()
     deploy.list_deployments.assert_awaited_once_with(billing=billing)
     status = "enabled" if enabled else "disabled"
-    if consent or billing is Billing.PAID:
+    if consent:
         assert json.loads(result.stdout) == [
             {"name": "demo", "status": status},
             {"name": "other", "status": status},
@@ -677,7 +795,10 @@ def test_batch_multiselect_confirms_all_once(
             call(name, enabled, billing=billing) for name in ("demo", "other")
         ]
     else:
-        assert json.loads(result.stdout) == []
+        if enabled:
+            assert "Cancelled." in result.stderr and result.stdout == ""
+        else:
+            assert json.loads(result.stdout) == []
         deploy.set_enabled.assert_not_awaited()
 
 
