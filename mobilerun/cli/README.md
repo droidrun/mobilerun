@@ -45,12 +45,13 @@ Cloud resources and agent runs can incur charges. Device commands select an expl
 device first, then a saved default or a discovered device; see [device commands](devices/README.md).
 Overwriting an existing credential requires an interactive confirmation.
 
-`number create`, `mailbox create`, `proxy buy`, `number send`, and `device cloud
-resume` ask only when a billing guard rejects the chosen mode. The prompt defaults
-to No; Yes retries the guarded operation once with the mode named in the prompt.
-No cancels with exit status 1. `--yes` approves that retry without a prompt;
-selecting `paid` authorizes charges up front. Destructive actions still require
-separate confirmation.
+`number create`, `mailbox create`, and `proxy buy` ask only when a billing guard
+rejects the chosen mode. SMS sends (`number send` and `device action call sms.send`)
+and metered resumes (`device cloud resume`) require confirmation even in `paid`
+mode. If the operation needs to retry as `paid`, that prompt is the only one.
+The prompt defaults to No, which cancels with exit status 1. Use `--yes` to
+confirm without prompting; it is required for these chargeable operations in
+automation. Destructive actions still require separate confirmation.
 
 ## Contents
 

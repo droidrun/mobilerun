@@ -7,12 +7,11 @@ from typing import Any
 
 import click
 
-from mobilerun.cli.base.billing import invoke_with_billing
+from mobilerun.cli.base.billing import confirm_paid_action, invoke_with_billing
 from mobilerun.cli.base.menu import is_interactive
 from mobilerun.cli.base.prompts import SelectChoice
 from mobilerun.cli.base.prompts import text_prompt_async as text_prompt
 from mobilerun.cli.base.run import coro
-from mobilerun.cli.base.safety import confirm_action_async
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.cli.devices.base.pickers import choose_value_async as choose_value
 from mobilerun.config.settings import get_settings
@@ -58,16 +57,20 @@ async def _arguments(action: Action, supplied: tuple[str, ...]) -> dict[str, JSO
 async def _billing_policy(
     device: Device, entry: Action, *, yes: bool
 ) -> BillingRetry | None:
-    if entry.supports_billing_retry:
-        return partial(invoke_with_billing, yes=yes)
-
-    # Unmarked SMS providers cannot safely be retried; require consent up front.
     owner = device.extensions.get(entry.owner)
     is_sms_send = entry.name == "sms.send" or (
         entry.name.endswith(".send")
         and owner is not None
         and owner.role == "phone_number"
     )
+    if entry.supports_billing_retry:
+        return partial(
+            invoke_with_billing,
+            yes=yes,
+            confirm_paid="Send SMS" if is_sms_send else None,
+        )
+
+    # Unmarked SMS providers cannot safely be retried; require consent up front.
     if not is_sms_send:
         return None
     billing = get_settings().MOBILERUN_BILLING
@@ -75,9 +78,7 @@ async def _billing_policy(
         raise click.ClickException(
             "Sending SMS may incur charges; set MOBILERUN_BILLING=paid."
         )
-    await confirm_action_async(
-        "send SMS", billing.value, "Sending SMS may incur charges.", yes=yes, err=True
-    )
+    await confirm_paid_action("Send SMS", yes=yes)
     return None
 
 
@@ -90,7 +91,9 @@ async def _billing_policy(
     help="Action argument as key=value (repeatable).",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output JSON.")
-@click.option("--yes", "-y", is_flag=True, help="Confirm a chargeable action.")
+@click.option(
+    "--yes", "-y", is_flag=True, help="Confirm chargeable actions without prompting."
+)
 @device_command
 @coro
 async def call(

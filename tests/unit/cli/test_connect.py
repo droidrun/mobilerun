@@ -218,7 +218,7 @@ def test_interactive_discovery_honors_kind(monkeypatch, kind, expected):
     )
     connect = AsyncMock(return_value=AsyncMock())
     monkeypatch.setattr(selection, "connect_target", connect)
-    result = CliRunner().invoke(device, ["input", "clipboard", "get", f"--{kind}"])
+    result = CliRunner().invoke(device, ["input", "tap", "10", "20", f"--{kind}"])
     assert result.exit_code == 0, result.output
     assert connect.await_args.args == (expected,)
     assert connect.await_args.kwargs["kind"] == kind
@@ -284,7 +284,7 @@ def test_save_to_explicit_config(monkeypatch, tmp_path):
         selection, "connect_target", AsyncMock(return_value=AsyncMock())
     )
     result = CliRunner().invoke(
-        device, ["input", "clipboard", "get", "--config", str(alternate)]
+        device, ["input", "tap", "10", "20", "--config", str(alternate)]
     )
     assert result.exit_code == 0, result.output
     assert default.read_bytes() == before

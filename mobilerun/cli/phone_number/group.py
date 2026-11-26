@@ -135,7 +135,9 @@ async def number_countries(as_json: bool, billing: str) -> None:
 @click.argument("number_id", cls=PromptingArgument, choices=numbers, metavar="NUMBER")
 @click.argument("to")
 @click.argument("text")
-@click.option("--yes", "-y", is_flag=True)
+@click.option(
+    "--yes", "-y", is_flag=True, help="Confirm SMS charges without prompting."
+)
 @billing_option
 @coro
 async def number_send(
@@ -145,6 +147,7 @@ async def number_send(
         lambda mode: cloud_numbers.send(number_id, to, text, billing=mode),
         Billing(billing),
         yes=yes,
+        confirm_paid="Send SMS",
     )
     render.success(f"Sent SMS from {number_id} to {to}")
 

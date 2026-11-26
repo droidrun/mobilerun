@@ -63,7 +63,7 @@ CLOUD_ID = "11111111-1111-1111-1111-111111111111"
             ["input", "clipboard", "set", "private text"],
             "set_clipboard",
             ("private text",),
-            "Clipboard set on serial",
+            f"Clipboard set on {CLOUD_ID}",
         ),
     ],
 )
@@ -79,7 +79,8 @@ def test_grouped_operations_acknowledge_and_close(
     operation = AsyncMock(return_value=result_value)
     setattr(phone, method, operation)
     monkeypatch.setattr(selection, "connect_target", AsyncMock(return_value=phone))
-    result = CliRunner().invoke(device, [*path, "-d", "serial"])
+    target = CLOUD_ID if method == "set_clipboard" else "serial"
+    result = CliRunner().invoke(device, [*path, "-d", target])
     assert result.exit_code == 0, (result.output, result.exception)
     operation.assert_awaited_once_with(*args)
     phone.close.assert_awaited_once()

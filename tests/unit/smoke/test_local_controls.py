@@ -99,8 +99,8 @@ def test_local_android_clipboard_reports_unsupported(local_ready):
         text=True,
         timeout=90,
     )
-    assert result.returncode == 1
-    assert "AndroidDevice doesn't support get_clipboard" in result.stderr
+    assert result.returncode == 2
+    assert "Clipboard commands require a cloud device ID." in result.stderr
 
 
 @pytest.mark.smoke_device

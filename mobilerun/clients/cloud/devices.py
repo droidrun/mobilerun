@@ -268,7 +268,9 @@ async def resume(
     **params: Unpack[RequestOptions],
 ) -> None:
     """Resume an existing phone without starting minute billing unless authorized."""
-    operation = await _prepare_resume(
+    if billing is Billing.PAID:
+        return await _resume(device_id, client=client, **params)
+    operation, _ = await _prepare_resume(
         device_id, billing=billing, client=client, **params
     )
     return await operation(billing)
@@ -285,23 +287,27 @@ async def _prepare_resume(
     billing: Billing,
     client: AsyncMobilerun,
     **params: Unpack[RequestOptions],
-) -> Callable[[Billing], Awaitable[None]]:
+) -> tuple[Callable[[Billing], Awaitable[None]], bool]:
     """Resolve the billing strategy once, outside any retry of the mutation."""
     needs_paid = (
-        billing is Billing.PAID
-        or (await retrieve(device_id, billing=billing, client=client)).billing_strategy
-        != Plan.SUBSCRIPTION
-    )
+        await retrieve(device_id, billing=billing, client=client)
+    ).billing_strategy != Plan.SUBSCRIPTION
 
     async def resume_prepared(mode: Billing) -> None:
         if needs_paid:
             _require_paid_resume(billing=mode)
-        try:
-            return await client.devices.resume(device_id, **params)
-        except APIError as exc:
-            raise cloud_error(exc, "Resume cloud phone", device=True) from exc
+        return await _resume(device_id, client=client, **params)
 
-    return resume_prepared
+    return resume_prepared, needs_paid
+
+
+async def _resume(
+    device_id: str, *, client: AsyncMobilerun, **params: Unpack[RequestOptions]
+) -> None:
+    try:
+        return await client.devices.resume(device_id, **params)
+    except APIError as exc:
+        raise cloud_error(exc, "Resume cloud phone", device=True) from exc
 
 
 @requires(Billing.NO_COMMERCE)

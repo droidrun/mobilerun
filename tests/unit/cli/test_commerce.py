@@ -638,7 +638,7 @@ def test_number_messages_countries_and_send(monkeypatch):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == [{"body": "US"}]
     result = runner.invoke(
-        number.number, ["send", "n1", "+123", "Hi", "--billing", "paid"]
+        number.number, ["send", "n1", "+123", "Hi", "--billing", "paid", "--yes"]
     )
     assert result.exit_code == 0, result.output
     send.assert_awaited_once_with("n1", "+123", "Hi", billing=Billing.PAID)

@@ -34,12 +34,13 @@ mobilerun device settings language get
 mobilerun device settings language set de-DE
 mobilerun device settings timezone get
 mobilerun device settings timezone set Europe/Berlin
-mobilerun device input clipboard get
-mobilerun device input clipboard set "hello"
+mobilerun device input clipboard get "$CLOUD_DEVICE_ID"
+mobilerun device input clipboard set "hello" "$CLOUD_DEVICE_ID"
 mobilerun device app open https://example.com
 ```
 
 All commands use the normal device selection and accept `[DEVICE]` or `--device`.
+Clipboard get and set are cloud-only.
 Support varies by backend; see [environment, credentials and proxies](../../core/devices/README.md#environment-credentials-and-proxies).
 Emulators retain their last fixed location; reset is unsupported, so set a new one instead.
 Reading location is supported on cloud devices; local Android, iOS and remote devices report it as unsupported. The cloud API returns coordinates without a mocked-status flag.

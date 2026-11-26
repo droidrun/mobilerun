@@ -26,9 +26,11 @@ in a warning. The JSON result uses `null` for that country's remaining count.
 
 `number status NUMBER` shows the number, lifecycle state and bound device.
 `number messages NUMBER` lists SMS history; `number countries` lists supported
-countries. `number send NUMBER TO TEXT --billing paid` may incur charges and
-does not prompt for billing. `number code NUMBER` waits for a verification code. Create, status, release, messages and countries
-support `--json`.
+countries. `number send NUMBER TO TEXT` may incur charges and requires
+confirmation even with `--billing paid`. Use `--yes` to confirm without
+prompting; it is required in non-interactive shells. `number code NUMBER` waits
+for a verification code. Create, status, release, messages and countries support
+`--json`.
 
 ## Files
 

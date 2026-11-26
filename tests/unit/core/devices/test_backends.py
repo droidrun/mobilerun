@@ -172,20 +172,20 @@ def test_clipboard_help_identifies_supported_targets(suffix):
 
 
 @pytest.mark.parametrize("args", [["get"], ["set", "private text"]])
-def test_local_clipboard_names_the_unsupported_operation(monkeypatch, args):
+def test_local_clipboard_requires_cloud_target(monkeypatch, args):
     from mobilerun.cli.devices.base import selection
     from mobilerun.config.loader import ConfigLoader
     from mobilerun.config.user_config import MobileConfig
 
     monkeypatch.setattr(ConfigLoader, "load", lambda path: MobileConfig())
 
-    monkeypatch.setattr(
-        selection, "connect_target", AsyncMock(return_value=AndroidDevice("fake"))
-    )
+    connect = AsyncMock()
+    monkeypatch.setattr(selection, "connect_target", connect)
     result = CliRunner().invoke(cli, ["input", "clipboard", *args, "-d", "fake"])
-    assert result.exit_code == 1
-    assert f"AndroidDevice doesn't support {args[0]}_clipboard" in result.output
+    assert result.exit_code == 2
+    assert "Clipboard commands require a cloud device ID." in result.stderr
     assert "private text" not in result.output
+    connect.assert_not_called()
 
 
 PORTAL_URL = "http://192.168.1.20:8080"

@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import json
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
 from functools import wraps
 from types import SimpleNamespace as NS
@@ -125,17 +126,38 @@ def test_cli_billing_retry(monkeypatch, mode, ttys, yes, answer, exit_code, atte
 
 
 @pytest.mark.parametrize(
-    "command", ["number create", "mailbox create", "proxy buy", "number send", "resume"]
-)
-@pytest.mark.parametrize(
-    "mode,interactive,yes,answer,runs,exit_code",
+    "command,mode,interactive,yes,answer,runs,exit_code",
     [
-        ("paid", True, False, None, 1, 0),
-        ("included", True, False, True, 1, 0),
-        ("included", True, False, False, 0, 1),
-        ("included", False, True, None, 1, 0),
-        ("included", False, False, None, 0, 1),
-        ("no_commerce", False, True, None, 1, 0),
+        (command, *case)
+        for command in (
+            "number create",
+            "mailbox create",
+            "proxy buy",
+            "number send",
+            "resume",
+        )
+        for case in (
+            ("included", True, False, True, 1, 0),
+            ("included", True, False, False, 0, 1),
+            ("included", False, True, None, 1, 0),
+            ("included", False, False, None, 0, 1),
+            ("no_commerce", False, True, None, 1, 0),
+        )
+    ]
+    + [
+        (command, "paid", True, False, None, 1, 0)
+        for command in ("number create", "mailbox create", "proxy buy")
+    ]
+    + [
+        (command, "paid", interactive, yes, answer, runs, exit_code)
+        for command in ("number send", "resume")
+        for interactive, yes, answer, runs, exit_code in (
+            (True, False, True, 1, 0),
+            (True, False, False, 0, 1),
+            (True, True, None, 1, 0),
+            (False, True, None, 1, 0),
+            (False, False, None, 0, 1),
+        )
     ],
 )
 def test_resource_cli_retries_only_guarded_operation(
@@ -202,11 +224,13 @@ def test_resource_cli_retries_only_guarded_operation(
     assert result.exit_code == exit_code, result.output
     assert len(prompts) == (answer is not None)
     assert mutate.await_count == runs
-    assert metadata.await_count == (command == "resume" and mode != "paid")
+    assert metadata.await_count == (command == "resume")
     if command != "resume":
         assert client_entries == [Billing.PAID] * (runs + details.await_count)
     if answer is False:
         assert "Cancelled" in result.stderr
+    elif exit_code and mode == "paid":
+        assert "without confirmation; pass --yes" in result.stderr
     elif exit_code:
         assert all(
             hint in result.stderr
@@ -214,11 +238,41 @@ def test_resource_cli_retries_only_guarded_operation(
         )
 
 
+@pytest.mark.parametrize("mode", ["paid", "included", "no_commerce"])
+@pytest.mark.parametrize("interactive", [True, False])
+def test_subscription_resume_never_prompts(
+    monkeypatch: pytest.MonkeyPatch, mode: str, interactive: bool
+) -> None:
+    metadata = AsyncMock(return_value=NS(billing_strategy=Plan.SUBSCRIPTION))
+    resume = AsyncMock()
+    prompt = AsyncMock(side_effect=AssertionError("unexpected billing prompt"))
+
+    @asynccontextmanager
+    async def client(*, base_url: str | None, billing: Billing) -> AsyncIterator[NS]:
+        yield NS(devices=NS(retrieve=metadata, resume=resume))
+
+    module = importlib.import_module("mobilerun.cli.devices.cloud.resume")
+    monkeypatch.setattr(module, "cloud_client", client)
+    monkeypatch.setattr(safety, "confirm_prompt_async", prompt)
+    device_id = "aa111111-1111-1111-1111-111111111111"
+    result = TTYRunner(interactive, False, interactive).invoke(
+        app, ["device", "cloud", "resume", device_id, "--billing", mode]
+    )
+
+    assert result.exit_code == 0, result.output
+    prompt.assert_not_awaited()
+    metadata.assert_awaited_once_with(device_id)
+    resume.assert_awaited_once_with(device_id)
+
+
 @pytest.mark.parametrize("alias", ["sms", "work"])
 @pytest.mark.parametrize(
     "mode,yes,reply,exit_code,sends",
     [
-        ("paid", False, None, 0, 1),
+        ("paid", False, True, 0, 1),
+        ("paid", False, False, 1, 0),
+        ("paid", True, None, 0, 1),
+        ("paid", False, None, 1, 0),
         ("included", True, None, 0, 1),
         ("included", False, True, 0, 1),
         ("included", False, False, 1, 0),
@@ -286,12 +340,13 @@ def test_bound_cloud_sms_retries_only_sdk_send(
         "text=hello",
         "--json",
     ]
-    result = TTYRunner(reply is not None, False, reply is not None).invoke(
+    interactive = reply is not None or (yes and mode == "paid")
+    result = TTYRunner(interactive, False, interactive).invoke(
         app, [*args, *(["--yes"] if yes else [])]
     )
     assert result.exit_code == exit_code, result.output
     assert prompt.await_count == (reply is not None)
-    expected_attempts = [Billing(mode)]
+    expected_attempts = [Billing(mode)] if mode != "paid" or sends else []
     if sends and mode != "paid":
         expected_attempts.append(Billing.PAID)
     assert attempts == expected_attempts
@@ -393,6 +448,12 @@ def test_cloud_number_with_replaced_send_still_requires_paid_confirmation(
     monkeypatch.setenv("MOBILERUN_BILLING", "paid")
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 1 and "--yes" in result.stderr
+    assert sent == []
+    prompt = AsyncMock(return_value=False)
+    monkeypatch.setattr(safety, "confirm_prompt_async", prompt)
+    result = TTYRunner(True, False, True).invoke(app, args)
+    assert result.exit_code == 1 and "Cancelled" in result.stderr
+    prompt.assert_awaited_once()
     assert sent == []
     result = CliRunner().invoke(app, [*args, "--yes"])
     assert result.exit_code == 0, result.stderr

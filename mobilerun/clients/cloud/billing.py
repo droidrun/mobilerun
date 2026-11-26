@@ -13,7 +13,8 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def _billing_prompt_is_interactive() -> bool:
+def billing_prompt_is_interactive() -> bool:
+    """Return whether a billing prompt can use terminal stdin and stderr."""
     stdin, stderr = sys.stdin, sys.stderr
     return (
         stdin is not None and stderr is not None and stdin.isatty() and stderr.isatty()
@@ -56,7 +57,7 @@ async def with_billing_retry(
         needed = error.needed
         if yes is not True:
             interactive = (
-                _billing_prompt_is_interactive()
+                billing_prompt_is_interactive()
                 if is_interactive is None
                 else is_interactive()
             )

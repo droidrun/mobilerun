@@ -7,7 +7,10 @@ from typing import Any, TypeVar
 
 import click
 
-from mobilerun.clients.cloud.billing import with_billing_retry
+from mobilerun.clients.cloud.billing import (
+    billing_prompt_is_interactive,
+    with_billing_retry,
+)
 from mobilerun.config.settings import get_settings
 from mobilerun.errors.base import MobilerunError
 from mobilerun.errors.cloud import BillingRequired
@@ -17,30 +20,25 @@ F = TypeVar("F", bound=Callable[..., Any])
 T = TypeVar("T")
 
 
-class BillingDeclined(MobilerunError):
-    """User declined a billing retry, potentially inside an extension action."""
+class BillingConsentError(MobilerunError):
+    """Consent was declined or unavailable, potentially inside an action."""
 
     value_safe = True
 
-    def __init__(self) -> None:
-        super().__init__("Cancelled.")
-
 
 async def invoke_with_billing(
-    operation: Callable[[Billing], Awaitable[T]], billing: Billing, *, yes: bool
+    operation: Callable[[Billing], Awaitable[T]],
+    billing: Billing,
+    *,
+    yes: bool,
+    confirm_paid: str | None = None,
 ) -> tuple[T, Billing]:
-    """Prompt centrally before retrying an operation with an audited guard."""
-    from mobilerun.cli.base import safety
+    """Confirm opt-in paid operations up front or once at their retry guard."""
+    if confirm_paid is not None and billing is Billing.PAID:
+        await confirm_paid_action(confirm_paid, yes=yes)
 
     async def prompt(error: BillingRequired) -> bool:
-        with redirect_stdout(sys.stderr):
-            accepted = await safety.confirm_prompt_async(
-                error.confirmation,
-                default=False,
-            )
-        if not accepted:
-            raise BillingDeclined()
-        return accepted
+        return await _confirm(error.confirmation)
 
     return await with_billing_retry(
         operation,
@@ -48,6 +46,26 @@ async def invoke_with_billing(
         yes=yes,
         prompt=prompt,
     )
+
+
+async def confirm_paid_action(operation: str, *, yes: bool) -> None:
+    """Ask before a paid action, or require explicit consent in automation."""
+    if yes:
+        return
+    if not billing_prompt_is_interactive():
+        raise BillingConsentError(
+            "Refusing to proceed without confirmation; pass --yes."
+        )
+    await _confirm(f"{operation} with paid billing (charges may apply)?")
+
+
+async def _confirm(message: str) -> bool:
+    from mobilerun.cli.base import safety
+
+    with redirect_stdout(sys.stderr):
+        if not await safety.confirm_prompt_async(message, default=False):
+            raise BillingConsentError("Cancelled.")
+    return True
 
 
 def billing_option(function: F) -> F:

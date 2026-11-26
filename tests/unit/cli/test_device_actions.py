@@ -87,25 +87,43 @@ def test_unsupported_is_a_click_error(monkeypatch):
     phone.close.assert_awaited_once()
 
 
+@pytest.mark.parametrize("args", [["get"], ["set", "text"]])
 @pytest.mark.parametrize(
-    ("args", "feature"),
-    [
-        (["input", "clipboard", "get"], "get_clipboard"),
-        (["input", "clipboard", "set", "text"], "set_clipboard"),
-        (["settings", "language", "set", "de-DE"], "set_language"),
-    ],
+    "target_args", [["emulator-5554"], ["http://ios.test", "--ios"]]
 )
-def test_cloud_only_environment_rejects_local_before_connect(
-    monkeypatch, args, feature
-):
-    from mobilerun.cli.devices.base import selection as environment
-    from mobilerun.core.devices.base import Device
+def test_clipboard_rejects_local_before_connect(
+    monkeypatch: pytest.MonkeyPatch, args: list[str], target_args: list[str]
+) -> None:
+    phone = Device()
+    get_clipboard = AsyncMock(wraps=phone.get_clipboard)
+    set_clipboard = AsyncMock(wraps=phone.set_clipboard)
+    monkeypatch.setattr(phone, "get_clipboard", get_clipboard)
+    monkeypatch.setattr(phone, "set_clipboard", set_clipboard)
+    connect = AsyncMock(return_value=phone)
+    monkeypatch.setattr(selection, "connect_target", connect)
 
+    result = CliRunner().invoke(
+        device, ["input", "clipboard", *args, "--device", *target_args]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "Clipboard commands require a cloud device ID." in result.stderr
+    assert "Traceback" not in result.output
+    connect.assert_not_called()
+    get_clipboard.assert_not_called()
+    set_clipboard.assert_not_called()
+
+
+def test_set_language_on_local_reports_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     connect = AsyncMock(return_value=Device())
-    monkeypatch.setattr(environment, "connect_target", connect)
-    result = CliRunner().invoke(device, [*args, "--device", "emulator-5554"])
+    monkeypatch.setattr(selection, "connect_target", connect)
+    result = CliRunner().invoke(
+        device, ["settings", "language", "set", "de-DE", "--device", "emulator-5554"]
+    )
     assert result.exit_code == 1
-    assert result.output.strip() == f"Error: Device doesn't support {feature}"
+    assert result.output.strip() == "Error: Device doesn't support set_language"
     connect.assert_awaited_once()
 
 
@@ -167,6 +185,9 @@ def test_cloud_only_environment_builds_typed_selected_phone(
     close.assert_awaited_once()
     if output:
         assert output in result.output
+    if method == "clipboard_set":
+        assert f"Clipboard set on {target}" in result.stdout
+        assert params["text"] not in result.output
 
 
 def test_location_prompts_for_device_before_coordinates(monkeypatch):
