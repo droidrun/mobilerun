@@ -143,8 +143,8 @@ def test_wrapper_operators_keep_outer_identity(monkeypatch, method, mode, select
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_workspace_push_uses_explicit_source_not_destination(monkeypatch, wrapped):
-    from mobilerun.clients.cloud import files
-    from mobilerun.core import workspace
+    from mobilerun import Workspace
+    from mobilerun.clients.cloud import client, files
 
     phone = CloudDevice(
         "phone",
@@ -163,7 +163,7 @@ def test_workspace_push_uses_explicit_source_not_destination(monkeypatch, wrappe
         clients.append((api_key, base_url, billing))
         return source
 
-    monkeypatch.setattr(workspace, "cloud_client", connect)
+    monkeypatch.setattr(client, "cloud_client", connect)
     download = AsyncMock(return_value=b"abc")
     monkeypatch.setattr(files, "download_file", download)
 
@@ -176,7 +176,7 @@ def test_workspace_push_uses_explicit_source_not_destination(monkeypatch, wrappe
     device = RecordingDevice(phone) if wrapped else phone
     assert (
         asyncio.run(
-            workspace.Workspace.push_file(
+            Workspace.push_file(
                 file,
                 device,
                 "/sdcard/image.png",

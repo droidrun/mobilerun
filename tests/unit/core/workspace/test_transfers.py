@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import subprocess
+import sys
 import traceback
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -13,9 +15,10 @@ import pytest
 from mobilerun_sdk import AsyncMobilerun
 
 from mobilerun import Workspace
+from mobilerun.clients.cloud import apps as cloud_apps
+from mobilerun.clients.cloud import client as cloud_connection
 from mobilerun.clients.cloud import files as cloud_files
 from mobilerun.clients.local import login_store
-from mobilerun.core import workspace
 from mobilerun.core.devices.android import AndroidDevice
 from mobilerun.core.devices.base import Device
 from mobilerun.core.devices.cloud import CloudDevice
@@ -24,6 +27,20 @@ from mobilerun.core.devices.components.wrapper import DeviceWrapper
 from mobilerun.core.devices.pool import DevicePool
 from mobilerun.errors import CloudPermissionDenied, DeviceOperationNotSupported
 from mobilerun.models import App, Billing, WorkspaceFile
+
+
+def test_workspace_import_keeps_cloud_adapters_private_and_lazy():
+    script = """
+import sys
+from mobilerun import Workspace
+
+workspace_module = sys.modules[Workspace.__module__]
+assert not hasattr(workspace_module, 'cloud_client')
+assert not hasattr(workspace_module, 'cloud_apps')
+assert not hasattr(workspace_module, 'cloud_files')
+assert 'mobilerun_sdk' not in sys.modules
+"""
+    subprocess.run([sys.executable, "-c", script], check=True)
 
 
 def test_catalog_pagination_mapping_and_delete(monkeypatch):
@@ -51,7 +68,7 @@ def test_catalog_pagination_mapping_and_delete(monkeypatch):
         calls.append((api_key, base_url, billing))
         return client
 
-    monkeypatch.setattr(workspace, "cloud_client", connect)
+    monkeypatch.setattr(cloud_connection, "cloud_client", connect)
     options = dict(
         api_key="source", base_url="https://source.test", billing=Billing.NO_COMMERCE
     )
@@ -78,7 +95,7 @@ def test_get_app_default_billing_and_client_cleanup_on_failure(monkeypatch):
         calls.append((api_key, base_url, billing))
         return client
 
-    monkeypatch.setattr(workspace, "cloud_client", connect)
+    monkeypatch.setattr(cloud_connection, "cloud_client", connect)
     assert asyncio.run(Workspace.get_app("a")) == App("one", "", "One", id="a")
     client.apps.retrieve.side_effect = RuntimeError("unavailable")
     with pytest.raises(RuntimeError, match="unavailable"):
@@ -90,7 +107,7 @@ def test_get_app_default_billing_and_client_cleanup_on_failure(monkeypatch):
 def test_workspace_upload_app_passes_overrides(monkeypatch):
     app = App("one", "1", "One", id="a")
     upload = AsyncMock(return_value=app)
-    monkeypatch.setattr(workspace.cloud_apps, "upload_app", upload)
+    monkeypatch.setattr(cloud_apps, "upload_app", upload)
     assert (
         asyncio.run(
             Workspace.upload_app(
@@ -122,17 +139,13 @@ def test_workspace_api_owns_client_and_downloads_into_directory(monkeypatch, tmp
     item = WorkspaceFile("id", "photo.jpg", "image/jpeg", 5, datetime.now(timezone.utc))
     client = AsyncMock()
     client.__aenter__.return_value = client
-    monkeypatch.setattr(workspace, "cloud_client", lambda *args, **kwargs: client)
     monkeypatch.setattr(
-        workspace.cloud_files, "upload_file", AsyncMock(return_value=item)
+        cloud_connection, "cloud_client", lambda *args, **kwargs: client
     )
-    monkeypatch.setattr(
-        workspace.cloud_files, "list_files", AsyncMock(return_value=[item])
-    )
-    monkeypatch.setattr(
-        workspace.cloud_files, "download_file", AsyncMock(return_value=b"image")
-    )
-    monkeypatch.setattr(workspace.cloud_files, "delete_file", AsyncMock())
+    monkeypatch.setattr(cloud_files, "upload_file", AsyncMock(return_value=item))
+    monkeypatch.setattr(cloud_files, "list_files", AsyncMock(return_value=[item]))
+    monkeypatch.setattr(cloud_files, "download_file", AsyncMock(return_value=b"image"))
+    monkeypatch.setattr(cloud_files, "delete_file", AsyncMock())
 
     assert (
         asyncio.run(Workspace.upload_file("photo.jpg", billing=Billing.NO_COMMERCE))
@@ -145,7 +158,7 @@ def test_workspace_api_owns_client_and_downloads_into_directory(monkeypatch, tmp
     assert result == tmp_path / "photo.jpg"
     assert result.read_bytes() == b"image"
     asyncio.run(Workspace.delete_file("id", billing=Billing.NO_COMMERCE))
-    workspace.cloud_files.delete_file.assert_awaited_once_with(
+    cloud_files.delete_file.assert_awaited_once_with(
         client, "id", billing=Billing.NO_COMMERCE
     )
     assert client.__aenter__.await_count == client.__aexit__.await_count == 4
@@ -155,8 +168,10 @@ def test_download_rejects_unknown_file(monkeypatch, tmp_path):
 
     client = AsyncMock()
     client.__aenter__.return_value = client
-    monkeypatch.setattr(workspace, "cloud_client", lambda *args, **kwargs: client)
-    monkeypatch.setattr(workspace.cloud_files, "list_files", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        cloud_connection, "cloud_client", lambda *args, **kwargs: client
+    )
+    monkeypatch.setattr(cloud_files, "list_files", AsyncMock(return_value=[]))
     with pytest.raises(FileNotFoundError):
         asyncio.run(
             Workspace.download_file("missing", tmp_path, billing=Billing.NO_COMMERCE)
@@ -249,8 +264,8 @@ def test_push_workspace_downloads_then_pushes(monkeypatch):
     download = AsyncMock(return_value=b"abc")
     client = AsyncMock()
     client.__aenter__.return_value = client
-    monkeypatch.setattr(workspace, "cloud_client", lambda *a, **k: client)
-    monkeypatch.setattr(workspace.cloud_files, "download_file", download)
+    monkeypatch.setattr(cloud_connection, "cloud_client", lambda *a, **k: client)
+    monkeypatch.setattr(cloud_files, "download_file", download)
     device = Device()
     device.push_file = AsyncMock(return_value="done")
     assert asyncio.run(Workspace.push_file(item, device, "/sdcard")) == "done"

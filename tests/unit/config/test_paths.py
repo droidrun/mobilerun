@@ -10,7 +10,7 @@ import sys
 from copy import deepcopy
 from enum import Enum
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import get_args
 
 import pytest
@@ -27,7 +27,14 @@ from mobilerun.macro.settings import MacroSettings
 from mobilerun.mcp.settings import MCPSettings
 from mobilerun.utils import paths
 from mobilerun.utils.paths import PathResolver
-from tests.support.paths import REPO_ROOT
+
+
+def test_resolve_still_finds_bundled_assets(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    asset = PathResolver.resolve(
+        "assets/prompts/devices/expect.jinja2", must_exist=True
+    )
+    assert asset.is_file()
 
 
 def test_legacy_prompt_handles_addon_without_spec(tmp_path, monkeypatch):
@@ -51,23 +58,35 @@ def test_legacy_prompt_propagates_other_finder_errors(monkeypatch):
         paths.PathResolver.resolve("config/prompts/missing.jinja2")
 
 
-def test_v8_finds_split_addon_assets_without_importing(tmp_path, monkeypatch):
+@pytest.mark.parametrize("bundle_location", ["base", "addon", "base_shadowed"])
+def test_v8_preserves_bundled_prompt_resolution(tmp_path, monkeypatch, bundle_location):
+    base = tmp_path / "base"
     addon = tmp_path / "mobilerun_agents"
-    bundled = addon / "assets/prompts/split.jinja2"
+    asset = "assets/prompts/split.jinja2"
+    legacy = "config/prompts/split.jinja2"
+    bundled = (addon if bundle_location == "addon" else base) / asset
     bundled.parent.mkdir(parents=True)
-    bundled.write_text("split")
+    bundled.touch()
+    addon.mkdir(exist_ok=True)
     (addon / "__init__.py").write_text("raise AssertionError('unexpected import')")
+    if bundle_location == "base_shadowed":
+        shadow = tmp_path / asset
+        shadow.parent.mkdir(parents=True)
+        shadow.touch()
+    monkeypatch.setattr(PathResolver, "get_project_root", lambda: base)
     monkeypatch.delitem(sys.modules, "mobilerun_agents", raising=False)
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.chdir(tmp_path)
     config = {
         "_version": 7,
-        "agent": {"fast": {"system_prompt": "config/prompts/split.jinja2"}},
+        "agent": {"fast": {"system_prompt": legacy, "user_prompt": legacy}},
     }
-    assert (
-        migrate(config)["agent"]["fast"]["system_prompt"]
-        == "assets/prompts/split.jinja2"
-    )
+
+    assert PathResolver.resolve(legacy, must_exist=True) == bundled
+    migrated = migrate(config)["agent"]["fast"]
+    for key in ("system_prompt", "user_prompt"):
+        assert PathResolver.resolve(migrated[key], must_exist=True) == bundled
+        assert migrated[key] == (asset if bundle_location == "base" else legacy)
 
 
 @pytest.mark.parametrize("missing", ["mobilerun_agents", "other_dependency"])
@@ -88,48 +107,17 @@ def test_blocked_addon_is_treated_as_missing_only_for_its_own_name(
         assert paths.PathResolver.bundled_asset(prompt) is None
 
 
-@pytest.mark.parametrize("addon_present", [True, False])
-def test_v8_migrates_only_bundled_paths_and_is_idempotent(
-    tmp_path, monkeypatch, addon_present
-):
-
+def test_v8_leaves_missing_prompt_unchanged_and_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    addon = tmp_path / "addon"
-    if addon_present:
-        (addon / "assets/prompts/fast_agent").mkdir(parents=True)
-        (addon / "assets/prompts/fast_agent/system.jinja2").write_text("prompt")
-        (addon / "assets/app_cards").mkdir(parents=True)
-
-    monkeypatch.setattr(
-        paths,
-        "find_spec",
-        lambda name: (
-            SimpleNamespace(submodule_search_locations=[str(addon)])
-            if name == "mobilerun_agents" and addon_present
-            else None
-        ),
-    )
+    monkeypatch.setattr(PathResolver, "get_project_root", lambda: tmp_path)
+    monkeypatch.setattr(paths, "find_spec", lambda name: None)
     config = {
         "_version": 7,
-        "agent": {
-            "fast_agent": {
-                "system_prompt": "config/prompts/fast_agent/system.jinja2",
-                "user_prompt": "config/prompts/custom.jinja2",
-            },
-            "app_cards": {"app_cards_dir": "config/app_cards"},
-        },
+        "agent": {"fast_agent": {"user_prompt": "config/prompts/custom.jinja2"}},
     }
     result = migrate(config)
     assert (
-        result["agent"]["fast_agent"]["system_prompt"]
-        == ("assets" if addon_present else "config")
-        + "/prompts/fast_agent/system.jinja2"
-    )
-    assert (
         result["agent"]["fast_agent"]["user_prompt"] == "config/prompts/custom.jinja2"
-    )
-    assert result["agent"]["app_cards"]["app_cards_dir"] == (
-        "assets/app_cards" if addon_present else "config/app_cards"
     )
     assert migrate(deepcopy(result)) == result
 
@@ -149,32 +137,37 @@ def test_v6_chain_keeps_manager_auto_selection():
 
 def test_migration_preserves_cwd_override(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    local = tmp_path / "config/app_cards"
-    local.mkdir(parents=True)
+    prompt = "config/prompts/system.jinja2"
+    local = tmp_path / prompt
+    local.parent.mkdir(parents=True)
+    local.touch()
+    package = tmp_path / "package"
+    bundled = package / "assets/prompts/system.jinja2"
+    bundled.parent.mkdir(parents=True)
+    bundled.touch()
+    monkeypatch.setattr(PathResolver, "get_project_root", lambda: package)
     config = {
         "_version": 7,
-        "agent": {"app_cards": {"app_cards_dir": "config/app_cards"}},
+        "agent": {"fast_agent": {"system_prompt": prompt}},
     }
-    assert migrate(config)["agent"]["app_cards"]["app_cards_dir"] == "config/app_cards"
+    assert migrate(config)["agent"]["fast_agent"]["system_prompt"] == prompt
 
 
-def test_example_omits_obsolete_bundled_app_card_directory():
-    example = REPO_ROOT / "assets/examples/config_example.yaml"
-    data = yaml.safe_load(example.read_text())
-    assert "app_cards" not in data.get("agent", {})
+def test_legacy_app_card_path_is_not_redirected(tmp_path, monkeypatch):
+    addon = tmp_path / "mobilerun_agents"
+    (addon / "assets/app_cards").mkdir(parents=True)
+    (addon / "__init__.py").touch()
+    monkeypatch.delitem(sys.modules, "mobilerun_agents", raising=False)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    legacy_path = "config/app_cards"
+    config = {
+        "_version": 7,
+        "agent": {"app_cards": {"app_cards_dir": legacy_path}},
+    }
 
-
-def test_existing_app_card_settings_are_preserved(tmp_path):
-    path = tmp_path / "config.yaml"
-    cards = {"enabled": True, "app_cards_dir": "my-cards"}
-    path.write_text(
-        yaml.safe_dump({"_version": CURRENT_VERSION, "agent": {"app_cards": cards}})
-    )
-
-    config = ConfigLoader.load(str(path))
-
-    assert config.to_dict()["agent"]["app_cards"] == cards
-    assert yaml.safe_load(path.read_text())["agent"]["app_cards"] == cards
+    assert PathResolver.resolve(legacy_path) == tmp_path / legacy_path
+    assert migrate(config)["agent"]["app_cards"]["app_cards_dir"] == legacy_path
 
 
 def test_unversioned_config_migrates_and_preserves_original(tmp_path):

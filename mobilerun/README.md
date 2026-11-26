@@ -12,7 +12,7 @@ See the [demos](../tests/demos/README.md) for source-checkout examples and costs
 | Folder | Purpose |
 | --- | --- |
 | [addons/](addons/README.md) | Optional add-on discovery. |
-| [core/](core/README.md) | Device and state interfaces. |
+| [core/](core/README.md) | Device, state, operator, and account-resource APIs. |
 | [models/](models/) | Shared app, billing, credential and result value types; no IO or SDK. |
 | [core/devices/](core/devices/README.md) | Device implementations. |
 | [core/devices/base.py](core/devices/base.py) | Device protocol and shared mixin. |
@@ -38,18 +38,23 @@ See the [demos](../tests/demos/README.md) for source-checkout examples and costs
 | [cli/](cli/README.md) | Root CLI and shared CLI helpers. |
 | [cli/webhook/](cli/webhook/README.md) | Register, list, inspect, ping, and delete webhook endpoints. |
 | [macro/](macro/README.md) | Recording and guarded replay. |
+| [mcp/](mcp/README.md) | MCP configuration and installation. |
 | [sandbox/](sandbox/README.md) | Sandbox apps and tasks. |
 | [skills/](skills/README.md) | Bundled coding-agent skills. |
 | `mobilerun-agents` (separate package) | Optional LLM agents, integrations and agent commands. |
 
 ## Where code goes
 
-Shared `errors/`, `models/`, `utils/`, `cli/`, `config/`, and `logs/` serve
-core and clients. Features (`macro/`, `mcp/`, `skills/`, `sandbox/`) keep their
-own `cli/`, `errors.py`, `models.py`, `settings.py`, and `utils.py` inside
-their folders, not in shared packages. Features may import shared code, core,
-and clients; core may import clients; clients never import core or the root
-package; shared code never imports features.
+**Could someone delete this folder and still use the rest of Mobilerun?**
+If yes, it belongs in an optional feature (`sandbox/`,
+`mcp/`, `macro/`, `skills/`); if not, put it in `core/` or a shared package.
+For example, `sandbox/` is removable; `core/webhooks/` is not, because the
+webhook CLI and sandbox both use it. In `mobilerun/`, `core/` holds domain
+objects: devices, operators, state, credentials, proxies, numbers, mailboxes,
+webhooks, workspace, and extensions. `models/`, `clients/`, `errors/`, `utils/`,
+`config/`, and `logs/` supply shared building blocks. Phone behavior lives in
+`core/devices/` and its components; account-wide resources live in their own
+core folders or on `Workspace`. See the [topic map](core/README.md#topic-map).
 
 | New code | Location |
 | --- | --- |
@@ -91,18 +96,18 @@ proxy with `await replacement.bind(phone, force=True)`. Operators support constr
 per-call selection; they are separate from proxy binding.
 
 ```text
-shared base: models, core, clients, config, utils, errors, logs
-    |             |              |
-    v             v              v
-  macro/       sandbox/        skills/    (independent of one another)
-    \             |              /
-     +------> mobilerun-agents <-----+
+Each arrow points from the importer to a dependency it may import.
 
-Webhook calls: cli/webhook/ -> core/webhooks/ -> clients/cloud/webhooks.py
-Feature CLIs register through `mobilerun.cli` distribution entry points.
+sandbox/, mcp/, macro/, skills/ -> core/, clients/, shared packages
+core/                           -> clients/, shared packages
+cli/                            -> core/, clients/, shared packages
+
+Shared packages: models/, config/, utils/, errors/, logs/
+The root CLI loads feature commands only via mobilerun.cli entry points.
+No feature imports another feature or the mobilerun-agents add-on.
 ```
 
-Arrows show permitted use, not a requirement to import every package. Shared base packages do not import features. Features do not import each other or the optional agent add-on. Feature CLI code may import the shared `cli/base/`; the root CLI discovers features without importing them.
+Shared packages do not import features. Clients do not import core or the root package. Features keep their own CLI, errors, models, settings, and utilities. They may use `cli/base/` and `cli/devices/base/`, but not other shared CLI modules.
 
 ## Operators
 

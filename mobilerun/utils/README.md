@@ -15,7 +15,7 @@ Standalone helpers for coordinates, images, verification codes and timestamps.
 | `codes.py` | Verification code extraction and polling |
 | `timestamps.py` | API timestamp formatting |
 | `redaction.py` | `secret_scope` redacts sensitive log values; `mask_url` preserves HTTP(S) hosts and paths while dropping userinfo and fragments and masking query values. |
-| `paths.py`, `prompts.py` | Resolve package assets and load prompts. Legacy `config/prompts` and `config/app_cards` paths can read `mobilerun_agents/assets` without importing the add-on. |
+| `paths.py`, `prompts.py` | Resolve package paths and load prompts. Legacy `config/prompts` paths can read `mobilerun_agents/assets/prompts` without importing the add-on. |
 
 Device-facing helpers live in `clients/local/`.
 

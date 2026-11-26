@@ -59,11 +59,8 @@ class PathResolver:
 
     @staticmethod
     def bundled_asset(path: Path) -> Path | None:
-        """Find a legacy prompt or app card without importing the optional add-on."""
-        if (
-            path.parts[:2] not in {("config", "prompts"), ("config", "app_cards")}
-            or ".." in path.parts
-        ):
+        """Find a legacy prompt without importing the optional add-on."""
+        if path.parts[:2] != ("config", "prompts") or ".." in path.parts:
             return None
         asset = Path("assets", *path.parts[1:])
         candidate = PathResolver.get_project_root() / asset

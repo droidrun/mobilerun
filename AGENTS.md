@@ -30,16 +30,26 @@ Shared core must not import agents or feature packages. The intended boundaries
 are checked in `tests/unit/architecture/test_layers.py`. The agent-required
 dependency test (`tests/unit/test_agent_required_dependencies.py`) lives in the
 separate `mobilerun-agents` repository. The CLI entry point has a special role; see the boundary tests for exceptions.
-The v008 migration and legacy path resolver locate `mobilerun_agents` assets without importing the add-on.
+The v008 migration and legacy path resolver locate `mobilerun_agents` prompt assets without importing the add-on.
 
 ## Where code goes
 
-Shared `errors/`, `models/`, `utils/`, `cli/`, `config/`, and `logs/` serve
-core and clients. Features (`macro/`, `mcp/`, `skills/`, `sandbox/`) keep their
-own CLI, errors, models, settings, and utilities inside their folders. Features
-may import shared code, core, and clients; core may import clients; clients
-never import core or the root package; shared code never imports features.
-Register feature CLI groups via `mobilerun.cli` entry points in `pyproject.toml`.
+**Could someone delete this folder and still use the rest of Mobilerun?**
+If yes, it belongs in an optional feature (`sandbox/`,
+`mcp/`, `macro/`, `skills/`); if not, put it in `core/` or a shared package.
+For example, `sandbox/` is removable; `core/webhooks/` is not, because the
+webhook CLI and sandbox both use it. In `mobilerun/`, `core/` holds domain
+objects: devices, operators, state, credentials, proxies, numbers, mailboxes,
+webhooks, workspace, and extensions. `models/`, `clients/`, `errors/`, `utils/`,
+`config/`, and `logs/` supply shared building blocks. Phone behavior lives in
+`core/devices/` and its components; account-wide resources live in their own
+core folders or on `Workspace`. See the [topic map](mobilerun/core/README.md#topic-map).
+
+Features keep their own CLI, errors, models, settings, and utilities in their
+folders. Shared packages (including `cli/`) do not import features. Features do
+not import each other or the agent add-on. Core can use clients; clients do not
+import core or the root package. Register feature CLI groups via
+`mobilerun.cli` entry points in `pyproject.toml`.
 
 Core subpackages (`core/credentials/`, `core/devices/`, `core/webhooks/`, …)
 are part of core, not features: they never get their own `settings.py`,

@@ -1,7 +1,9 @@
 """Mobilerun CLI root with lazily loaded command groups."""
 
 import logging
+import sys
 from importlib import import_module, metadata
+from importlib.util import find_spec
 from typing import Any, cast
 
 import click
@@ -58,6 +60,7 @@ _COMMANDS = {
 
 # Keep hidden commands addressable without importing command modules at startup.
 _HIDDEN_COMMANDS: frozenset[str] = frozenset()
+_REMOVABLE_FEATURES = frozenset({"sandbox", "mcp", "macro", "skills"})
 
 
 def _run_agent_macro(provider: str | None, model: str | None, **options: Any) -> None:
@@ -74,6 +77,27 @@ def reserved_command_names() -> set[str]:
     return set(_COMMANDS)
 
 
+def _entry_package_exists(entry: metadata.EntryPoint) -> bool:
+    # Probe only the feature package, not its command module or dependencies.
+    if plugins.distribution_name(entry).lower() != "mobilerun":
+        return True
+    module = getattr(entry, "module", None)
+    if not module:
+        return True
+    parts = module.split(".", 2)
+    if len(parts) < 2 or parts[0] != "mobilerun" or parts[1] not in _REMOVABLE_FEATURES:
+        return True
+    package = ".".join(parts[:2])
+    if package in sys.modules:
+        return sys.modules[package] is not None
+    try:
+        return find_spec(package) is not None
+    except ModuleNotFoundError as error:
+        if error.name != package:
+            raise
+        return False
+
+
 class LazyGroup(MenuGroup):
     def _plugin_commands(self, ctx: click.Context) -> dict:
         if "cli_plugin_commands" in ctx.meta:
@@ -85,6 +109,11 @@ class LazyGroup(MenuGroup):
                 "Skipping plugin command %s: built-in wins", name
             )
             del entries[name]
+        entries = {
+            name: entry
+            for name, entry in entries.items()
+            if _entry_package_exists(entry)
+        }
         ctx.meta["cli_plugin_commands"] = entries
         return entries
 
@@ -112,13 +141,20 @@ class LazyGroup(MenuGroup):
 
     def get_epilog(self, ctx: click.Context) -> str | None:
         epilog = super().get_epilog(ctx)
-        if not epilog or "agent" in self._plugin_commands(ctx):
+        if not epilog:
             return epilog
-        return "; ".join(
-            part
-            for part in epilog.split("; ")
-            if not part.startswith("mobilerun agent ")
-        )
+        commands = self._plugin_commands(ctx)
+        if "agent" not in commands:
+            epilog = "; ".join(
+                part
+                for part in epilog.split("; ")
+                if not part.startswith("mobilerun agent ")
+            )
+        if "skills" not in commands:
+            epilog = epilog.replace(
+                "mobilerun skills install", "mobilerun device --help"
+            )
+        return epilog
 
     def shell_complete(
         self, ctx: click.Context, incomplete: str

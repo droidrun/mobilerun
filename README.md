@@ -102,7 +102,7 @@ asyncio.run(main())
 - **Tracing:** Inspect runs with Arize Phoenix, Langfuse, logs and saved trajectories.
 - **Structured output:** Return typed results from tasks.
 - **Webhooks:** Send [sandbox function results](mobilerun/sandbox/README.md#send-a-function-result-to-a-webhook) to an HTTPS receiver.
-- **App cards and custom tools:** The `mobilerun-agents` add-on supports app-specific guidance and custom agent actions; app guidance is also available in the skills repository.
+- **Custom tools:** The `mobilerun-agents` add-on supports custom agent actions.
 - **Docker:** The repository's [Dockerfile](Dockerfile) builds a container whose entrypoint is the Mobilerun CLI.
 
 ### LLM providers

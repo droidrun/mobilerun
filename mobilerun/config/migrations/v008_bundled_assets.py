@@ -1,8 +1,7 @@
-"""Migration v8: relocate references to bundled runtime assets.
+"""Migration v8: relocate references to prompts bundled in the base package.
 
-When the add-on is absent, leave legacy paths unchanged rather than guessing
-which paths are bundled. If the add-on is installed later, PathResolver can
-still resolve legacy ``config/prompts`` and ``config/app_cards`` paths.
+Leave add-on-only prompts under ``config/prompts`` so PathResolver can still
+find them in the add-on.
 """
 
 from pathlib import Path
@@ -16,18 +15,23 @@ READ_TIME_ONLY = True
 
 
 def migrate(config: dict[str, Any]) -> dict[str, Any]:
-    """Resolve legacy paths for an in-memory config only."""
+    """Resolve legacy prompt paths for an in-memory config only."""
     agent = config.get("agent")
     if not isinstance(agent, dict):
         return config
     for section in agent.values():
         if not isinstance(section, dict):
             continue
-        for key in ("system_prompt", "user_prompt", "app_cards_dir"):
+        for key in ("system_prompt", "user_prompt"):
             value = section.get(key)
             if not isinstance(value, str):
                 continue
             path = Path(value)
-            if not path.exists() and PathResolver.bundled_asset(path) is not None:
-                section[key] = str(Path("assets").joinpath(*path.parts[1:]))
+            if path.parts[:2] != ("config", "prompts") or ".." in path.parts:
+                continue
+            asset = Path("assets", *path.parts[1:])
+            if (PathResolver.get_project_root() / asset).exists() and (
+                PathResolver.resolve(path) == PathResolver.resolve(asset)
+            ):
+                section[key] = str(asset)
     return config
