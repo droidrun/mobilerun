@@ -3,8 +3,10 @@
 !mobilerun
 !pyproject.toml
 !hatch_build.py
+!SKILLS-RECORD
 !uv.lock
 !README.md
 
 !skills
 !skills/**
+skills/.git

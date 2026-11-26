@@ -65,6 +65,10 @@ def test_skills_wheel_and_sdist_include_full_tree_and_installed_cli(tmp_path):
         assert actual == files
         assert "mobilerun-framework/SKILL.md" in actual
     with tarfile.open(next(dist.glob("*.tar.gz"))) as archive:
+        assert any(
+            member.isfile() and member.name.partition("/")[2] == "SKILLS-RECORD"
+            for member in archive.getmembers()
+        )
         actual = {}
         for member in archive.getmembers():
             if member.isfile() and "/skills/" in member.name:
@@ -154,6 +158,52 @@ def test_untracked_skill_files_stay_out_of_release_archives(tmp_path):
         assert (
             "mobilerun/assets/skills/example/private-notes.md" not in wheel.namelist()
         )
+
+
+@pytest.mark.parametrize(
+    "missing_entry", [False, True], ids=["complete", "missing-file"]
+)
+def test_wheel_builds_from_skills_record_without_git_metadata(
+    tmp_path: Path, missing_entry: bool
+) -> None:
+    """A Docker-style source tree bundles only the recorded skills files."""
+    pytest.importorskip("hatchling")
+    for name in ("pyproject.toml", "hatch_build.py", "README.md"):
+        shutil.copy(REPO_ROOT / name, tmp_path)
+    (tmp_path / "mobilerun").mkdir()
+    (tmp_path / "mobilerun/__init__.py").touch()
+    example = tmp_path / "skills/example"
+    (example / "references").mkdir(parents=True)
+    (example / "SKILL.md").write_text("Example skill")
+    (example / "references/guide.md").write_text("Example guide")
+    (example / "private-notes.md").write_text("local only")
+    record = b"example/SKILL.md\0example/references/guide.md\0"
+    if missing_entry:
+        record += b"example/removed.md\0"
+    (tmp_path / "SKILLS-RECORD").write_bytes(record)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "hatchling", "build", "-t", "wheel"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    if missing_entry:
+        assert result.returncode != 0
+        assert "SKILLS-RECORD lists a missing file: example/removed.md" in result.stderr
+        return
+
+    assert result.returncode == 0, result.stderr
+    prefix = "mobilerun/assets/skills/"
+    with ZipFile(next((tmp_path / "dist").glob("*.whl"))) as wheel:
+        assert {
+            name.removeprefix(prefix): wheel.read(name)
+            for name in wheel.namelist()
+            if name.startswith(prefix)
+        } == {
+            "example/SKILL.md": b"Example skill",
+            "example/references/guide.md": b"Example guide",
+        }
 
 
 def test_skills_install_and_uninstall(tmp_path, monkeypatch):

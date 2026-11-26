@@ -2,6 +2,7 @@ dist/
 build/
 /cloud-screenshot.png
 /local-screenshot.png
+/SKILLS-RECORD
 # Python bytecode files
 __pycache__/
 *.py[cod]

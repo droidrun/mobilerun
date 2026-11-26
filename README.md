@@ -105,6 +105,16 @@ asyncio.run(main())
 - **Custom tools:** The `mobilerun-agents` add-on supports custom agent actions.
 - **Docker:** The repository's [Dockerfile](Dockerfile) builds a container whose entrypoint is the Mobilerun CLI.
 
+### Build the Docker image
+
+Run this from the repository root every time you build the image:
+
+```bash
+git submodule update --init && git -C skills ls-files -z > SKILLS-RECORD && docker build -t mobilerun .
+```
+
+This refreshes the list of tracked skills before Docker builds the wheel without Git metadata, so submodule updates are reflected in the image.
+
 ### LLM providers
 
 The configuration wizard supports OpenAI, Anthropic, Gemini, xAI, Ollama, MiniMax, ZAI and OpenAI-compatible endpoints such as OpenRouter, LM Studio and vLLM. The CLI also lists DeepSeek. Provider credentials and usage charges depend on your selection. Anthropic and DeepSeek support are provided by the required `mobilerun-agents` add-on; no provider extra is needed.

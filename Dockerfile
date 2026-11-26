@@ -19,7 +19,10 @@ WORKDIR /mobilerun
 
 COPY --chown=mobilerun:mobilerun . .
 
-RUN uv sync --locked --no-dev --no-editable --no-cache
+RUN if [ ! -s SKILLS-RECORD ]; then \
+        echo >&2 'Missing SKILLS-RECORD. Run: git submodule update --init && git -C skills ls-files -z > SKILLS-RECORD && docker build -t mobilerun .'; \
+        exit 1; \
+    fi && uv sync --locked --no-dev --no-editable --no-cache
 
 ENTRYPOINT [".venv/bin/mobilerun"]
 

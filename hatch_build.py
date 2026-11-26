@@ -12,25 +12,32 @@ class CustomBuildHook(BuildHookInterface):
     def initialize(self, version, build_data):
         root = Path(self.root) / "skills"
         manifest = Path(self.root) / "SKILLS-RECORD"
-        if (root / ".git").exists():
+        has_git = (root / ".git").exists()
+        if has_git:
             tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root)
-        elif manifest.is_file() and manifest.with_name("PKG-INFO").is_file():
-            # Rebuild from the sdist without relying on Git or a directory scan.
+        elif manifest.is_file():
+            # The sdist and Docker context supply the same tracked-file record.
             tracked = manifest.read_bytes()
         else:
             raise RuntimeError("Missing skills: run git submodule update --init")
         names = [Path(os.fsdecode(name)) for name in tracked.split(b"\0") if name]
-        files = [
-            root / name
-            for name in names
-            if not name.is_absolute()
-            and not any(
+        files = []
+        for name in names:
+            if name.is_absolute() or any(
                 part.startswith(".") or part in {"tests", "__pycache__"}
                 for part in name.parts
-            )
-            and (root / name).resolve() == root.resolve() / name
-            and (root / name).is_file()
-        ]
+            ):
+                continue
+            path = root / name
+            if path.resolve() != root.resolve() / name:
+                continue
+            if path.is_file():
+                files.append(path)
+            elif not has_git:
+                raise RuntimeError(
+                    f"SKILLS-RECORD lists a missing file: {name}. "
+                    "Regenerate the record for Docker or rebuild the sdist."
+                )
         if not any(path.name == "SKILL.md" for path in files):
             raise RuntimeError("Missing skills: run git submodule update --init")
         destination = (
