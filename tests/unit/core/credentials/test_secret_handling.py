@@ -29,6 +29,7 @@ from mobilerun.core.devices.pool import DevicePool
 from mobilerun.core.devices.recording import RecordingDevice
 from mobilerun.core.devices.stealth import StealthDevice
 from mobilerun.core.extensions import Extension
+from mobilerun.core.state.options import StateProviderOptions, android_state_provider
 from mobilerun.errors import (
     CredentialNotFoundError,
     DeviceError,
@@ -421,6 +422,164 @@ def test_secret_types_only_when_focused_and_editable():
         device._input_text_raw = AsyncMock(return_value=True)
         assert await device._input_secret("demo-user")
         device._input_text_raw.assert_awaited_once_with("demo-user")
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("app_nodes", "overrides", "types_secret"),
+    [
+        pytest.param([{}], {}, True, id="edit-text-without-editable-flag"),
+        pytest.param(
+            [{}], {"focusedElement": {}, "isEditable": True}, True, id="empty-summary"
+        ),
+        pytest.param([{"isFocused": False}], {}, False, id="ime-only"),
+        pytest.param([{}, {}], {}, False, id="ambiguous-focus"),
+        pytest.param([{"packageName": "com.other"}], {}, False, id="other-package"),
+        pytest.param([{"isEnabled": False}], {}, False, id="disabled"),
+        pytest.param([{}], {"keyboardVisible": False}, False, id="keyboard-hidden"),
+        pytest.param([{}], {"degraded": True}, False, id="degraded-cache"),
+        pytest.param(
+            [], {"degraded": True, "isEditable": True}, True, id="degraded-strict"
+        ),
+        pytest.param([{"windowId": 2}], {}, False, id="same-package-other-window"),
+        pytest.param([{"windowId": None}], {}, False, id="unknown-node-window"),
+        pytest.param([{}], {"rootWindowId": None}, False, id="unknown-root-window"),
+        pytest.param(
+            [{}], {"omitWindowId": True}, True, id="single-window-without-ids"
+        ),
+        pytest.param(
+            [
+                {},
+                {
+                    "className": "android.widget.FrameLayout",
+                    "isFocused": False,
+                    "children": [{"className": "android.widget.TextView"}],
+                },
+            ],
+            {"omitWindowId": True},
+            False,
+            id="two-same-package-roots-without-ids",
+        ),
+        pytest.param(
+            [
+                {
+                    "className": "android.widget.LinearLayout",
+                    "isFocused": False,
+                    "children": [
+                        {
+                            "className": "android.widget.EditText",
+                            "packageName": "com.app",
+                            "isEnabled": True,
+                            "isFocused": True,
+                        }
+                    ],
+                },
+                {
+                    "className": "android.view.View",
+                    "resourceId": "com.app:id/overlay",
+                    "isFocused": False,
+                },
+            ],
+            {"omitWindowId": True},
+            True,
+            id="windowless-chrome-shape",
+        ),
+        pytest.param([{"className": "android.widget.Button"}], {}, False, id="button"),
+        pytest.param(
+            [{"className": "custom.NotAutoCompleteTextView"}],
+            {},
+            False,
+            id="autocomplete-lookalike",
+        ),
+        pytest.param([{"isEditable": False}], {}, False, id="explicitly-not-editable"),
+        pytest.param(
+            [{"isEditable": True, "className": "custom.Input"}],
+            {},
+            True,
+            id="explicitly-editable",
+        ),
+        pytest.param(
+            [{"className": "android.widget.AutoCompleteTextView"}],
+            {},
+            True,
+            id="autocomplete-without-editable-flag",
+        ),
+        pytest.param(
+            [{}], {"omitPackage": True}, False, id="missing-foreground-package"
+        ),
+    ],
+)
+def test_secret_input_checks_raw_app_focus(
+    app_nodes: list[dict[str, object]], overrides: dict[str, object], types_secret: bool
+) -> None:
+    async def run() -> None:
+        device = MemoryDevice()
+        device._set_state_provider(
+            android_state_provider(device, StateProviderOptions())
+        )
+        device._get_ui_tree = AsyncMock(
+            return_value={
+                "device_context": {"screen_bounds": {"width": 100, "height": 100}},
+                "phone_state": {
+                    **(
+                        {}
+                        if overrides.get("omitPackage")
+                        else {"packageName": "com.app"}
+                    ),
+                    "focusedElement": overrides.get(
+                        "focusedElement", {"className": "android.widget.FrameLayout"}
+                    ),
+                    "keyboardVisible": overrides.get("keyboardVisible", True),
+                    "isEditable": overrides.get("isEditable", False),
+                },
+                "a11y_tree": {
+                    "className": "android.widget.FrameLayout",
+                    "packageName": "com.app",
+                    **(
+                        {}
+                        if overrides.get("omitWindowId")
+                        else {"windowId": overrides.get("rootWindowId", 1)}
+                    ),
+                    "children": [
+                        {
+                            "className": "android.widget.EditText",
+                            "packageName": "com.app",
+                            **(
+                                {} if overrides.get("omitWindowId") else {"windowId": 1}
+                            ),
+                            "isEnabled": True,
+                            "isFocused": True,
+                            **node,
+                        }
+                        for node in app_nodes
+                    ],
+                },
+                "ime_tree": {
+                    "className": "android.widget.FrameLayout",
+                    # Package match alone must not let an IME node count.
+                    "packageName": "com.app",
+                    "windowId": 1,
+                    "isEnabled": True,
+                    "isFocused": True,
+                },
+                **(
+                    {"degraded": True, "snapshotAgeMs": 500}
+                    if overrides.get("degraded")
+                    else {}
+                ),
+            }
+        )
+        vault = DictCredentials({"com.app": {"demo": {"password": "demo-value"}}})
+        await vault.bind(device)
+        if types_secret:
+            await vault.type_field("com.app", "password", name="demo")
+            assert device.inputs == ["demo-value"]
+        else:
+            with pytest.raises(NoFocusedInput):
+                await vault.type_field("com.app", "password", name="demo")
+            assert device.inputs == []
+        device._get_ui_tree.assert_awaited_once()
 
     asyncio.run(run())
 

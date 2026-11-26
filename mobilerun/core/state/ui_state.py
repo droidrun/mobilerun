@@ -39,6 +39,7 @@ class UIState:
         self.formatted_text = formatted_text
         self.focused_text = focused_text
         self.phone_state = phone_state
+        self._has_single_focused_app_node: bool = False
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.use_normalized = use_normalized

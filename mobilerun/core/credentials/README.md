@@ -28,8 +28,14 @@ Alphanumeric secrets are literal-only.
 It does not mask a numeric substring inside a longer date or joined ID: `12/27`
 matches `expires 12 / 27.` but not `2026/12/27`. Other reformattings are not covered.
 
-Before typing, the device refreshes its state and requires a focused editable
-field. Providers that cannot report focus and editability, including
+Before typing, the device refreshes its state and checks for a focused editable
+field. If Android's focus summary does not show one, typing is allowed only when
+the keyboard is visible and a fresh app tree reports exactly one enabled, focused
+node in the foreground app's primary window. The node must report editability or,
+if that flag is absent, have an editable widget class. When a compact snapshot
+omits window IDs, the fallback requires an unambiguous foreground app tree.
+Degraded snapshots and the separate keyboard tree cannot authorize the fallback.
+Providers that cannot report focus and editability, including
 screenshot-only providers, reject secret input with `DeviceOperationNotSupported`.
 
 The focus check and secret typing share a task-reentrant input-operation lock on

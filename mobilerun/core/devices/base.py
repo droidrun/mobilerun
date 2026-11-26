@@ -389,7 +389,8 @@ class Device:
     async def _input_secret(self, value: str) -> bool:
         with secret_scope(value):
             try:
-                phone_state = (await self.state.refresh()).phone_state
+                state = await self.state.refresh()
+                phone_state = state.phone_state
                 if (
                     not isinstance(phone_state, dict)
                     or "focusedElement" not in phone_state
@@ -398,10 +399,15 @@ class Device:
                     raise DeviceOperationNotSupported(
                         "Secret input requires a state provider that reports focused editable fields"
                     )
-                if (
-                    not isinstance(phone_state.get("focusedElement"), dict)
-                    or not phone_state["focusedElement"]
-                    or not phone_state["isEditable"]
+                focused = phone_state["focusedElement"]
+                focused_editable = (
+                    isinstance(focused, dict)
+                    and bool(focused)
+                    and phone_state["isEditable"] is True
+                )
+                if not focused_editable and not (
+                    phone_state.get("keyboardVisible") is True
+                    and getattr(state, "_has_single_focused_app_node", False) is True
                 ):
                     raise NoFocusedInput(
                         "No text field is focused; tap the field before typing a credential"

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import copy, deepcopy
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from mobilerun.clients.portal.state_fetch import fetch_state_with_retry
 from mobilerun.config.settings import get_settings
@@ -27,6 +27,63 @@ if TYPE_CHECKING:
     from mobilerun.core.state.filters import TreeFilter
     from mobilerun.core.state.formatters import TreeFormatter
     from mobilerun.core.state.options import VisionResizePolicy
+
+
+def _has_single_focused_app_node(tree: dict[str, Any] | None, package: str) -> bool:
+    """Find a single enabled, editable focus in the primary app window."""
+    if not tree or tree.get("packageName") != package:
+        return False
+    window = tree.get("windowId")
+    if window is None:
+        # Portal appends additional window roots as direct children. On compact
+        # snapshots, a resource-identified leaf is not another window branch;
+        # multiple other branches cannot reliably be assigned to one window.
+        branches = [
+            child
+            for child in tree.get("children") or []
+            if child.get("packageName") in (package, None, "")
+            and (child.get("children") or not child.get("resourceId"))
+        ]
+        if len(branches) > 1 or any(
+            not child.get("resourceId")
+            and child.get("className") == tree.get("className")
+            for child in branches
+        ):
+            return False
+    elif type(window) is not int or window < 0:
+        return False
+    pending = [tree]
+    focused = None
+    while pending:
+        node = pending.pop()
+        node_window = node.get("windowId")
+        if type(node_window) is int and node_window >= 0 and node_window != window:
+            # Portal may append additional window roots under the primary root.
+            if window is None and node.get("packageName") in (package, None, ""):
+                return False
+            continue
+        if (
+            node.get("isFocused") is True
+            and node.get("isEnabled") is True
+            and node.get("packageName") == package
+        ):
+            if (
+                focused is not None
+                or node_window != window
+                or type(node_window) is not type(window)
+            ):
+                return False
+            focused = node
+        pending.extend(node.get("children") or [])
+    if focused is None:
+        return False
+    if "isEditable" in focused:
+        return focused["isEditable"] is True
+    class_name = focused.get("className")
+    return isinstance(class_name, str) and (
+        class_name.endswith("EditText")
+        or class_name.rsplit(".", 1)[-1] == "AutoCompleteTextView"
+    )
 
 
 class AndroidStateProvider(StateProvider):
@@ -122,7 +179,24 @@ class AndroidStateProvider(StateProvider):
         screen_width = screen_bounds.get("width")
         screen_height = screen_bounds.get("height")
 
-        filtered = self.tree_filter.filter(combined_data["a11y_tree"], device_context)
+        raw_tree = combined_data["a11y_tree"]
+        raw_phone_state = combined_data["phone_state"]
+        package = raw_phone_state.get("packageName")
+        focused = raw_phone_state.get("focusedElement")
+        editable = raw_phone_state.get("isEditable")
+        # Inspect only the raw app tree, not the separate ime_tree. Filters
+        # and formatters can omit nodes or discard their focus metadata.
+        has_single_focused_app_node = (
+            combined_data.get("degraded", False) is False
+            and "focusedElement" in raw_phone_state
+            and isinstance(editable, bool)
+            and not (editable and isinstance(focused, dict) and focused)
+            and raw_phone_state.get("keyboardVisible") is True
+            and isinstance(package, str)
+            and bool(package)
+            and _has_single_focused_app_node(raw_tree, package)
+        )
+        filtered = self.tree_filter.filter(raw_tree, device_context)
 
         coordinate_scale_x = 1.0
         coordinate_scale_y = 1.0
@@ -160,7 +234,7 @@ class AndroidStateProvider(StateProvider):
         self.tree_formatter.display_scale_y = coordinate_scale_y
 
         formatted_text, focused_text, elements, phone_state = (
-            self.tree_formatter.format(filtered, combined_data["phone_state"])
+            self.tree_formatter.format(filtered, raw_phone_state)
         )
 
         if (
@@ -185,7 +259,7 @@ class AndroidStateProvider(StateProvider):
                 f"coordinate grid for reference."
             )
 
-        return self._ui_cls(
+        state = self._ui_cls(
             elements=elements,
             formatted_text=formatted_text,
             focused_text=focused_text,
@@ -200,3 +274,5 @@ class AndroidStateProvider(StateProvider):
             model_screenshot_width=display_width,
             model_screenshot_height=display_height,
         )
+        state._has_single_focused_app_node = has_single_focused_app_node
+        return state
