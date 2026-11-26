@@ -16,7 +16,7 @@ from typing import get_args
 import pytest
 import yaml
 from click.testing import CliRunner
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from mobilerun.cli.app import cli
 from mobilerun.config.env import Secrets
@@ -540,6 +540,7 @@ def test_fields_are_single_line_with_attribute_docstrings(model):
                 "le",
                 "min_length",
                 "default_factory",
+                "allow_inf_nan",
             }
             assert node.value.keywords
 
@@ -550,6 +551,17 @@ def test_get_settings_reads_environment_on_every_call(monkeypatch):
     monkeypatch.setenv("MOBILERUN_CLOUD_API_TIMEOUT", "20")
     assert first.MOBILERUN_CLOUD_API_TIMEOUT == 10
     assert get_settings().MOBILERUN_CLOUD_API_TIMEOUT == 20
+
+
+@pytest.mark.parametrize("value", ["inf", "nan"])
+def test_cloud_task_stop_timeout_rejects_nonfinite_values(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    name = "MOBILERUN_CLOUD_TASK_STOP_TIMEOUT_SECONDS"
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValidationError) as error:
+        get_settings()
+    assert [detail["loc"] for detail in error.value.errors()] == [(name,)]
 
 
 def test_local_credentials_path_defaults_to_user_config_dir(monkeypatch, tmp_path):

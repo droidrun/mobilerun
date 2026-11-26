@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from mobilerun_sdk import AsyncMobilerun
+from mobilerun_sdk import APITimeoutError, AsyncMobilerun
 from mobilerun_sdk.types import DeviceCreateResponse
 from pydantic import BaseModel
 
@@ -30,6 +30,7 @@ from mobilerun.core.proxy import CloudProxy
 from mobilerun.errors import (
     BillingError,
     CloudTaskTimeout,
+    CloudTimeout,
     ExtensionActionError,
     OperatorNotSupported,
 )
@@ -316,6 +317,106 @@ def test_timeout_and_cancellation_stop_remote_task(cancel, stop_fails, task_bill
             await pending
         tasks.stop.assert_awaited_once_with("task-1")
         assert tasks.closed
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("cancel_first", "expected_message"),
+    [
+        pytest.param(False, "cancelled during stop", id="deadline"),
+        pytest.param(True, "initial cancellation", id="caller-cancellation"),
+    ],
+)
+def test_remote_stop_completes_despite_cancellation_during_cleanup(
+    cancel_first: bool, expected_message: str, task_billing: None
+) -> None:
+    async def run() -> None:
+        tasks = Tasks(block=True)
+        stop_started = asyncio.Event()
+        finish_stop = asyncio.Event()
+        stopped = []
+
+        async def stop(task_id: str) -> None:
+            stop_started.set()
+            await finish_stop.wait()
+            stopped.append(task_id)
+
+        tasks.stop.side_effect = stop
+        pending = asyncio.create_task(
+            run_task(
+                cast(AsyncMobilerun, SimpleNamespace(tasks=tasks)),
+                device_id="device",
+                billing=Billing.INCLUDED,
+                task="go",
+                timeout=10 if cancel_first else 0,
+            )
+        )
+        async with asyncio.timeout(2):
+            if cancel_first:
+                await tasks.started.wait()
+                pending.cancel("initial cancellation")
+            await stop_started.wait()
+            pending.cancel("cancelled during stop")
+            await asyncio.sleep(0)  # Deliver cancellation while the stop is blocked.
+            exited_before_stop = pending.done()
+            finish_stop.set()
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await pending
+
+        assert stopped == ["task-1"]
+        assert not exited_before_stop
+        assert caught.value.args == (expected_message,)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        pytest.param(RuntimeError("status unavailable"), RuntimeError, id="read-error"),
+        pytest.param(
+            APITimeoutError(
+                httpx.Request("GET", "https://sdk.test/v1/tasks/task-1/status")
+            ),
+            CloudTimeout,
+            id="sdk-timeout",
+        ),
+        pytest.param(TimeoutError("read timed out"), TimeoutError, id="plain-timeout"),
+    ],
+)
+def test_status_error_does_not_stop_remote_task(
+    error: Exception, expected: type[Exception], task_billing: None
+) -> None:
+    async def run() -> None:
+        tasks = Tasks()
+        tasks.get_status.side_effect = error
+        with pytest.raises(expected) as caught:
+            await run_task(
+                cast(AsyncMobilerun, SimpleNamespace(tasks=tasks)),
+                device_id="device",
+                billing=Billing.INCLUDED,
+                task="go",
+            )
+        assert type(caught.value) is expected
+        tasks.get_status.assert_awaited_once_with("task-1")
+        tasks.stop.assert_not_awaited()
+
+    asyncio.run(run())
+
+
+def test_keyboard_interrupt_stops_remote_task(task_billing: None) -> None:
+    async def run() -> None:
+        tasks = Tasks()
+        tasks.get_status.side_effect = KeyboardInterrupt
+        with pytest.raises(KeyboardInterrupt):
+            await run_task(
+                cast(AsyncMobilerun, SimpleNamespace(tasks=tasks)),
+                device_id="device",
+                billing=Billing.INCLUDED,
+                task="go",
+            )
+        tasks.stop.assert_awaited_once_with("task-1")
 
     asyncio.run(run())
 

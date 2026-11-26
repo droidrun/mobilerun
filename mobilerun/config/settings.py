@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     MOBILERUN_CLOUD_TASK_TIMEOUT_SECONDS: float = 1800.0
     """Cloud task timeout seconds."""
 
+    MOBILERUN_CLOUD_TASK_STOP_TIMEOUT_SECONDS: float = Field(5.0, gt=0, allow_inf_nan=False)  # fmt: skip
+    """Maximum time for a best-effort cloud task stop during cleanup."""
+
     MOBILERUN_CLOUD_TASK_POLL_INTERVAL_SECONDS: float = 2.0
     """Cloud task poll interval seconds."""
 

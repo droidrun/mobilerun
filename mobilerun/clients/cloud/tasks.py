@@ -21,7 +21,7 @@ from pydantic import BaseModel, ValidationError
 from mobilerun.clients.cloud.billing import requires
 from mobilerun.clients.cloud.errors import cloud_error
 from mobilerun.config.settings import get_settings
-from mobilerun.errors import CloudTaskTimeout, CloudTimeout
+from mobilerun.errors import CloudTaskTimeout
 from mobilerun.logs.actions import action_line, cloud_progress
 from mobilerun.logs.actions import logger as action_logger
 from mobilerun.models.billing import Billing
@@ -181,15 +181,31 @@ async def _progress(
                 )
 
 
-async def _stop(client: AsyncMobilerun, task_id: str, *, billing: Billing) -> None:
+async def _stop(
+    client: AsyncMobilerun, task_id: str, *, billing: Billing
+) -> asyncio.CancelledError | None:
     if task_id == "unknown":
-        return
-    try:
-        async with asyncio.timeout(5):
-            await stop(client, task_id, billing=billing)
-    except Exception:
-        # Best effort: cleanup must not mask the original timeout/cancellation.
-        logger.warning("Could not stop cloud task %s", task_id)
+        return None
+
+    async def stop_with_timeout() -> None:
+        try:
+            async with asyncio.timeout(
+                get_settings().MOBILERUN_CLOUD_TASK_STOP_TIMEOUT_SECONDS
+            ):
+                await stop(client, task_id, billing=billing)
+        except (Exception, asyncio.CancelledError):
+            # Best effort: cleanup must not mask the caller's outcome.
+            logger.warning("Could not stop cloud task %s", task_id)
+
+    # Keep waiting for the bounded stop even if the caller is cancelled again.
+    cleanup = asyncio.create_task(stop_with_timeout())
+    cancellation = None
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+    return cancellation
 
 
 @requires(Billing.INCLUDED)
@@ -224,8 +240,9 @@ async def run_task(
     if credentials is not None:
         params["credentials"] = credentials
     task_id = "unknown"
+    deadline = asyncio.timeout(timeout)
     try:
-        async with asyncio.timeout(timeout):
+        async with deadline:
             response = await run(client, billing=billing, **params)
             task_id = response.id
             if on_task_started is not None:
@@ -262,20 +279,19 @@ async def run_task(
                         device="CloudDevice",
                     )
                 await asyncio.sleep(poll_interval)
-    except CloudTimeout:
-        await _stop(client, task_id, billing=billing)
-        raise
     except TimeoutError as exc:
-        await _stop(client, task_id, billing=billing)
+        # A request timeout does not mean the overall wait deadline expired.
+        if not deadline.expired():
+            raise
+        cancellation = await _stop(client, task_id, billing=billing)
+        if cancellation is not None:
+            raise cancellation from None
         raise CloudTaskTimeout(
             operation="Run cloud task",
             code="task_timeout",
             resource_id=task_id,
             timeout=timeout,
         ) from exc
-    except asyncio.CancelledError:
-        await _stop(client, task_id, billing=billing)
-        raise
-    except Exception:
+    except (asyncio.CancelledError, KeyboardInterrupt):
         await _stop(client, task_id, billing=billing)
         raise
