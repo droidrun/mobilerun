@@ -1,0 +1,34 @@
+{
+  "feed_one": [
+    {"resource_id": "feed", "text": "Headlines"},
+    {"resource_id": "story:garden", "text": "A garden opens"},
+    {"resource_id": "story:library", "text": "Books after dark"}
+  ],
+  "feed_two": [
+    {"resource_id": "feed", "text": "Headlines"},
+    {"resource_id": "story:library", "text": "Books after dark"},
+    {"resource_id": "story:mural", "text": "A brighter wall"}
+  ],
+  "garden": [
+    {"resource_id": "title", "text": "A garden opens"},
+    {"resource_id": "source", "text": "Juniper Gazette"},
+    {"resource_id": "published", "text": "2026-01-02T09:30:00Z"},
+    {"resource_id": "show_transcript", "text": "Read interview transcript"}
+  ],
+  "library": [
+    {"resource_id": "title", "text": "Books after dark"},
+    {"resource_id": "source", "text": "Pebble Press"},
+    {"resource_id": "published", "text": "2026-01-02T10:30:00Z"}
+  ],
+  "mural": [
+    {"resource_id": "title", "text": "A brighter wall"},
+    {"resource_id": "source", "text": "Juniper Gazette"},
+    {"resource_id": "published", "text": "2026-01-02T11:30:00Z"}
+  ],
+  "interview": [
+    {"resource_id": "transcript", "text": "Interview transcript"},
+    {"resource_id": "line", "text": "Host: What will you grow?"},
+    {"resource_id": "line", "text": "Guest: Mint and basil."},
+    {"resource_id": "line", "text": "Hidden duplicate", "hidden": true}
+  ]
+}

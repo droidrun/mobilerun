@@ -1,5 +1,8 @@
 dist/
 build/
+/cloud-screenshot.png
+/local-screenshot.png
+/SKILLS-RECORD
 # Python bytecode files
 __pycache__/
 *.py[cod]
@@ -22,14 +25,11 @@ messages_log.json
 patch_apis.py
 .git
 .arize-phoenix
+docs/superpowers/
 
 todo.txt
 
 config.yaml
-
-# Local environment files can contain secrets
-.env
-.env.*
 
 credentials.yaml
 **/credentials.yaml
@@ -45,5 +45,5 @@ frontend/
 reddit_python_posts.json
 
 test/
-# agent-test-flows generated run reports
-agent-test-flows/reports/
+# tests/agent-test-flows generated run reports
+tests/agent-test-flows/reports/

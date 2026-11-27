@@ -1,0 +1,1 @@
+All coordinates in this device state (element bounds above, and any x/y you provide to coordinate actions) are normalized 0-1000 on both axes, whatever the screenshot size: (0,0) is the top-left, (500,500) the center and (1000,1000) the bottom-right of the screen.

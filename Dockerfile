@@ -9,6 +9,7 @@ RUN groupadd -g 1000 mobilerun \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
+    git \
     android-tools-adb \
     && rm -rf /var/lib/apt/lists/*
 
@@ -18,8 +19,11 @@ WORKDIR /mobilerun
 
 COPY --chown=mobilerun:mobilerun . .
 
-RUN uv sync --locked --no-dev --no-editable --extra anthropic --no-cache
+RUN if [ ! -s SKILLS-RECORD ]; then \
+        echo >&2 'Missing SKILLS-RECORD. Run: git submodule update --init && git -C skills ls-files -z > SKILLS-RECORD && docker build -t mobilerun .'; \
+        exit 1; \
+    fi && uv sync --locked --no-dev --no-editable --no-cache
 
 ENTRYPOINT [".venv/bin/mobilerun"]
 
-CMD ["device", "setup"]
+CMD ["--help"]

@@ -1,11 +1,18 @@
-"""Mobilerun Macro Module - Record and replay UI automation sequences."""
+"""Build versioned macros from runs and replay them with screen guards."""
 
-__all__ = ["MacroPlayer", "replay_macro_file", "replay_macro_folder"]
+from mobilerun.macro.builder import build_macro, load_macro, resolve_macro_path
+from mobilerun.macro.errors import MacroError, MacroMismatch
+from mobilerun.macro.models import MacroStep
+from mobilerun.macro.operator import MacroOperator
+from mobilerun.macro.player import MacroPlayer
 
-
-def __getattr__(name):
-    if name in __all__:
-        from mobilerun.macro import replay
-
-        return getattr(replay, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+__all__ = [
+    "MacroError",
+    "MacroMismatch",
+    "MacroOperator",
+    "MacroPlayer",
+    "MacroStep",
+    "build_macro",
+    "load_macro",
+    "resolve_macro_path",
+]

@@ -1,10 +1,6 @@
-"""
-Entry point for running Mobilerun macro CLI as a module.
+"""Run the macro command group as a module."""
 
-Usage: python -m mobilerun.macro <command>
-"""
-
-from mobilerun.macro.cli import macro_cli
+from mobilerun.macro.cli import macro
 
 if __name__ == "__main__":
-    macro_cli()
+    macro()
