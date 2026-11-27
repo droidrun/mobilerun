@@ -16,6 +16,7 @@ dependencies = [
     "httpx>=0.27.0",
     "click>=8.1",
     "PyYAML>=6.0",
+    "filelock>=4.2.1",
     "tomlkit>=0.13,<1",
     "requests>=2.0",
     "aiofiles>=25.1.0",

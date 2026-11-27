@@ -10,7 +10,7 @@ Runtime settings, user configuration loading, migrations, and secrets access.
 | --- | --- |
 | `__init__.py` | Package marker |
 | `env.py` | Environment-backed secrets access |
-| `loader.py` | User config loading and migration |
+| `loader.py` | Typed YAML config files and shared `config.yaml` migrations |
 | [migrations/](migrations/README.md) | Versioned configuration migrations |
 | `settings.py` | Runtime settings |
 | `user_config.py` | Shared user configuration models |
@@ -26,12 +26,64 @@ print(timeout)
 
 Set `MOBILERUN_CLOUD_API_TIMEOUT` in the environment before the call to
 override the default. Each `get_settings()` call reads a fresh snapshot.
-`ConfigLoader.load()` resolves an explicit path, an existing `MOBILERUN_CONFIG`
-path, the user config, then package defaults. It can create a user config or
-migrate an existing file and write a backup; use it when those writes are intended.
-See [migrations](migrations/README.md).
+`ConfigLoader.load()` resolves an explicit path, a scoped override, a nonblank
+`MOBILERUN_CONFIG` path, the user config, then defaults. A configured but missing
+explicit or environment path is an error. With no user `config.yaml`, the loader
+writes defaults. It can also migrate an existing file and write a backup. See
+[migrations](migrations/README.md).
 
 **Depends on / used by:** Uses configuration libraries and shared utilities; used across the framework.
+
+## Subclass for your own file
+
+Use `ConfigFile[Model]` for a separate YAML file under
+`get_settings().MOBILERUN_USER_CONFIG_DIR`. Specify `CONFIG_FILE` and a no-argument
+`config_type`, then implement the two class methods `from_dict(data)` and
+`to_dict(config)`. The loader does not depend on a particular model library.
+
+```python
+from typing import Any
+
+from pydantic import BaseModel
+
+from mobilerun.config.loader import ConfigFile
+
+
+class AgentSettings(BaseModel):
+    mode: str = "auto"
+
+
+class AgentConfigFile(ConfigFile[AgentSettings]):
+    CONFIG_FILE = "agents.yaml"
+    config_type = AgentSettings
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgentSettings:
+        return AgentSettings.model_validate(data)
+
+    @classmethod
+    def to_dict(cls, config: AgentSettings) -> dict[str, Any]:
+        data = config.model_dump(mode="json", exclude_defaults=True)
+        AgentSettings.model_validate(data)
+        return data
+```
+
+By default, `load()` returns an in-memory default model if the file is missing,
+ignores `MOBILERUN_CONFIG`, and neither validates nor adds a `_version` field.
+Set `WRITE_DEFAULTS = True` to write on first load or `USE_ENV_PATH = True` to
+honour `MOBILERUN_CONFIG` during loads. For migrations, set `CONFIG_VERSION` and
+implement `migrate_dict(data)` to return the upgraded mapping with its new
+`_version`. Unversioned files start at version 1. A successful upgrade backs
+up the original as `<file>.v<old_version>.bak` before replacing it. Override
+`parse_yaml(text)` only if the file needs custom YAML parsing.
+
+| Class method | Purpose |
+| --- | --- |
+| `get_user_config_dir() -> Path` / `get_user_config_path() -> Path` | Locate the user directory or the subclass's file. |
+| `load(config_path: str \| None = None) -> Model` | Load and validate the selected YAML file or return defaults. |
+| `save(config: Model) -> Path` | Atomically replace the user file. Generic files use `<file>.lock`; `ConfigLoader.save()` keeps its existing unlocked behavior. |
+| `update(edit: Callable[[Model], None]) -> Path` | Hold `<file>.lock` across reading, editing in place, and saving. Uses the user path regardless of overrides. A raised edit leaves the YAML untouched. Use this for concurrent read-modify-write callers. |
+| `override(config: Model)` | Context manager: within this context, `load()` returns the supplied model for this subclass only. Explicit paths bypass it; it does not change disk writes. |
 
 ## Settings overview
 

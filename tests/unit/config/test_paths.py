@@ -11,18 +11,20 @@ from copy import deepcopy
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 import yaml
 from click.testing import CliRunner
-from pydantic import SecretStr, ValidationError
+from filelock import FileLock, Timeout
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from mobilerun.cli.app import cli
 from mobilerun.config.env import Secrets
-from mobilerun.config.loader import ConfigLoader, OutdatedConfigError
+from mobilerun.config.loader import ConfigFile, ConfigLoader, OutdatedConfigError
 from mobilerun.config.migrations import CURRENT_VERSION, migrate
 from mobilerun.config.settings import Settings, get_settings
+from mobilerun.config.user_config import MobileConfig
 from mobilerun.macro.settings import MacroSettings
 from mobilerun.mcp.settings import MCPSettings
 from mobilerun.utils import paths
@@ -170,6 +172,172 @@ def test_legacy_app_card_path_is_not_redirected(tmp_path, monkeypatch):
     assert migrate(config)["agent"]["app_cards"]["app_cards_dir"] == legacy_path
 
 
+def test_default_config_is_written_on_first_load(tmp_path, monkeypatch):
+    directory = tmp_path / "settings"
+    monkeypatch.setenv("MOBILERUN_USER_CONFIG_DIR", str(directory))
+    monkeypatch.setenv("MOBILERUN_CONFIG", " ")
+
+    assert ConfigLoader.load() == MobileConfig()
+    path = directory / "config.yaml"
+    assert list(directory.iterdir()) == [path]
+    assert yaml.safe_load(path.read_text())["_version"] == CURRENT_VERSION
+
+
+def test_config_env_path_and_explicit_precedence(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILERUN_USER_CONFIG_DIR", str(tmp_path))
+    override = tmp_path / "override.yaml"
+    explicit = tmp_path / "explicit.yaml"
+    monkeypatch.setenv("MOBILERUN_CONFIG", str(override))
+    for path, serial in [(override, "override"), (explicit, "explicit")]:
+        path.write_text(f"_version: {CURRENT_VERSION}\ndevice:\n  serial: {serial}\n")
+
+    assert ConfigLoader.load().device.serial == "override"
+    assert ConfigLoader.load(str(explicit)).device.serial == "explicit"
+    assert not (tmp_path / "config.yaml").exists()
+    override.unlink()
+    with pytest.raises(OutdatedConfigError):
+        ConfigLoader.load()
+
+
+class ExampleConfig(BaseModel):
+    mode: str = "auto"
+
+
+@pytest.fixture
+def addon_config_file(tmp_path, monkeypatch):
+    class AddonConfigFile(ConfigFile[ExampleConfig]):
+        CONFIG_FILE = "agents.yaml"
+        config_type = ExampleConfig
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> ExampleConfig:
+            return ExampleConfig.model_validate(data)
+
+        @classmethod
+        def to_dict(cls, config: ExampleConfig) -> dict[str, Any]:
+            data = config.model_dump(mode="json", exclude_defaults=True)
+            ExampleConfig.model_validate(data)
+            return data
+
+    monkeypatch.setenv("MOBILERUN_USER_CONFIG_DIR", str(tmp_path / "settings"))
+    monkeypatch.setenv("MOBILERUN_CONFIG", str(tmp_path / "missing.yaml"))
+    return AddonConfigFile
+
+
+def test_addon_config_file_loads_defaults_without_first_run_write(addon_config_file):
+    path = addon_config_file.get_user_config_path()
+    assert path.name == "agents.yaml"
+    assert addon_config_file.load() == ExampleConfig()
+    assert not path.parent.exists()
+
+
+def test_addon_config_file_can_customize_yaml_and_saves_without_migration(
+    addon_config_file,
+):
+    class StringLoader(yaml.SafeLoader):
+        yaml_implicit_resolvers = {}
+
+    class CustomFile(addon_config_file):
+        @classmethod
+        def parse_yaml(cls, text):
+            return yaml.load(text, Loader=StringLoader)
+
+    path = CustomFile.get_user_config_path()
+    path.parent.mkdir()
+    original = "# keep me\nmode: on\n"
+    path.write_text(original)
+
+    assert CustomFile.load() == ExampleConfig(mode="on")
+    assert path.read_text() == original
+    assert CustomFile.save(ExampleConfig(mode="off")) == path
+    assert yaml.safe_load(path.read_text()) == {"mode": "off"}
+    assert not list(path.parent.glob("agents.yaml.v*.bak"))
+
+
+def test_config_update_locks_read_edit_and_write(addon_config_file, monkeypatch):
+    path = addon_config_file.save(ExampleConfig(mode="on"))
+    contender = FileLock(str(path) + ".lock", timeout=0)
+    read_bytes = Path.read_bytes
+    replace = os.replace
+
+    def assert_locked():
+        with pytest.raises(Timeout), contender:
+            pytest.fail("update did not hold the file lock")
+
+    def checked_read(file):
+        if file == path.resolve():
+            assert_locked()
+        return read_bytes(file)
+
+    def checked_replace(source, destination):
+        if destination == path.resolve():
+            assert_locked()
+        return replace(source, destination)
+
+    def edit(config):
+        assert_locked()
+        assert config.mode == "on"
+        config.mode = "off"
+
+    monkeypatch.setattr(Path, "read_bytes", checked_read)
+    monkeypatch.setattr(os, "replace", checked_replace)
+    with addon_config_file.override(ExampleConfig(mode="override")):
+        assert addon_config_file.update(edit) == path
+
+    with contender:
+        assert yaml.safe_load(path.read_text()) == {"mode": "off"}
+
+
+def test_config_update_does_not_write_or_back_up_when_edit_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILERUN_USER_CONFIG_DIR", str(tmp_path))
+    path = tmp_path / "config.yaml"
+    original = "# keep me\ndevice:\n  serial: old\n"
+    path.write_text(original)
+
+    def reject(config):
+        assert config.device.serial == "old"
+        config.device.serial = "new"
+        raise RuntimeError("cancel edit")
+
+    with pytest.raises(RuntimeError, match="cancel edit"):
+        ConfigLoader.update(reject)
+
+    assert path.read_text() == original
+    assert not list(tmp_path.glob("config.yaml.v*.bak"))
+
+    assert (
+        ConfigLoader.update(lambda config: setattr(config.device, "serial", "new"))
+        == path
+    )
+    assert yaml.safe_load(path.read_text())["device"]["serial"] == "new"
+    assert (tmp_path / "config.yaml.v1.bak").read_text() == original
+
+
+def test_config_overrides_are_scoped_per_subclass(
+    addon_config_file, tmp_path, monkeypatch
+):
+    monkeypatch.delenv("MOBILERUN_CONFIG")
+    path = tmp_path / "explicit.yaml"
+    path.write_text("mode: explicit\n")
+    base = MobileConfig()
+    addon = ExampleConfig(mode="outer")
+
+    class ChildFile(addon_config_file):
+        pass
+
+    with ConfigLoader.override(base), addon_config_file.override(addon):
+        assert ConfigLoader.load() is base
+        assert addon_config_file.load() is addon
+        assert ChildFile.load().mode == "auto"
+        assert addon_config_file.load(str(path)).mode == "explicit"
+        with addon_config_file.override(ExampleConfig(mode="inner")):
+            assert addon_config_file.load().mode == "inner"
+        assert addon_config_file.load() is addon
+
+    assert addon_config_file.load().mode == "auto"
+    assert ConfigLoader.load() is not base
+
+
 def test_unversioned_config_migrates_and_preserves_original(tmp_path):
     path = tmp_path / "config.yaml"
     original = "# old config\ndevice:\n  serial: my-device\nagent:\n  codeact:\n    vision: true\n"
@@ -212,7 +380,9 @@ def test_existing_backup_is_not_overwritten(tmp_path):
     assert backup.read_text() == "previous backup"
 
 
-@pytest.mark.parametrize("content", ["[broken", "- not a mapping", "_version: nope"])
+@pytest.mark.parametrize(
+    "content", ["", "[broken", "- not a mapping", "_version: nope"]
+)
 def test_invalid_config_raises_outdated_error_without_rewriting(tmp_path, content):
     path = tmp_path / "config.yaml"
     path.write_text(content)
