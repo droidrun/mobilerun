@@ -1,6 +1,5 @@
 """Explicitly imported, function-scoped fixtures for sandbox tests."""
 
-import importlib
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,8 +8,13 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel, Field
 
+from mobilerun.sandbox import cleanup as sandbox_cleanup
 from mobilerun.sandbox import clients
 from mobilerun.sandbox import deployment as deploy
+from mobilerun.sandbox import documents as sandbox_documents
+from mobilerun.sandbox import execution as sandbox_execution
+from mobilerun.sandbox import flows as sandbox_flows
+from mobilerun.sandbox import receipts as sandbox_receipts
 from mobilerun.sandbox.models import Artifact, CloudDeclaration, OwnershipReceipt
 from mobilerun.sandbox.settings import SandboxSettings
 from tests.support.sandbox_fakes import InitialSandboxCloud, SandboxCloud
@@ -24,7 +28,25 @@ __all__ = [
     "Input",
     "Output",
     "backend",
+    "patch_sandbox",
 ]
+
+_SANDBOX_MODULES = (
+    deploy,
+    sandbox_cleanup,
+    sandbox_documents,
+    sandbox_execution,
+    sandbox_flows,
+    sandbox_receipts,
+)
+
+
+def patch_sandbox(monkeypatch, name, value):
+    """Replace a shared name in every sandbox module that imported it."""
+    holders = [module for module in _SANDBOX_MODULES if hasattr(module, name)]
+    assert holders, name
+    for module in holders:
+        monkeypatch.setattr(module, name, value)
 
 
 def execution(status="success", body=None):
@@ -53,13 +75,13 @@ def execution(status="success", body=None):
 
 @pytest.fixture
 def remote(tmp_path, monkeypatch):
-    scope = deploy.Scope("https://example.test/v1", "fingerprint")
+    scope = sandbox_receipts.Scope("https://example.test/v1", "fingerprint")
     settings = SandboxSettings(
         MOBILERUN_SANDBOX_DIRECTORY=str(tmp_path), MOBILERUN_SANDBOX_POLL_INTERVAL=0.001
     )
-    monkeypatch.setattr(deploy, "current_scope", lambda: scope)
-    monkeypatch.setattr(deploy, "get_sandbox_settings", lambda: settings)
-    store = deploy.ReceiptStore(scope, "demo", settings)
+    patch_sandbox(monkeypatch, "current_scope", lambda: scope)
+    patch_sandbox(monkeypatch, "get_sandbox_settings", lambda: settings)
+    store = sandbox_receipts.ReceiptStore(scope, "demo", settings)
     receipt = OwnershipReceipt(
         scope.origin,
         scope.account_id,
@@ -151,12 +173,12 @@ def env(tmp_path, monkeypatch):
         None,
     )
     monkeypatch.setattr(deploy, "package", lambda path: artifact, raising=False)
-    scope = deploy.Scope("https://example.test/v1", "a" * 64)
-    monkeypatch.setattr(deploy, "current_scope", lambda: scope)
+    scope = sandbox_receipts.Scope("https://example.test/v1", "a" * 64)
+    patch_sandbox(monkeypatch, "current_scope", lambda: scope)
     settings = SandboxSettings(
         MOBILERUN_SANDBOX_DIRECTORY=str(tmp_path), MOBILERUN_SANDBOX_POLL_INTERVAL=0.001
     )
-    monkeypatch.setattr(deploy, "get_sandbox_settings", lambda: settings)
+    patch_sandbox(monkeypatch, "get_sandbox_settings", lambda: settings)
     fake = SimpleNamespace(
         list_functions=AsyncMock(return_value=[]),
         list_flows=AsyncMock(return_value=[]),
@@ -184,30 +206,30 @@ def env(tmp_path, monkeypatch):
         return flow
 
     fake.enable_flow.side_effect = enable
-    monkeypatch.setattr(deploy, "clients", fake, raising=False)
+    patch_sandbox(monkeypatch, "clients", fake)
     return SimpleNamespace(
         artifact=artifact,
         scope=scope,
         settings=settings,
         fake=fake,
         path=Path("example.py"),
-        store=deploy.ReceiptStore(scope, "demo", settings),
+        store=sandbox_receipts.ReceiptStore(scope, "demo", settings),
     )
 
 
 @pytest.fixture
 def initial_cloud(env, monkeypatch):
     cloud = InitialSandboxCloud(
-        deploy.build_document(env.artifact, "f", 1, device=None)
+        sandbox_documents.build_document(env.artifact, "f", 1, device=None)
     )
-    monkeypatch.setattr(deploy, "clients", cloud)
+    patch_sandbox(monkeypatch, "clients", cloud)
     env.cloud = cloud
     return env
 
 
 @pytest.fixture
 def setup_deploy(tmp_path, monkeypatch):
-    scope = deploy.Scope("https://example.test/v1", "a" * 64)
+    scope = sandbox_receipts.Scope("https://example.test/v1", "a" * 64)
     settings = SandboxSettings(MOBILERUN_SANDBOX_DIRECTORY=str(tmp_path))
     art = Artifact(
         CloudDeclaration("demo", endpoint=True),
@@ -227,9 +249,9 @@ def setup_deploy(tmp_path, monkeypatch):
         "digest",
         (),
     )
-    store = deploy.ReceiptStore(scope, "demo", settings)
+    store = sandbox_receipts.ReceiptStore(scope, "demo", settings)
     store.write(receipt)
-    doc = deploy.build_document(art, "f", 1, device=None)
+    doc = sandbox_documents.build_document(art, "f", 1, device=None)
     fake = SimpleNamespace(
         list_functions=AsyncMock(
             return_value=[{"id": "f", "name": "demo", "latestVersion": {"version": 1}}]
@@ -252,19 +274,21 @@ def setup_deploy(tmp_path, monkeypatch):
         create_version=AsyncMock(),
         enable_flow=AsyncMock(),
     )
-    monkeypatch.setattr(deploy, "clients", fake)
+    patch_sandbox(monkeypatch, "clients", fake)
     monkeypatch.setattr(deploy, "package", lambda path: art)
-    monkeypatch.setattr(deploy, "current_scope", lambda: scope)
-    monkeypatch.setattr(deploy, "get_sandbox_settings", lambda: settings)
+    patch_sandbox(monkeypatch, "current_scope", lambda: scope)
+    patch_sandbox(monkeypatch, "get_sandbox_settings", lambda: settings)
     return SimpleNamespace(fake=fake, store=store, receipt=receipt, artifact=art)
 
 
 @pytest.fixture
 def changed(setup_deploy, monkeypatch):
     e = setup_deploy
-    cloud = SandboxCloud(deploy.build_document(e.artifact, "f", 1, device=None))
+    cloud = SandboxCloud(
+        sandbox_documents.build_document(e.artifact, "f", 1, device=None)
+    )
     e.store.write_yaml(cloud.document)
-    monkeypatch.setattr(deploy, "clients", cloud)
+    patch_sandbox(monkeypatch, "clients", cloud)
     monkeypatch.setattr(
         deploy,
         "package",
@@ -289,7 +313,6 @@ class Output(BaseModel):
 
 @pytest.fixture
 def backend(monkeypatch):
-    operations = importlib.import_module("mobilerun.sandbox.deployment")
     snapshot = {
         "id": "run",
         "status": "success",
@@ -318,5 +341,5 @@ def backend(monkeypatch):
     }
     fakes = {name: AsyncMock(return_value=value) for name, value in defaults.items()}
     for name, fake in fakes.items():
-        monkeypatch.setattr(operations, name, fake)
+        patch_sandbox(monkeypatch, name, fake)
     return fakes

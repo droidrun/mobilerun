@@ -17,7 +17,7 @@ from mobilerun_functions import RunInfo
 from PIL import Image
 
 from mobilerun.sandbox.cli.group import sandbox
-from mobilerun.sandbox.deployment import build_document, equivalent_document
+from mobilerun.sandbox.documents import build_document, equivalent_document
 from mobilerun.sandbox.models import (
     Artifact,
     CloudDeclaration,

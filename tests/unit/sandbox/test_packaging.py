@@ -1,7 +1,6 @@
 """Sandbox declarations, source extraction, and artifact inspection."""
 
 import asyncio
-import importlib
 import runpy
 import traceback
 from pathlib import Path
@@ -13,6 +12,7 @@ from mobilerun_functions.entry import take
 import mobilerun.sandbox as sandbox
 from mobilerun.sandbox.errors import SandboxDeclarationError, SandboxPackagingError
 from mobilerun.sandbox.packaging import package, read_declaration, transform
+from tests.support.sandbox_fixtures import patch_sandbox
 
 
 def test_malformed_decorator_traceback_omits_source(tmp_path):
@@ -34,9 +34,8 @@ def test_no_deploy_on_import_or_main(tmp_path, monkeypatch, is_async):
     def tripwire(*args, **kwargs):
         pytest.fail("declaration attempted deployment, transport, or inspection")
 
-    operations = importlib.import_module("mobilerun.sandbox.deployment")
     for name in ("deploy_file", "describe_remote", "fire_remote", "package"):
-        monkeypatch.setattr(operations, name, tripwire)
+        patch_sandbox(monkeypatch, name, tripwire)
     monkeypatch.setattr("socket.socket.connect", tripwire)
     monkeypatch.setattr("mobilerun.sandbox.packaging.inspect_source", tripwire)
     path = tmp_path / "declared.py"
@@ -223,7 +222,7 @@ def test_packaging_rejects_file_paths_not_guaranteed_by_output_schema(
 
 
 def test_packaged_schedule_builds_file_uploads_and_webhook(tmp_path):
-    from mobilerun.sandbox.deployment import build_document
+    from mobilerun.sandbox.documents import build_document
 
     path = tmp_path / "routine.py"
     path.write_text(dedent("""\
@@ -328,7 +327,7 @@ def test_packaged_schedule_builds_file_uploads_and_webhook(tmp_path):
     "exclude", ["exclude=True", "exclude_if=lambda value: not value"]
 )
 def test_webhook_rejects_omittable_serialized_fields_with_defaults(tmp_path, exclude):
-    from mobilerun.sandbox.deployment import build_document
+    from mobilerun.sandbox.documents import build_document
 
     path = tmp_path / "routine.py"
     path.write_text(dedent(f"""\
@@ -356,7 +355,7 @@ def test_webhook_rejects_omittable_serialized_fields_with_defaults(tmp_path, exc
 def test_webhook_rejects_duck_typed_serialization_only_on_expanded_branches(
     tmp_path, duck_type, expand
 ):
-    from mobilerun.sandbox.deployment import build_document
+    from mobilerun.sandbox.documents import build_document
 
     path = tmp_path / "routine.py"
     source_field = "event.image" if expand else "image"
@@ -496,9 +495,7 @@ def test_schedule_inspects_real_model_before_cloud(tmp_path, monkeypatch):
     from mobilerun.sandbox import deployment
     from mobilerun.sandbox.errors import SandboxDeclarationError
 
-    monkeypatch.setattr(
-        deployment, "current_scope", lambda: pytest.fail("cloud access")
-    )
+    patch_sandbox(monkeypatch, "current_scope", lambda: pytest.fail("cloud access"))
     source = tmp_path / "main.py"
     template = dedent("""\
         from pydantic import BaseModel, Field, field_validator

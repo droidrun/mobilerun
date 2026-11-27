@@ -236,7 +236,7 @@ def test_macro_replay_plugin_dispatches_operator_entry_point(monkeypatch, tmp_pa
 
     monkeypatch.setattr(plugins.metadata, "entry_points", entries)
     path = tmp_path / "macro.json"
-    path.write_text("{}")
+    path.write_text('{"macro_schema_version": "2.0", "actions": []}')
     result = CliRunner().invoke(
         cli,
         ["macro", "replay", str(path), "--on-mismatch", "agent", "--android", "fake"],

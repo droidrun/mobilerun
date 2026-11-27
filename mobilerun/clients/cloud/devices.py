@@ -1,9 +1,9 @@
 """Functional cloud device SDK boundaries."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import nullcontext
 from datetime import datetime
-from typing import Literal, TypedDict, Unpack, cast
+from typing import Any, Literal, TypedDict, Unpack, cast
 
 import httpx
 from mobilerun_sdk import APIError, AsyncMobilerun
@@ -30,6 +30,7 @@ from mobilerun_sdk.types.shared_params import DeviceCarrier, DeviceIdentifiers, 
 from mobilerun.clients.cloud.billing import (
     _billing_preference,
     _validate_create_params,
+    buys_connect_proxy,
     requires,
 )
 from mobilerun.clients.cloud.client import cloud_client
@@ -112,7 +113,14 @@ ResetOptions = TypedDict(
 )
 
 
-@requires(Billing.INCLUDED)
+def _create_needs_paid(arguments: Mapping[str, Any]) -> bool:
+    """A metered plan or a new Connect proxy costs money."""
+    plan = arguments.get("plan")
+    metered = plan is not None and Plan(plan) in (Plan.AUTO, Plan.MINUTE)
+    return metered or buys_connect_proxy(arguments.get("proxy"))
+
+
+@requires(Billing.INCLUDED, paid_if=_create_needs_paid)
 async def create(
     *,
     billing: Billing,

@@ -67,7 +67,8 @@ prints resource and run IDs, available timing, and cleanup outcome (not keys,
 payloads, or URLs). Check account billing for actual usage and cost.
 
 The test prints the temporary receipt path before deploying. Its `finally`
-block uses [`mobilerun.sandbox.deployment`](../../../mobilerun/sandbox/deployment.py)
+block uses [`mobilerun.sandbox.receipts`](../../../mobilerun/sandbox/receipts.py)
+and [`mobilerun.sandbox.cleanup`](../../../mobilerun/sandbox/cleanup.py)
 to load that receipt even after a partial deployment, disable/remove the
 owned flow, and delete the unshared owned trigger, action, and function in
 `no_commerce` mode. It then reads the cloud state to verify removal. If the run

@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -30,6 +31,11 @@ logger = logging.getLogger("mobilerun-macro")
 
 # Reverse map for legacy key_press macro entries
 _KEYCODE_TO_BUTTON = {4: "back", 3: "home", 66: "enter"}
+
+# Carry the recording checked by the CLI through device selection and operator handoff.
+_replay_snapshot: ContextVar[tuple[Path, dict[str, Any]] | None] = ContextVar(
+    "macro_replay_snapshot", default=None
+)
 
 
 class MacroPlayer:
@@ -98,6 +104,9 @@ class MacroPlayer:
             Dictionary containing the macro data
         """
         path = Path(macro_file_path)
+        snapshot = _replay_snapshot.get()
+        if snapshot is not None and path.absolute() == snapshot[0]:
+            return snapshot[1]
         if path.is_dir():
             path = path / "macro.json"
         macro_data = json.loads(path.read_text())

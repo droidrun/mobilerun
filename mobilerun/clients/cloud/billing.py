@@ -4,10 +4,11 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping
 from functools import wraps
 from inspect import signature
-from typing import ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 from mobilerun.errors.cloud import BillingError, BillingRequired
 from mobilerun.models.billing import Billing, Plan, ResourcePlan
+from mobilerun.utils.terminal import can_prompt
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -15,10 +16,7 @@ R = TypeVar("R")
 
 def billing_prompt_is_interactive() -> bool:
     """Return whether a billing prompt can use terminal stdin and stderr."""
-    stdin, stderr = sys.stdin, sys.stderr
-    return (
-        stdin is not None and stderr is not None and stdin.isatty() and stderr.isatty()
-    )
+    return can_prompt(sys.stderr)
 
 
 async def _confirm_billing(error: BillingRequired) -> bool:
@@ -66,10 +64,30 @@ async def with_billing_retry(
     return await operation(needed), needed
 
 
+def buys_connect_proxy(proxy: object) -> bool:
+    """Return whether a proxy spec orders a new Connect proxy by country."""
+    connect = proxy.get("connect") if isinstance(proxy, Mapping) else None
+    return isinstance(connect, Mapping) and bool(connect.get("country"))
+
+
+def rents_resource(arguments: Mapping[str, Any]) -> bool:
+    """Return whether a number or mailbox call asks for a rented resource."""
+    plan = arguments.get("plan")
+    return plan is not None and ResourcePlan(plan) is ResourcePlan.RENT
+
+
 def requires(
-    minimum: Billing, *, operation: str | None = None
+    minimum: Billing,
+    *,
+    operation: str | None = None,
+    paid_if: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    """Declare and enforce a boundary's minimum commerce mode before any work."""
+    """Declare and enforce a boundary's minimum commerce mode before any work.
+
+    ``paid_if`` receives the bound arguments and returns whether this call needs
+    paid billing. Declare it on the function it guards: the guard never infers
+    a rule from a module or function name.
+    """
 
     def decorate(function: Callable[P, R]) -> Callable[P, R]:
         sig = signature(function)
@@ -79,30 +97,10 @@ def requires(
             bound = sig.bind(*args, **kwargs)
             given = bound.arguments["billing"]
             needed = minimum
-            params = bound.arguments.get("params", {})
-            proxy = bound.arguments.get("proxy") or params
-            connect = proxy.get("connect", {}) if isinstance(proxy, Mapping) else {}
-            if function.__module__.endswith((".devices", ".proxies")):
-                if isinstance(connect, Mapping) and connect.get("country"):
-                    needed = Billing.PAID
             try:
+                if paid_if is not None and paid_if(bound.arguments):
+                    needed = Billing.PAID
                 mode = Billing(given)
-                if (
-                    function.__module__.endswith(".devices")
-                    and function.__name__ == "create"
-                ):
-                    plan = bound.arguments.get("plan")
-                    if plan is not None:
-                        plan = Plan(plan)
-                    if plan in (Plan.AUTO, Plan.MINUTE):
-                        needed = Billing.PAID
-                if (
-                    function.__module__.endswith((".numbers", ".mailboxes"))
-                    and function.__name__ == "create"
-                ):
-                    plan = bound.arguments.get("plan")
-                    if plan is not None and ResourcePlan(plan) is ResourcePlan.RENT:
-                        needed = Billing.PAID
             except (ValueError, TypeError) as exc:
                 error = BillingError(
                     operation=function.__name__,

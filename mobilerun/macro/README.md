@@ -64,6 +64,13 @@ mobilerun macro replay macro.json emulator-5554
 See [macro_demo.py](../../tests/demos/macro_demo.py) and [CLI commands](cli/README.md).
 Cloud devices can incur charges.
 
+`mobilerun macro replay` asks once before looking up or opening a device if
+the selected steps could send SMS. Recordings do not store extension roles,
+so replay counts every recorded extension `.send` call as possible SMS
+regardless of billing mode. Pass `--yes` to approve without prompting;
+non-interactive replay refuses without it. `--dry-run` neither asks for
+confirmation nor sends messages.
+
 `mobilerun macro list` uses `<MOBILERUN_USER_CONFIG_DIR>/macros` by default.
 This replaces the previous `./trajectories` default; set
 `MOBILERUN_MACRO_DIRECTORY=trajectories` to keep using that directory. Relative

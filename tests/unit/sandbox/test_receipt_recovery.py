@@ -19,7 +19,11 @@ from pydantic_core import PydanticCustomError
 
 from mobilerun.models.billing import Billing
 from mobilerun.sandbox import Remote
+from mobilerun.sandbox import cleanup as sandbox_cleanup
 from mobilerun.sandbox import deployment as deploy
+from mobilerun.sandbox import documents as sandbox_documents
+from mobilerun.sandbox import flows as sandbox_flows
+from mobilerun.sandbox import receipts as sandbox_receipts
 from mobilerun.sandbox.errors import (
     SandboxDeclarationError,
     SandboxDeploymentConflict,
@@ -32,6 +36,7 @@ from tests.support.sandbox_fixtures import (
     Input,
     Output,
     backend,
+    patch_sandbox,
     setup_deploy,
 )
 from tests.unit.sandbox.staging_fixtures import (
@@ -55,7 +60,7 @@ __all__ = [
 
 
 def scope(origin="https://example.test/v1", key="secret"):
-    return deploy.Scope(origin, hashlib.sha256(key.encode()).hexdigest())
+    return sandbox_receipts.Scope(origin, hashlib.sha256(key.encode()).hexdigest())
 
 
 def receipt(s, name="../unsafe"):
@@ -65,25 +70,25 @@ def receipt(s, name="../unsafe"):
 
 
 def store(tmp_path, s=None, name="../unsafe"):
-    return deploy.ReceiptStore(
+    return sandbox_receipts.ReceiptStore(
         s or scope(), name, SandboxSettings(MOBILERUN_SANDBOX_DIRECTORY=str(tmp_path))
     )
 
 
 def test_scope_uses_cloud_client_key_resolver_and_no_secret(monkeypatch):
-    monkeypatch.setattr(deploy, "resolve_cloud_api_key", lambda: "sensitive")
+    monkeypatch.setattr(sandbox_receipts, "resolve_cloud_api_key", lambda: "sensitive")
     monkeypatch.setattr(
-        deploy,
+        sandbox_receipts,
         "get_settings",
         lambda: SimpleNamespace(MOBILERUN_CLOUD_BASE_URL="https://a"),
     )
-    s = deploy.current_scope()
+    s = sandbox_receipts.current_scope()
     assert s.origin == "https://a/"
     assert s.account_id == hashlib.sha256(b"sensitive").hexdigest()
     assert "sensitive" not in repr(s)
-    monkeypatch.setattr(deploy, "resolve_cloud_api_key", lambda: None)
+    monkeypatch.setattr(sandbox_receipts, "resolve_cloud_api_key", lambda: None)
     with pytest.raises(SandboxDeploymentError, match="credentials"):
-        deploy.current_scope()
+        sandbox_receipts.current_scope()
 
 
 @pytest.mark.parametrize("override", [None, "", "relative/store", "~/cloud-store"])
@@ -95,7 +100,7 @@ def test_path_settings_default_and_overrides(tmp_path, monkeypatch, override):
         lambda: SimpleNamespace(MOBILERUN_USER_CONFIG_DIR=tmp_path / "config"),
     )
     settings = SandboxSettings(MOBILERUN_SANDBOX_DIRECTORY=override)
-    st = deploy.ReceiptStore(scope(), "../unsafe", settings)
+    st = sandbox_receipts.ReceiptStore(scope(), "../unsafe", settings)
     root = {
         None: tmp_path / "config/sandbox",
         "": tmp_path / "config/sandbox",
@@ -136,7 +141,7 @@ def test_atomic_write_preserves_old_receipt_on_replace_failure(tmp_path, monkeyp
     def crash(*args):
         raise OSError("secret detail")
 
-    monkeypatch.setattr(deploy.os, "replace", crash)
+    monkeypatch.setattr(sandbox_receipts.os, "replace", crash)
     with pytest.raises(SandboxDeploymentError) as exc:
         st.write(replace(r, function_id="new"))
     assert "secret detail" not in str(exc.value)
@@ -175,9 +180,9 @@ def test_stage_intent_and_ids_are_persisted_and_stable(tmp_path):
     s = scope()
     st = store(tmp_path)
     r = receipt(s)
-    key = deploy.stage_key(s, r.name, "digest", "action:create:0")
-    assert key == deploy.stage_key(s, r.name, "digest", "action:create:0")
-    assert key != deploy.stage_key(s, r.name, "digest", "action:create:1")
+    key = sandbox_receipts.stage_key(s, r.name, "digest", "action:create:0")
+    assert key == sandbox_receipts.stage_key(s, r.name, "digest", "action:create:0")
+    assert key != sandbox_receipts.stage_key(s, r.name, "digest", "action:create:1")
     r = st.record_stage(r, "action:create:0", key)
     assert st.read() == r
     assert key in r.stages[-1] and "action:create:0" in r.stages[-1]
@@ -209,7 +214,9 @@ def test_windows_lock_backend_is_selected_and_released(tmp_path, monkeypatch):
         locking=lambda fd, mode, size: calls.append((mode, size)),
     )
     monkeypatch.setitem(sys.modules, "msvcrt", fake)
-    monkeypatch.setattr(deploy, "_windows_platform", lambda: True, raising=False)
+    monkeypatch.setattr(
+        sandbox_receipts, "_windows_platform", lambda: True, raising=False
+    )
     with store(tmp_path).lock():
         assert calls == [(1, 1)]
     assert calls == [(1, 1), (2, 1)]
@@ -248,7 +255,7 @@ async def test_changed_trigger_cannot_resume_pending_schedule(changed):
 @pytest.mark.anyio
 async def test_pause_survives_pending_schedule_recovery(changed):
     scheduled = await interrupt_schedule(changed)
-    assert not (await deploy.set_enabled("demo", False))["enabled"]
+    assert not (await sandbox_flows.set_enabled("demo", False))["enabled"]
     await deploy.deploy_file(Path("demo.py"), artifact=scheduled, device_free=True)
     assert changed.cloud.flow["enabled"] is False
 
@@ -265,7 +272,7 @@ async def test_initial_enable_recovery_respects_pause(
         with pytest.raises(SandboxDeploymentError, match="activation"):
             await deploy.deploy_file(e.path)
     if pause:
-        await deploy.set_enabled("demo", False)
+        await sandbox_flows.set_enabled("demo", False)
     await deploy.deploy_file(e.path)
     assert e.cloud.flow["enabled"] is (not pause)
 
@@ -290,9 +297,9 @@ async def test_full_cleanup_closes_interrupted_replacement(initial_cloud):
     e = initial_cloud
     await deploy.deploy_file(e.path)
     await interrupt_schedule(e)
-    await deploy.cleanup_owned(e.store.read(), delete_function=True)
+    await sandbox_cleanup.cleanup_owned(e.store.read(), delete_function=True)
     await deploy.deploy_file(e.path)
-    assert (await deploy.set_enabled("demo", True))["enabled"]
+    assert (await sandbox_flows.set_enabled("demo", True))["enabled"]
 
 
 @pytest.mark.usefixtures("_inspect_synthetic_sources")
@@ -441,7 +448,7 @@ async def test_legacy_initial_recovers_only_function_for_cleanup(
         caught.value.receipt == e.store.read()
         and caught.value.receipt.function_id == "f"
     )
-    await deploy.cleanup_owned(e.store.read(), delete_function=True)
+    await sandbox_cleanup.cleanup_owned(e.store.read(), delete_function=True)
     assert not e.cloud.function_exists and e.cloud.flow == expected_flow
     assert set(e.cloud.calls) <= {"read_document", "delete_function"}
 
@@ -538,7 +545,7 @@ async def test_cutover_schema_const_requires_same_json_type(changed):
 
 @pytest.mark.usefixtures("_inspect_synthetic_sources")
 def test_remote_document_bool_is_not_number():
-    assert not deploy.equivalent_document(
+    assert not sandbox_documents.equivalent_document(
         {"on": {"custom": {"inputs": {"const": True}}}},
         {"on": {"custom": {"inputs": {"const": 1}}}},
     )
@@ -562,7 +569,7 @@ async def test_initial_receipt_accepts_equivalent_number(initial_cloud):
 
 @pytest.mark.usefixtures("_inspect_synthetic_sources")
 def test_remote_document_accepts_equivalent_number():
-    assert deploy.equivalent_document(
+    assert sandbox_documents.equivalent_document(
         {"on": {"custom": {"inputs": {"minimum": 0}}}, "version": 1},
         {"on": {"custom": {"inputs": {"minimum": 0.0}}}, "version": 1.0},
     )
@@ -580,14 +587,14 @@ def setup(tmp_path, monkeypatch):
         {"type": "object"},
         None,
     )
-    scope = deployment.Scope("https://example.test/v1", "a" * 64)
+    scope = sandbox_receipts.Scope("https://example.test/v1", "a" * 64)
     monkeypatch.setenv("MOBILERUN_SANDBOX_DIRECTORY", str(tmp_path / "sandbox"))
-    monkeypatch.setattr(deployment, "current_scope", lambda: scope)
+    patch_sandbox(monkeypatch, "current_scope", lambda: scope)
     monkeypatch.setattr(deployment, "package", lambda path: artifact)
-    document = deployment.build_document(artifact, "f", 1, device=None)
+    document = sandbox_documents.build_document(artifact, "f", 1, device=None)
     cloud = InitialSandboxCloud(document)
-    monkeypatch.setattr(deployment, "clients", cloud)
-    return deployment, source, deployment.ReceiptStore(scope, name), cloud
+    patch_sandbox(monkeypatch, "clients", cloud)
+    return deployment, source, sandbox_receipts.ReceiptStore(scope, name), cloud
 
 
 @pytest.mark.anyio
@@ -616,7 +623,7 @@ async def test_cleanup_fails_closed_after_lost_creation_response(setup, failed_a
     ) == ids
     before = list(cloud.calls)
     with pytest.raises(SandboxDeploymentError, match="creation outcome uncertain"):
-        await deployment.cleanup_owned(
+        await sandbox_cleanup.cleanup_owned(
             receipt, delete_function=True, billing=Billing.NO_COMMERCE
         )
     assert cloud.calls == before
@@ -624,7 +631,7 @@ async def test_cleanup_fails_closed_after_lost_creation_response(setup, failed_a
 
     # Only in the fake: replay the original intent to recover the missing IDs.
     await deployment.deploy_file(source, billing=Billing.PAID)
-    await deployment.cleanup_owned(
+    await sandbox_cleanup.cleanup_owned(
         store.read(), delete_function=True, billing=Billing.NO_COMMERCE
     )
     assert cloud.flow is None and not cloud.trigger_exists
@@ -652,7 +659,7 @@ async def test_cleanup_removes_recorded_resources_after_known_creation(
     assert receipt.function_id == "f"
     assert receipt.flow_id == ("flow" if failed_at == "enable" else None)
 
-    await deployment.cleanup_owned(
+    await sandbox_cleanup.cleanup_owned(
         receipt, delete_function=True, billing=Billing.NO_COMMERCE
     )
     expected = ["delete_function"]
@@ -690,7 +697,7 @@ async def test_unattached_foreign_action_retains_owned_function(setup):
         "params": {"functionId": "f", "version": 1},
     }
     with pytest.raises(SandboxDeploymentError) as error:
-        await deployment.cleanup_owned(
+        await sandbox_cleanup.cleanup_owned(
             store.read(), delete_function=True, billing=Billing.NO_COMMERCE
         )
     assert error.value.receipt.function_id == "f"
@@ -723,7 +730,7 @@ async def test_unknown_action_sharing_fails_closed(setup, monkeypatch, definitio
 
     monkeypatch.setattr(cloud, "list_action_definitions", definitions, raising=False)
     with pytest.raises(SandboxDeploymentError):
-        await deployment.cleanup_owned(store.read(), delete_function=True)
+        await sandbox_cleanup.cleanup_owned(store.read(), delete_function=True)
     assert cloud.function_exists and "delete_function" not in cloud.calls
 
 
@@ -741,7 +748,7 @@ async def test_unrelated_unattached_action_allows_owned_function_cleanup(
     deployment, source, store, cloud = setup
     await deployment.deploy_file(source)
     cloud.actions["foreign"] = definition
-    await deployment.cleanup_owned(store.read(), delete_function=True)
+    await sandbox_cleanup.cleanup_owned(store.read(), delete_function=True)
     assert not cloud.function_exists
     assert cloud.actions == {"foreign": definition}
 
@@ -812,16 +819,15 @@ def test_smoke_requires_explicit_unambiguous_origin(monkeypatch, origin):
 
 def test_smoke_verifies_origin_before_deployment(monkeypatch):
     smoke = import_module("tests.unit.smoke.test_sandbox_functions")
-    deployment = import_module("mobilerun.sandbox.deployment")
     expected = "https://staging.example.test/v1"
     monkeypatch.setenv("MOBILERUN_CLOUD_BASE_URL", expected)
-    scope = deployment.Scope(expected, "fingerprint")
-    monkeypatch.setattr(deployment, "current_scope", lambda: scope)
+    scope = sandbox_receipts.Scope(expected, "fingerprint")
+    patch_sandbox(monkeypatch, "current_scope", lambda: scope)
     assert smoke._verified_smoke_scope() == scope
-    monkeypatch.setattr(
-        deployment,
+    patch_sandbox(
+        monkeypatch,
         "current_scope",
-        lambda: deployment.Scope("https://other.example.test/v1", "fingerprint"),
+        lambda: sandbox_receipts.Scope("https://other.example.test/v1", "fingerprint"),
     )
     with pytest.raises(AssertionError, match="origin"):
         smoke._verified_smoke_scope()
@@ -888,7 +894,7 @@ async def test_smoke_file_cleanup_after_observing_copy():
 @pytest.mark.anyio
 async def test_disable_without_document(changed):
     changed.cloud.fail = "read_document"
-    assert not (await deploy.set_enabled("demo", False))["enabled"]
+    assert not (await sandbox_flows.set_enabled("demo", False))["enabled"]
     assert changed.cloud.calls == ["disable"]
 
 
@@ -930,16 +936,16 @@ async def test_rollback_then_identical_deploy(changed, monkeypatch):
 
 def test_url_aliases_recover_ownership_or_fail_closed(tmp_path, monkeypatch):
     base = "https://example.test/v1"
-    monkeypatch.setattr(deploy, "resolve_cloud_api_key", lambda: "key")
+    monkeypatch.setattr(sandbox_receipts, "resolve_cloud_api_key", lambda: "key")
     monkeypatch.setenv("MOBILERUN_SANDBOX_DIRECTORY", str(tmp_path))
 
     def scoped(url):
         monkeypatch.setattr(
-            deploy,
+            sandbox_receipts,
             "get_settings",
             lambda: SimpleNamespace(MOBILERUN_CLOUD_BASE_URL=url),
         )
-        return deploy.current_scope()
+        return sandbox_receipts.current_scope()
 
     assert scoped(base) == scoped(base + "/")
     for url, fid in [(base, "f"), (base + "/", "other")]:
@@ -947,17 +953,17 @@ def test_url_aliases_recover_ownership_or_fail_closed(tmp_path, monkeypatch):
         digest = hashlib.sha256((url + "\0" + account).encode()).hexdigest()
         directory = tmp_path / digest / hashlib.sha256(b"demo").hexdigest()
         directory.mkdir(parents=True)
-        receipt = deploy.OwnershipReceipt(
-            url, account, "demo", fid, None, None, (), None, ()
-        )
+        receipt = OwnershipReceipt(url, account, "demo", fid, None, None, (), None, ())
         (directory / "receipt.json").write_text(json.dumps(receipt.to_dict()))
         if fid == "f":
             assert (
-                deploy.ReceiptStore(scoped(base + "/"), "demo").read().function_id
+                sandbox_receipts.ReceiptStore(scoped(base + "/"), "demo")
+                .read()
+                .function_id
                 == "f"
             )
     with pytest.raises(SandboxDeploymentConflict):
-        deploy.ReceiptStore(scoped(base), "demo").read()
+        sandbox_receipts.ReceiptStore(scoped(base), "demo").read()
 
 
 @pytest.mark.anyio

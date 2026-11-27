@@ -22,6 +22,7 @@ from mobilerun_sdk.types.numbers.message_list_response import Item as MessageIte
 from mobilerun.clients.cloud.billing import (
     _billing_preference,
     _validate_create_params,
+    rents_resource,
     requires,
 )
 from mobilerun.clients.cloud.checkout import CheckoutMode, checkout_callback
@@ -71,7 +72,7 @@ MessageOptions = TypedDict(
 )
 
 
-@requires(Billing.INCLUDED, operation="Create number")
+@requires(Billing.INCLUDED, operation="Create number", paid_if=rents_resource)
 async def create(
     *,
     billing: Billing,

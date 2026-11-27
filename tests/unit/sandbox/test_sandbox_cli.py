@@ -18,6 +18,9 @@ from mobilerun.sandbox import packaging
 from mobilerun.sandbox.models import Artifact, DeploymentReceipt, Endpoint
 
 deploy = import_module("mobilerun.sandbox.deployment")
+sandbox_billing = import_module("mobilerun.sandbox.billing")
+sandbox_execution = import_module("mobilerun.sandbox.execution")
+sandbox_flows = import_module("mobilerun.sandbox.flows")
 
 
 def invoke(*args):
@@ -57,19 +60,12 @@ def offline(monkeypatch):
         AsyncMock(side_effect=AssertionError("get_document")),
     )
     for module, names in (
+        (deploy, ("deploy_file",)),
         (
-            deploy,
-            (
-                "deploy_file",
-                "fire_remote",
-                "set_enabled",
-                "list_deployments",
-                "recent_runs",
-                "describe_remote",
-                "wait_result",
-                "execution_logs",
-            ),
+            sandbox_execution,
+            ("fire_remote", "recent_runs", "wait_result", "execution_logs"),
         ),
+        (sandbox_flows, ("set_enabled", "list_deployments", "describe_remote")),
         (discovery, ("discover_devices",)),
     ):
         for name in names:
@@ -181,8 +177,8 @@ def test_noninteractive_no_commerce_disable_requires_yes():
     assert result.exit_code == 1
     assert "pass --yes" in result.stderr
     deploy.deploy_file.assert_not_awaited()
-    deploy.fire_remote.assert_not_awaited()
-    deploy.set_enabled.assert_not_awaited()
+    sandbox_execution.fire_remote.assert_not_awaited()
+    sandbox_flows.set_enabled.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -219,16 +215,16 @@ def test_billable_commands_require_consent(
     paid_calls = []
 
     async def guarded(*args, billing, **kwargs):
-        deploy._require_paid(billing=billing)
+        sandbox_billing.require_paid(billing=billing)
         paid_calls.append((args, billing, prompt.await_count))
         return receipt if command == "deploy" else {"invocation_id": "inv-1"}
 
     path = script()
     operation, args, calls = {
         "deploy": (deploy.deploy_file, [str(path)], [(path,)]),
-        "fire": (deploy.fire_remote, ["demo"], [("demo", {})]),
+        "fire": (sandbox_execution.fire_remote, ["demo"], [("demo", {})]),
         "enable": (
-            deploy.set_enabled,
+            sandbox_flows.set_enabled,
             ["demo", "other"],
             [("demo", True), ("other", True)],
         ),
@@ -273,18 +269,18 @@ def test_billable_picker_skips_remote_lookup_without_billing_terminal(
         == "Error: Refusing to proceed without confirmation; pass --yes.\n"
     )
     discovery.discover_devices.assert_not_awaited()
-    deploy.list_deployments.assert_not_awaited()
+    sandbox_flows.list_deployments.assert_not_awaited()
 
 
 @pytest.mark.parametrize("command", ["fire", "enable"])
 def test_billable_name_picker_honors_yes_before_lookup(command, monkeypatch):
     monkeypatch.setattr(menu, "is_interactive", lambda: True)
-    deploy.list_deployments.side_effect = None
-    deploy.list_deployments.return_value = []
+    sandbox_flows.list_deployments.side_effect = None
+    sandbox_flows.list_deployments.return_value = []
     result = BillingRunner(interactive=False).invoke(cli, ["sandbox", command, "--yes"])
     assert result.exit_code == 0, result.output
     assert "No deployed sandbox functions found." in result.stderr
-    deploy.list_deployments.assert_awaited_once_with(billing=Billing.PAID)
+    sandbox_flows.list_deployments.assert_awaited_once_with(billing=Billing.PAID)
 
 
 @pytest.mark.parametrize("command", ["fire", "enable"])
@@ -300,7 +296,7 @@ def test_billable_name_picker_refuses_cleanly_with_running_loop(command, monkeyp
         result.stderr
         == "Error: Refusing to proceed without confirmation; pass --yes.\n"
     )
-    deploy.list_deployments.assert_not_awaited()
+    sandbox_flows.list_deployments.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -331,7 +327,7 @@ def test_cli_escalates_only_after_guard(
     monkeypatch.setattr(packaging, "package", inspect)
 
     async def guarded(*args, billing, **kwargs):
-        deploy._require_paid(billing=billing)
+        sandbox_billing.require_paid(billing=billing)
         mutations.append(billing)
         return receipt
 
@@ -361,11 +357,11 @@ def test_enable_batch_authorizes_once_even_if_first_item_fails(monkeypatch, cons
     monkeypatch.setattr(safety, "confirm_prompt_async", prompt)
 
     async def enable(name, enabled, *, billing):
-        deploy._require_paid(billing=billing)
+        sandbox_billing.require_paid(billing=billing)
         if name == "first":
             raise RuntimeError("first failed")
 
-    deploy.set_enabled.side_effect = enable
+    sandbox_flows.set_enabled.side_effect = enable
     result = BillingRunner().invoke(
         cli, ["sandbox", "enable", "first", "second", "--billing", "included", "--json"]
     )
@@ -374,9 +370,9 @@ def test_enable_batch_authorizes_once_even_if_first_item_fails(monkeypatch, cons
     assert all(name in prompt.await_args.args[0] for name in ("first", "second"))
     if not consent:
         assert "Cancelled." in result.stderr
-        deploy.set_enabled.assert_not_awaited()
+        sandbox_flows.set_enabled.assert_not_awaited()
     else:
-        assert deploy.set_enabled.await_args_list == [
+        assert sandbox_flows.set_enabled.await_args_list == [
             call("first", True, billing=Billing.PAID),
             call("second", True, billing=Billing.PAID),
         ]
@@ -555,22 +551,25 @@ def test_fire_prompts_for_name_and_does_not_poll(monkeypatch):
     fake_deployments()
     monkeypatch.setattr(menu, "select_prompt", pick_name)
     monkeypatch.setattr(safety, "confirm_prompt_async", AsyncMock(return_value=True))
-    deploy.fire_remote.side_effect = None
-    deploy.fire_remote.return_value = {"invocation_id": "inv-1", "ignored": 2}
+    sandbox_execution.fire_remote.side_effect = None
+    sandbox_execution.fire_remote.return_value = {
+        "invocation_id": "inv-1",
+        "ignored": 2,
+    }
     result = BillingRunner().invoke(
         cli, ["sandbox", "fire", "--input", '{"billing": "payload"}', "--json"]
     )
     assert result.exit_code == 0, result.output
     assert "Name" in result.stderr
     assert json.loads(result.stdout) == {"invocation_id": "inv-1"}
-    deploy.fire_remote.assert_awaited_once_with(
+    sandbox_execution.fire_remote.assert_awaited_once_with(
         "demo", {"billing": "payload"}, billing=Billing.PAID
     )
-    deploy.wait_result.assert_not_awaited()
+    sandbox_execution.wait_result.assert_not_awaited()
 
 
 def stub_flow_previews():
-    deploy.describe_remote.side_effect = lambda name, **kwargs: {"flow_id": name}
+    sandbox_flows.describe_remote.side_effect = lambda name, **kwargs: {"flow_id": name}
     deploy.clients.get_document.side_effect = lambda flow_id, **kwargs: (
         {"devices": ["cloud-device"], "on": {"custom": {}}}
         if flow_id == "demo"
@@ -618,8 +617,8 @@ def test_deploy_uses_same_artifact_after_file_changes(
 
 
 def test_runs_json_only_emits_summary():
-    deploy.recent_runs.side_effect = None
-    deploy.recent_runs.return_value = [
+    sandbox_execution.recent_runs.side_effect = None
+    sandbox_execution.recent_runs.return_value = [
         {
             "id": "exec",
             "status": "completed",
@@ -645,8 +644,8 @@ def test_runs_json_only_emits_summary():
 
 
 def fake_deployments():
-    deploy.list_deployments.side_effect = None
-    deploy.list_deployments.return_value = [
+    sandbox_flows.list_deployments.side_effect = None
+    sandbox_flows.list_deployments.return_value = [
         {
             "id": "abcd1234-5678-9012-3456-789012345678",
             "name": "demo",
@@ -664,36 +663,36 @@ def test_runs_uses_single_picker_with_resolved_billing(monkeypatch):
     fake_deployments()
     monkeypatch.setattr(menu, "is_interactive", lambda: True)
     monkeypatch.setattr(menu, "select_prompt", lambda label, choices: choices[1].value)
-    deploy.recent_runs.side_effect = None
-    deploy.recent_runs.return_value = []
+    sandbox_execution.recent_runs.side_effect = None
+    sandbox_execution.recent_runs.return_value = []
     result = invoke("runs", "--billing", "no_commerce", "--json")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == []
-    deploy.list_deployments.assert_awaited_once_with(billing=Billing.NO_COMMERCE)
-    deploy.recent_runs.assert_awaited_once_with(
+    sandbox_flows.list_deployments.assert_awaited_once_with(billing=Billing.NO_COMMERCE)
+    sandbox_execution.recent_runs.assert_awaited_once_with(
         "other", 10, billing=Billing.NO_COMMERCE
     )
 
 
 def test_picker_load_failure_does_not_fall_back_to_text(monkeypatch):
     monkeypatch.setattr(menu, "is_interactive", lambda: True)
-    deploy.list_deployments.side_effect = RuntimeError("secret response body")
+    sandbox_flows.list_deployments.side_effect = RuntimeError("secret response body")
     result = invoke("runs", "--json")
     assert result.exit_code == 1
     assert "unexpected failure" in result.stderr
     assert "secret response body" not in result.output
-    deploy.recent_runs.assert_not_awaited()
+    sandbox_execution.recent_runs.assert_not_awaited()
 
 
 def test_fire_reads_input_file(tmp_path):
     path = tmp_path / "payload.json"
     path.write_text('{"limit": 2}', encoding="utf-8")
-    deploy.fire_remote.side_effect = None
-    deploy.fire_remote.return_value = {"invocation_id": "inv-1"}
+    sandbox_execution.fire_remote.side_effect = None
+    sandbox_execution.fire_remote.return_value = {"invocation_id": "inv-1"}
     result = invoke("fire", "demo", "--input-file", path, "--yes")
     assert result.exit_code == 0, result.output
     assert "inv-1" in result.stdout
-    deploy.fire_remote.assert_awaited_once_with(
+    sandbox_execution.fire_remote.assert_awaited_once_with(
         "demo", {"limit": 2}, billing=Billing.PAID
     )
 
@@ -703,7 +702,7 @@ def test_fire_requires_valid_json_object_without_echoing_input(payload):
     result = invoke("fire", "demo", "--input", payload, "--yes")
     assert result.exit_code == 2
     assert "JSON object" in result.stderr and "bad-secret" not in result.stderr
-    deploy.fire_remote.assert_not_awaited()
+    sandbox_execution.fire_remote.assert_not_awaited()
 
 
 def test_fire_rejects_both_payload_options(tmp_path):
@@ -712,15 +711,17 @@ def test_fire_rejects_both_payload_options(tmp_path):
     result = invoke("fire", "demo", "--input", "{}", "--input-file", path, "--yes")
     assert result.exit_code == 2
     assert "--input" in result.stderr and "--input-file" in result.stderr
-    deploy.fire_remote.assert_not_awaited()
+    sandbox_execution.fire_remote.assert_not_awaited()
 
 
 @pytest.mark.parametrize("limit", [None, 5])
 def test_no_commerce_permits_reads(limit):
-    deploy.list_deployments.side_effect = None
-    deploy.list_deployments.return_value = [{"id": "fn-1", "name": "demo"}]
-    deploy.recent_runs.side_effect = None
-    deploy.recent_runs.return_value = [{"id": "exec-1", "status": "completed"}]
+    sandbox_flows.list_deployments.side_effect = None
+    sandbox_flows.list_deployments.return_value = [{"id": "fn-1", "name": "demo"}]
+    sandbox_execution.recent_runs.side_effect = None
+    sandbox_execution.recent_runs.return_value = [
+        {"id": "exec-1", "status": "completed"}
+    ]
     flags = ("--billing", "no_commerce", "--json")
     listed = invoke("list", *flags)
     assert listed.exit_code == 0, listed.output
@@ -729,7 +730,7 @@ def test_no_commerce_permits_reads(limit):
     runs = invoke("runs", "demo", *flags, *args)
     assert runs.exit_code == 0, runs.output
     assert json.loads(runs.stdout) == [{"id": "exec-1", "status": "completed"}]
-    deploy.recent_runs.assert_awaited_once_with(
+    sandbox_execution.recent_runs.assert_awaited_once_with(
         "demo", limit or 10, billing=Billing.NO_COMMERCE
     )
 
@@ -739,14 +740,14 @@ def test_no_commerce_permits_reads(limit):
     [("enable", Billing.PAID, True), ("disable", Billing.NO_COMMERCE, False)],
 )
 def test_set_enabled_after_consent(command, billing, enabled):
-    deploy.set_enabled.side_effect = None
-    deploy.set_enabled.return_value = {"id": "flow-1", "enabled": enabled}
+    sandbox_flows.set_enabled.side_effect = None
+    sandbox_flows.set_enabled.return_value = {"id": "flow-1", "enabled": enabled}
     result = invoke(command, "demo", "--billing", billing.value, "--yes", "--json")
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == [
         {"name": "demo", "status": "enabled" if enabled else "disabled"}
     ]
-    deploy.set_enabled.assert_awaited_once_with("demo", enabled, billing=billing)
+    sandbox_flows.set_enabled.assert_awaited_once_with("demo", enabled, billing=billing)
 
 
 @pytest.mark.parametrize(
@@ -773,8 +774,8 @@ def test_batch_multiselect_confirms_all_once(
     monkeypatch.setattr(menu, "multi_select_prompt", pick_many)
     confirm = AsyncMock(return_value=consent)
     monkeypatch.setattr(safety, "confirm_prompt_async", confirm)
-    deploy.set_enabled.side_effect = None
-    deploy.set_enabled.return_value = {"id": "flow-1", "enabled": enabled}
+    sandbox_flows.set_enabled.side_effect = None
+    sandbox_flows.set_enabled.return_value = {"id": "flow-1", "enabled": enabled}
     result = BillingRunner().invoke(
         cli, ["sandbox", command, "--billing", billing.value, "--json"]
     )
@@ -784,14 +785,14 @@ def test_batch_multiselect_confirms_all_once(
         assert all(name in confirm.await_args.args[0] for name in ("demo", "other"))
     else:
         assert "demo" in result.stderr and "other" in result.stderr
-    deploy.list_deployments.assert_awaited_once_with(billing=billing)
+    sandbox_flows.list_deployments.assert_awaited_once_with(billing=billing)
     status = "enabled" if enabled else "disabled"
     if consent:
         assert json.loads(result.stdout) == [
             {"name": "demo", "status": status},
             {"name": "other", "status": status},
         ]
-        assert deploy.set_enabled.await_args_list == [
+        assert sandbox_flows.set_enabled.await_args_list == [
             call(name, enabled, billing=billing) for name in ("demo", "other")
         ]
     else:
@@ -799,11 +800,11 @@ def test_batch_multiselect_confirms_all_once(
             assert "Cancelled." in result.stderr and result.stdout == ""
         else:
             assert json.loads(result.stdout) == []
-        deploy.set_enabled.assert_not_awaited()
+        sandbox_flows.set_enabled.assert_not_awaited()
 
 
 def test_batch_reports_partial_failure_and_processes_later_names():
-    deploy.set_enabled.side_effect = [
+    sandbox_flows.set_enabled.side_effect = [
         RuntimeError("secret response body"),
         {"id": "flow-2", "enabled": False},
     ]
@@ -814,13 +815,13 @@ def test_batch_reports_partial_failure_and_processes_later_names():
         {"name": "other", "status": "disabled"},
     ]
     assert "secret response body" not in result.output
-    assert deploy.set_enabled.await_args_list == [
+    assert sandbox_flows.set_enabled.await_args_list == [
         call(name, False, billing=Billing.PAID) for name in ("demo", "other")
     ]
 
 
 def test_unexpected_failures_do_not_echo_raw_error_or_emit_json():
-    deploy.list_deployments.side_effect = RuntimeError("secret response body")
+    sandbox_flows.list_deployments.side_effect = RuntimeError("secret response body")
     result = invoke("list", "--json")
     assert result.exit_code == 1
     assert "unexpected failure" in result.stderr

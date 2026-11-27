@@ -2,16 +2,19 @@
 
 import asyncio
 from collections.abc import Callable
+from functools import wraps
 from typing import Any, TypedDict, TypeVar, Unpack
 
 import click
 
 from mobilerun.cli.base import render
+from mobilerun.cli.base.billing import confirm_paid_action
 from mobilerun.cli.devices.base.options import DeviceTarget, device_command
 from mobilerun.config.loader import ConfigLoader
 from mobilerun.config.settings import get_settings
 from mobilerun.core.credentials import DictCredentials, FileCredentials
 from mobilerun.macro import MacroOperator, MacroPlayer
+from mobilerun.macro.player import _replay_snapshot
 from mobilerun.macro.settings import get_macro_settings
 from mobilerun.macro.utils import configure_macro_logging
 from mobilerun.models.results import ExecutionResult
@@ -78,10 +81,58 @@ def replay_options(command: F) -> F:
     return command
 
 
+def _selected_actions(
+    data: dict[str, Any], start_from: int, max_steps: int | None
+) -> list[dict[str, Any]]:
+    """Read the same step range as the player, with a one-based CLI start."""
+    actions: list[dict[str, Any]] = data.get("actions", [])
+    end = None if max_steps is None else start_from - 1 + max_steps
+    return actions[start_from - 1 : end]
+
+
+def _confirm_sends_before_target(command: Callable[..., None]) -> Callable[..., None]:
+    """Check the recording before the device-command wrapper can discover a target."""
+
+    @wraps(command)
+    def invoke(*, yes: bool, **options: Any) -> None:
+        if options["dry_run"] or yes:
+            return command(**options)
+
+        path = PathResolver.resolve(options["path"], must_exist=True)
+        data = MacroPlayer().load_macro_from_file(path)
+        count = 0
+        for action in _selected_actions(
+            data, options["start_from"], options["max_steps"]
+        ):
+            if action.get("action_type", action.get("type")) != "extension_call":
+                continue
+            name = action.get("name")
+            # Extension roles are not recorded. Treat every named .send as possible SMS.
+            if isinstance(name, str):
+                owner, _, method = name.rpartition(".")
+                if owner and method == "send":
+                    count += 1
+        if count:
+            asyncio.run(confirm_paid_action(f"Send {count} SMS", yes=False))
+
+        # Play what was checked, even if the file changes while the device opens.
+        token = _replay_snapshot.set((path, data))
+        try:
+            return command(**options)
+        finally:
+            _replay_snapshot.reset(token)
+
+    return invoke
+
+
 @click.command(short_help="Replay strictly")
 @click.option("--on-mismatch", type=click.Choice(["stop", "agent"]), default="stop")
 @click.option("--provider", default=None)
 @click.option("--model", default=None)
+@click.option(
+    "--yes", "-y", is_flag=True, help="Confirm possible SMS charges without prompting."
+)
+@_confirm_sends_before_target
 @replay_options
 def replay(
     on_mismatch: str,
@@ -151,9 +202,7 @@ def run_replay(
         resolved = str(PathResolver.resolve(path, must_exist=True))
         data = MacroPlayer().load_macro_from_file(resolved)
         if dry_run:
-            actions = data.get("actions", [])[start_from - 1 :]
-            if max_steps is not None:
-                actions = actions[:max_steps]
+            actions = _selected_actions(data, start_from, max_steps)
             for index, action in enumerate(actions, start=start_from):
                 click.echo(f"{index}: {_action_summary(action)}")
             return

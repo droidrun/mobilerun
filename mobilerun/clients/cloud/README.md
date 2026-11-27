@@ -49,7 +49,10 @@ app = await upload_app("counter.apk", billing=Billing.NO_COMMERCE)
 
 Every public client function requires keyword-only `billing: Billing`, without a
 default. Enum values and their strings work; `None` does not. Each boundary declares
-its minimum with `@requires(Billing.X)`. Missing billing raises `TypeError`, an
+its minimum with `@requires(Billing.X)`. A call that can cost more declares it on
+the same line with `paid_if=`, a function of the bound arguments (a metered phone
+plan, a rented number or mailbox, a new Connect proxy by country); the guard never
+infers a rule from a module or function name. Missing billing raises `TypeError`, an
 invalid mode raises `BillingError`, and a lower mode raises `BillingRequired`
 with `needed`, `given`, and `operation`, all before transport. The order is
 `NO_COMMERCE < INCLUDED < PAID`. Import enums from `mobilerun.models` (clients)

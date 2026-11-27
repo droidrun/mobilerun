@@ -10,7 +10,11 @@ from mobilerun_sdk.types.connect.proxy_retrieve_response import ProxyRetrieveRes
 from mobilerun_sdk.types.devices.proxy_connect_params import ProxyConnectParams
 from mobilerun_sdk.types.devices.proxy_status_response import ProxyStatusResponse
 
-from mobilerun.clients.cloud.billing import _validate_create_params, requires
+from mobilerun.clients.cloud.billing import (
+    _validate_create_params,
+    buys_connect_proxy,
+    requires,
+)
 from mobilerun.clients.cloud.checkout import CheckoutMode, checkout_callback
 from mobilerun.clients.cloud.client import cloud_client
 from mobilerun.clients.cloud.errors import cloud_error
@@ -29,7 +33,10 @@ from mobilerun.utils.redaction import secret_scope
 BuyParams = TypedDict("BuyParams", {"name": str}, total=False)
 
 
-@requires(Billing.NO_COMMERCE)
+@requires(
+    Billing.NO_COMMERCE,
+    paid_if=lambda arguments: buys_connect_proxy(arguments["params"]),
+)
 async def connect_device(
     device_id: str,
     params: ProxyConnectParams,

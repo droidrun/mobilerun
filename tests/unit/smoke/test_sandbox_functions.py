@@ -38,7 +38,7 @@ def _verified_smoke_scope():
         valid = False
     if not valid:
         pytest.skip(message)
-    from mobilerun.sandbox.deployment import current_scope
+    from mobilerun.sandbox.receipts import current_scope
 
     scope = current_scope()
     assert (
@@ -130,7 +130,8 @@ def test_device_free_sandbox_files(real_env, tmp_path, monkeypatch):
     from mobilerun.clients.cloud.client import cloud_client
     from mobilerun.models.billing import Billing
     from mobilerun.sandbox import clients, cloud, deploy
-    from mobilerun.sandbox.deployment import ReceiptStore, cleanup_owned
+    from mobilerun.sandbox.cleanup import cleanup_owned
+    from mobilerun.sandbox.receipts import ReceiptStore
 
     scope = _verified_smoke_scope()
     name = f"sandbox-files-smoke-{uuid4().hex}"
@@ -279,12 +280,9 @@ def _run_lifecycle(tmp_path, monkeypatch, webhook, source, receiver_token):
     from mobilerun.errors.cloud import CloudResourceNotFound
     from mobilerun.models.billing import Billing
     from mobilerun.sandbox import clients, deploy
-    from mobilerun.sandbox.deployment import (
-        ReceiptStore,
-        cleanup_owned,
-        current_scope,
-    )
+    from mobilerun.sandbox.cleanup import cleanup_owned
     from mobilerun.sandbox.errors import SandboxRunError
+    from mobilerun.sandbox.receipts import ReceiptStore, current_scope
 
     scope = _verified_smoke_scope()
     name = f"sandbox-smoke-{uuid4().hex}"

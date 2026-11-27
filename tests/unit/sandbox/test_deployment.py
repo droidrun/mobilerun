@@ -12,7 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from mobilerun.core.webhooks import WebhookEndpoint
 from mobilerun.errors.cloud import BillingRequired, CloudResourceNotFound
+from mobilerun.sandbox import cleanup as sandbox_cleanup
 from mobilerun.sandbox import deployment as deploy
+from mobilerun.sandbox import documents as sandbox_documents
+from mobilerun.sandbox import flows as sandbox_flows
+from mobilerun.sandbox import receipts as sandbox_receipts
 from mobilerun.sandbox.errors import (
     FlowCapabilityError,
     FlowStagingError,
@@ -47,7 +51,7 @@ def artifact(**options):
 
 
 def test_build_endpoint_document_uses_pinned_version_and_no_device():
-    from mobilerun.sandbox.deployment import build_document
+    from mobilerun.sandbox.documents import build_document
 
     doc = build_document(artifact(endpoint=True), "function", 3, device=None)
     assert doc["on"] == {"custom": {"inputs": {"type": "object"}}}
@@ -67,7 +71,7 @@ def test_build_endpoint_document_uses_pinned_version_and_no_device():
     ],
 )
 def test_literal_declaration_flow_resolution(tmp_path, options, expected):
-    from mobilerun.sandbox.deployment import build_document
+    from mobilerun.sandbox.documents import build_document
     from mobilerun.sandbox.packaging import read_declaration
 
     path = tmp_path / "main.py"
@@ -118,7 +122,7 @@ def test_literal_declaration_rejects_removed_manual_trigger(tmp_path):
 
 
 def test_invalid_cron_fails_locally():
-    from mobilerun.sandbox.deployment import build_document
+    from mobilerun.sandbox.documents import build_document
     from mobilerun.sandbox.errors import SandboxDeclarationError
 
     with pytest.raises(SandboxDeclarationError):
@@ -161,7 +165,7 @@ def test_webhook_keeps_fixed_list_items_without_files_as_whole_values():
         ),
         output_schema=output_schema(Output),
     )
-    doc = deploy.build_document(packaged, "f", 1, device=None)
+    doc = sandbox_documents.build_document(packaged, "f", 1, device=None)
     assert doc["steps"][-1]["with"]["data"] == {
         "result": {
             "events": [
@@ -220,7 +224,7 @@ def test_webhook_file_path_normalizes_folder_without_changing_filename():
         ),
         output_schema=output_schema(Output),
     )
-    doc = deploy.build_document(packaged, "f", 1, device=None)
+    doc = sandbox_documents.build_document(packaged, "f", 1, device=None)
     assert doc["steps"][1]["with"]["filename"] == filename
     assert (
         doc["steps"][-1]["with"]["data"]["result"]["image"]["path"]
@@ -241,7 +245,7 @@ def test_webhook_uses_first_upload_when_a_field_has_multiple_filenames():
         ),
         output_schema=output_schema(Output),
     )
-    doc = deploy.build_document(packaged, "f", 1, device=None)
+    doc = sandbox_documents.build_document(packaged, "f", 1, device=None)
     assert [step["with"]["filename"] for step in doc["steps"][1:-1]] == [
         "other.jpg",
         "first.jpg",
@@ -266,8 +270,8 @@ def test_legacy_file_webhook_order_can_only_be_read_for_redeploy():
         ]
     }
     with pytest.raises(SandboxDeploymentConflict, match="redeploy"):
-        deploy._pinned_version("f", document)
-    assert deploy._pinned_version("f", document, for_redeploy=True) == 7
+        sandbox_flows.pinned_version("f", document)
+    assert sandbox_flows.pinned_version("f", document, for_redeploy=True) == 7
 
 
 @pytest.mark.parametrize(
@@ -290,14 +294,14 @@ def test_webhook_file_path_cannot_embed_a_template(filename, folder):
         output_schema=output_schema(Output),
     )
     with pytest.raises(SandboxDeclarationError, match="template syntax"):
-        deploy.build_document(packaged, "f", 1, device=None)
+        sandbox_documents.build_document(packaged, "f", 1, device=None)
 
 
 @pytest.mark.parametrize(
     "declaration", [CloudDeclaration(""), CloudDeclaration("x", endpoint="yes")]
 )
 def test_invalid_declaration_is_rejected(declaration):
-    from mobilerun.sandbox.deployment import build_document
+    from mobilerun.sandbox.documents import build_document
     from mobilerun.sandbox.errors import SandboxDeclarationError
 
     with pytest.raises(SandboxDeclarationError):
@@ -307,7 +311,7 @@ def test_invalid_declaration_is_rejected(declaration):
 
 
 def test_equivalence_detects_device_removal_and_schema_changes():
-    from mobilerun.sandbox.deployment import equivalent_document
+    from mobilerun.sandbox.documents import equivalent_document
 
     assert not equivalent_document(
         {"on": {"custom": {}}, "devices": ["phone"]}, {"on": {"custom": {}}}
@@ -493,7 +497,7 @@ async def test_staging_replays_before_rechecking_deleted_borrowed_endpoint(env, 
     )
     env.fake.delete_action = AsyncMock()
     env.fake.delete_trigger = AsyncMock()
-    await deploy.cleanup_owned(receipt)
+    await sandbox_cleanup.cleanup_owned(receipt)
     assert not env.store.read().action_ids
 
 
@@ -534,14 +538,14 @@ async def test_paused_initial_webhook_and_explicit_enable(env, hooks):
     )
     fake.get_document = AsyncMock(return_value=fake.create_document.await_args.args[0])
     fake.disable_flow = AsyncMock()
-    await deploy.set_enabled("demo", False)
+    await sandbox_flows.set_enabled("demo", False)
     hooks.reset_mock()
     await deploy.deploy_file(env.path, artifact=art)
     hooks.get.assert_not_awaited()
     fake.enable_flow.reset_mock()
     hooks.get.side_effect = lambda id: endpoint(id, health="blocked")
     with pytest.raises(SandboxDeploymentError, match="blocked"):
-        await deploy.set_enabled("demo", True)
+        await sandbox_flows.set_enabled("demo", True)
     hooks.get.assert_awaited_once_with(HOOK_ID)
     fake.enable_flow.assert_not_awaited()
 
@@ -550,7 +554,7 @@ async def test_paused_initial_webhook_and_explicit_enable(env, hooks):
 def hooks(monkeypatch):
     manager = AsyncMock()
     manager.get.side_effect = lambda id: endpoint(id)
-    monkeypatch.setattr(deploy, "CloudWebhooks", lambda **kwargs: manager)
+    monkeypatch.setattr(sandbox_flows, "CloudWebhooks", lambda **kwargs: manager)
     return manager
 
 
@@ -773,7 +777,7 @@ async def test_initial_unknown_action_blocks_function_cleanup(initial_cloud):
     receipt = e.store.read()
     assert receipt.trigger_id == "trigger" and not receipt.action_ids
     with pytest.raises(SandboxDeploymentError, match="creation.*uncertain"):
-        await deploy.cleanup_owned(receipt, delete_function=True)
+        await sandbox_cleanup.cleanup_owned(receipt, delete_function=True)
     assert e.cloud.function_exists
     assert "delete_function" not in e.cloud.calls
 
@@ -860,7 +864,7 @@ async def test_initial_action_replays_payload_after_catalog_changes(initial_clou
         await deploy.deploy_file(e.path)
     first = sdk.actions.create.await_args.kwargs
     payload = {k: v for k, v in first.items() if k != "idempotency_key"}
-    journal = deploy._initial(e.store.read())
+    journal = sandbox_receipts.pending_initial(e.store.read())
     assert journal["action_payloads"] == [payload]
     sdk.action_catalog.list = AsyncMock(
         return_value={
@@ -874,7 +878,7 @@ async def test_initial_action_replays_payload_after_catalog_changes(initial_clou
     assert sdk.actions.create.await_count == 2
     assert sdk.actions.create.await_args.kwargs == first
     sdk.action_catalog.list.assert_not_awaited()
-    await deploy.cleanup_owned(e.store.read())
+    await sandbox_cleanup.cleanup_owned(e.store.read())
     assert not e.store.read().action_ids
 
 
@@ -883,19 +887,19 @@ async def test_interrupted_receipt_export_cannot_activate_until_replayed(
     initial_cloud, monkeypatch
 ):
     e = initial_cloud
-    original = deploy.ReceiptStore.write_yaml
+    original = sandbox_receipts.ReceiptStore.write_yaml
 
     def stop(*args, **kwargs):
         raise ProcessInterrupted()
 
-    monkeypatch.setattr(deploy.ReceiptStore, "write_yaml", stop)
+    monkeypatch.setattr(sandbox_receipts.ReceiptStore, "write_yaml", stop)
     with pytest.raises(ProcessInterrupted):
         await deploy.deploy_file(e.path)
     assert e.store.read().flow_id == "flow" and e.store.read().action_ids == ("action",)
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.set_enabled("demo", True)
+        await sandbox_flows.set_enabled("demo", True)
     assert "enable" not in e.cloud.calls
-    monkeypatch.setattr(deploy.ReceiptStore, "write_yaml", original)
+    monkeypatch.setattr(sandbox_receipts.ReceiptStore, "write_yaml", original)
     await deploy.deploy_file(e.path)
     assert e.cloud.flow["enabled"] is True
 
@@ -940,10 +944,10 @@ async def test_cleanup_initial_stage_with_all_creation_ids_known_is_allowed(
     def stop(*args, **kwargs):
         raise ProcessInterrupted()
 
-    monkeypatch.setattr(deploy.ReceiptStore, "write_yaml", stop)
+    monkeypatch.setattr(sandbox_receipts.ReceiptStore, "write_yaml", stop)
     with pytest.raises(ProcessInterrupted):
         await deploy.deploy_file(e.path)
-    await deploy.cleanup_owned(e.store.read(), delete_function=True)
+    await sandbox_cleanup.cleanup_owned(e.store.read(), delete_function=True)
     assert not e.cloud.function_exists and not e.cloud.trigger_exists
 
 
@@ -956,18 +960,18 @@ async def test_initial_cleanup_keeps_resolution_evidence_after_partial_deletion(
     def stop(*args, **kwargs):
         raise ProcessInterrupted()
 
-    monkeypatch.setattr(deploy.ReceiptStore, "write_yaml", stop)
+    monkeypatch.setattr(sandbox_receipts.ReceiptStore, "write_yaml", stop)
     with pytest.raises(ProcessInterrupted):
         await deploy.deploy_file(e.path)
     e.cloud.fail = "delete_action"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.cleanup_owned(e.store.read(), delete_function=True)
+        await sandbox_cleanup.cleanup_owned(e.store.read(), delete_function=True)
     assert e.store.read().flow_id is None
     before = list(e.cloud.create_calls)
     with pytest.raises(SandboxDeploymentConflict, match="cleanup"):
         await deploy.deploy_file(e.path)
     assert e.cloud.create_calls == before
-    await deploy.cleanup_owned(e.store.read(), delete_function=True)
+    await sandbox_cleanup.cleanup_owned(e.store.read(), delete_function=True)
     assert e.store.read().function_id is None
 
 
@@ -976,7 +980,7 @@ async def test_deploy_after_completed_cleanup_is_a_new_create_intent(initial_clo
     e = initial_cloud
     await deploy.deploy_file(e.path)
     original_keys = dict(e.cloud.create_calls)
-    await deploy.cleanup_owned(e.store.read(), delete_function=True)
+    await sandbox_cleanup.cleanup_owned(e.store.read(), delete_function=True)
     result = await deploy.deploy_file(e.path)
     assert result.flow_id == "flow" and e.cloud.flow["enabled"] is True
     new_keys = dict(e.cloud.create_calls)
@@ -1097,7 +1101,7 @@ async def test_cutover_recovers_lost_webhook_action_before_activation(
     hooks.get.assert_awaited_once_with(HOOK_ID)
     assert cloud.keys[requests[0][1]] in changed.store.read().action_ids
     assert cloud.flow["enabled"] is True and cloud.bindings == ["action"]
-    await deploy.cleanup_owned(changed.store.read())
+    await sandbox_cleanup.cleanup_owned(changed.store.read())
     assert not cloud.actions
 
 
@@ -1155,7 +1159,7 @@ async def test_redeploy_add_change_remove_endpoint_id(changed, hooks, webhook_cu
             changed.store.yaml_path.unlink()
         assert (await webhook_cutover(target)).status == "unchanged"
         assert changed.store.yaml_path.exists()
-    await deploy.cleanup_owned(changed.store.read())
+    await sandbox_cleanup.cleanup_owned(changed.store.read())
     assert all(call[0] == "get" for call in hooks.mock_calls)
 
 
@@ -1241,7 +1245,7 @@ async def test_redeploy_add_move_remove_file_delivery(changed, hooks):
         assert result.action_ids == tuple(cloud.bindings)
         assert result.version == 1 and result.flow_id == "flow"
         changed.store.yaml_path.unlink()
-        await deploy.set_enabled("demo", True)
+        await sandbox_flows.set_enabled("demo", True)
         assert (
             await deploy.deploy_file(Path("fake.py"), artifact=artifact)
         ).status == "unchanged"
@@ -1268,7 +1272,7 @@ async def test_redeploy_upgrades_legacy_file_webhook_order(
             "required": ["image"],
         },
     )
-    document = deploy.build_document(artifact, "f", 1, device=None)
+    document = sandbox_documents.build_document(artifact, "f", 1, device=None)
     by_id = {step["id"]: step for step in document["steps"]}
     by_id["webhook"]["with"]["data"] = {"result": "{{steps.function.body.result}}"}
     document["steps"] = [by_id[key] for key in ("function", "webhook", "upload_1")]
@@ -1315,7 +1319,7 @@ async def test_redeploy_upgrades_legacy_file_webhook_order(
     cloud.replace_flow_actions = replace_typed
 
     with pytest.raises(SandboxDeploymentConflict, match="precedes file uploads"):
-        await deploy.set_enabled("demo", True)
+        await sandbox_flows.set_enabled("demo", True)
     assert not cloud.flow["enabled"]
     result = await deploy.deploy_file(Path("fake.py"), artifact=artifact)
     assert result.status == "pushed"
@@ -1332,7 +1336,7 @@ async def test_redeploy_upgrades_legacy_file_webhook_order(
             }
         }
     }
-    assert (await deploy.set_enabled("demo", True))["enabled"] is True
+    assert (await sandbox_flows.set_enabled("demo", True))["enabled"] is True
 
 
 @pytest.mark.anyio
@@ -1342,7 +1346,7 @@ async def test_enable_webhook_without_yaml_requires_authored_evidence(
 ):
     cloud, store = changed.cloud, changed.store
     await webhook_cutover(HOOK_ID)
-    await deploy.set_enabled("demo", False)
+    await sandbox_flows.set_enabled("demo", False)
     store.yaml_path.unlink()
     if evidence == "changed":
         action_id = cloud.bindings[-1]
@@ -1360,12 +1364,12 @@ async def test_enable_webhook_without_yaml_requires_authored_evidence(
         store.write(replace(receipt, stages=stages))
 
     if evidence == "matching":
-        assert (await deploy.set_enabled("demo", True))["enabled"] is True
+        assert (await sandbox_flows.set_enabled("demo", True))["enabled"] is True
     else:
         receipt = store.read()
         hooks.get.reset_mock()
         with pytest.raises(SandboxDeploymentConflict, match="redeploy"):
-            await deploy.set_enabled("demo", True)
+            await sandbox_flows.set_enabled("demo", True)
         assert cloud.flow["enabled"] is False
         assert store.read() == receipt
         hooks.get.assert_not_awaited()
@@ -1411,7 +1415,7 @@ async def test_cutover_lost_response_recovery(changed, stage):
 async def test_cleanup_retains_function_and_removes_yaml(changed):
     e = changed
     e.store.write_yaml(e.cloud.document)
-    await deploy.cleanup_owned(e.receipt, billing="no_commerce")
+    await sandbox_cleanup.cleanup_owned(e.receipt, billing="no_commerce")
     assert not e.store.yaml_path.exists()
     assert "delete_function" not in e.cloud.calls
     assert e.store.read().function_id == "f"
@@ -1422,7 +1426,7 @@ async def test_cleanup_continues_and_retains_failed_evidence(changed):
     e = changed
     e.cloud.fail = "delete_action"
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.cleanup_owned(e.receipt)
+        await sandbox_cleanup.cleanup_owned(e.receipt)
     assert error.value.receipt.action_ids == ("action",)
     assert "delete_trigger" in e.cloud.calls
 
@@ -1511,7 +1515,7 @@ async def test_changed_disabled_flow_stays_disabled(changed):
 async def test_cleanup_foreign_receipt_is_read_only(changed):
     e = changed
     with pytest.raises(SandboxDeploymentConflict):
-        await deploy.cleanup_owned(replace(e.receipt, action_ids=("foreign",)))
+        await sandbox_cleanup.cleanup_owned(replace(e.receipt, action_ids=("foreign",)))
     assert e.cloud.calls == []
 
 
@@ -1520,7 +1524,7 @@ async def test_cleanup_failed_flow_deletion_retains_yaml(changed):
     e = changed
     e.cloud.fail = "delete_flow"
     with pytest.raises(SandboxDeploymentError) as error:
-        await deploy.cleanup_owned(e.receipt)
+        await sandbox_cleanup.cleanup_owned(e.receipt)
     assert error.value.receipt.flow_id == "flow"
     assert e.store.yaml_path.exists()
 
@@ -1528,7 +1532,7 @@ async def test_cleanup_failed_flow_deletion_retains_yaml(changed):
 @pytest.mark.anyio
 async def test_cleanup_function_explicit_opt_in(changed):
     e = changed
-    await deploy.cleanup_owned(e.receipt, delete_function=True)
+    await sandbox_cleanup.cleanup_owned(e.receipt, delete_function=True)
     assert "delete_function" in e.cloud.calls
     assert e.store.read().function_id is None
 
@@ -1541,12 +1545,12 @@ async def test_action_intent_is_durable_before_lost_response(changed, monkeypatc
     keys = []
 
     async def disable_with_journal(flow_id, **kwargs):
-        pending = deploy._cutover(e.store.read())
+        pending = sandbox_receipts.pending_cutover(e.store.read())
         assert pending["action_payloads"][0]["catalog_entry_id"] == "catalog"
         return await disable(flow_id, **kwargs)
 
     async def create(params, key, **kwargs):
-        pending = deploy._cutover(e.store.read())
+        pending = sandbox_receipts.pending_cutover(e.store.read())
         assert pending["pending"] == "create:0"
         assert pending["action_payloads"] == [params]
         assert any(key in stage for stage in e.store.read().stages)
@@ -1608,7 +1612,7 @@ async def test_shared_dependencies_reject_cutover_and_cleanup(
     with pytest.raises(SandboxDeploymentConflict):
         await deploy.deploy_file(Path("fake.py"))
     with pytest.raises(SandboxDeploymentError):
-        await deploy.cleanup_owned(e.receipt)
+        await sandbox_cleanup.cleanup_owned(e.receipt)
     assert e.cloud.flow["enabled"] is True
     assert "delete_flow" not in e.cloud.calls
     if shared == "action":
@@ -1636,16 +1640,16 @@ async def test_old_cutover_receipt_requires_manual_recovery(changed):
     e.cloud.fail = "create"
     with pytest.raises(SandboxDeploymentError):
         await deploy.deploy_file(Path("fake.py"))
-    pending = deploy._cutover(e.store.read())
+    pending = sandbox_receipts.pending_cutover(e.store.read())
     pending.pop("action_payloads")
-    receipt = deploy._checkpoint(e.store, e.store.read(), pending)
+    receipt = sandbox_receipts.checkpoint(e.store, e.store.read(), pending)
     yaml = e.store.yaml_path.read_bytes()
     e.cloud.calls.clear()
 
     with pytest.raises(SandboxDeploymentConflict) as resume:
         await deploy.deploy_file(Path("fake.py"))
     with pytest.raises(SandboxDeploymentConflict) as cleanup:
-        await deploy.cleanup_owned(receipt, delete_function=True)
+        await sandbox_cleanup.cleanup_owned(receipt, delete_function=True)
     assert str(resume.value) == str(cleanup.value)
     assert "receipt predates this version" in str(resume.value)
     assert "finish or clean up the deployment manually" in str(resume.value)
@@ -1666,11 +1670,11 @@ async def test_cleanup_pending_unknown_action_reports_uncertainty(changed):
         list(e.cloud.calls),
     )
     with pytest.raises(SandboxDeploymentError, match="retry the original deploy"):
-        await deploy.cleanup_owned(receipt, delete_function=True)
+        await sandbox_cleanup.cleanup_owned(receipt, delete_function=True)
     assert e.store.read() == receipt and e.store.yaml_path.read_bytes() == yaml
     assert e.cloud.calls == calls
     await deploy.deploy_file(Path("fake.py"))
-    await deploy.cleanup_owned(e.store.read(), delete_function=True)
+    await sandbox_cleanup.cleanup_owned(e.store.read(), delete_function=True)
     assert not e.cloud.actions and e.store.read().function_id is None
 
 
@@ -1679,9 +1683,9 @@ async def test_cleanup_lost_flow_delete_resolves_on_retry(changed):
     e = changed
     e.cloud.fail = "delete_flow"
     with pytest.raises(SandboxDeploymentError):
-        await deploy.cleanup_owned(e.receipt)
+        await sandbox_cleanup.cleanup_owned(e.receipt)
     assert e.store.yaml_path.exists()
-    await deploy.cleanup_owned(e.store.read())
+    await sandbox_cleanup.cleanup_owned(e.store.read())
     assert not e.store.yaml_path.exists()
     assert e.store.read().flow_id is None
 
@@ -1694,7 +1698,9 @@ async def test_uncertain_enable_attempts_shutdown_and_reports_actual_state(chang
         await deploy.deploy_file(Path("fake.py"))
     assert e.cloud.flow["enabled"] is False
     assert "enabled=False" in str(error.value)
-    assert deploy._cutover(error.value.receipt)["warning"] == str(error.value)
+    assert sandbox_receipts.pending_cutover(error.value.receipt)["warning"] == str(
+        error.value
+    )
     assert e.cloud.calls[-1] == "disable"
 
 
@@ -1706,8 +1712,8 @@ async def test_cleanup_lost_delete_response_real_404_completes_on_retry(changed,
     e = changed
     e.cloud.fail = stage
     with pytest.raises(SandboxDeploymentError):
-        await deploy.cleanup_owned(e.receipt, delete_function=True)
-    await deploy.cleanup_owned(e.store.read(), delete_function=True)
+        await sandbox_cleanup.cleanup_owned(e.receipt, delete_function=True)
+    await sandbox_cleanup.cleanup_owned(e.store.read(), delete_function=True)
     receipt = e.store.read()
     assert (
         receipt.action_ids == ()

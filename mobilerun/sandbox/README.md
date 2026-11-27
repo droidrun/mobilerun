@@ -332,7 +332,13 @@ to identify resources and verify ownership before changing or deleting them.
 | [`__init__.py`](__init__.py), [`_runtime.py`](_runtime.py) | Public API and lazy worker-runtime exports |
 | [`app.py`](app.py) | Cloud decorator and synchronous `deploy`, `Remote`, and `Run` APIs |
 | [`packaging.py`](packaging.py) | Static declaration parsing, extraction, and local inspection |
-| [`deployment.py`](deployment.py) | Async deployment, receipts, workflow cutover, cleanup, and run polling |
+| [`deployment.py`](deployment.py) | Async first deploy, redeploy, and workflow cutover |
+| [`receipts.py`](receipts.py) | Account scope, the local receipt store, and deploy checkpoints |
+| [`documents.py`](documents.py) | Workflow document building and comparison |
+| [`flows.py`](flows.py) | Remote function and flow lookup, ownership checks, webhook checks, and enable/disable |
+| [`execution.py`](execution.py) | Endpoint runs, run polling, results, and logs |
+| [`cleanup.py`](cleanup.py) | Removal of resources recorded in a receipt |
+| [`billing.py`](billing.py) | Paid-mode check shared by deploy, run, and activation |
 | [`clients.py`](clients.py) | Sandbox's async SDK adapter; uses shared [cloud client and billing helpers](../clients/cloud/README.md), closes clients it creates, and leaves injected clients caller-owned |
 | [`models.py`](models.py), [`errors.py`](errors.py), [`settings.py`](settings.py) | Declarations, receipts, errors, and defaults |
 | [`cli/`](cli/) | Removable `mobilerun sandbox` command group |

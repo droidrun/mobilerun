@@ -242,8 +242,7 @@ def test_replay_config_reaches_device_connection(monkeypatch, tmp_path):
 
 def test_macro_agent_handoff_accepts_injected_runner(tmp_path):
 
-    path = tmp_path / "macro.json"
-    path.write_text("{}")
+    path = write_macro(tmp_path)
     received = []
     result = CliRunner().invoke(
         macro,

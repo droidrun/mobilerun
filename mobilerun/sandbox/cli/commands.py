@@ -75,7 +75,7 @@ def _resolve_mode(billing: str | None) -> Billing:
 
 
 def _deployment_choices(ctx: click.Context) -> list[SelectChoice]:
-    from mobilerun.sandbox.deployment import list_deployments
+    from mobilerun.sandbox.flows import list_deployments
 
     mode = _resolve_mode(ctx.params.get("billing"))
     records = asyncio.run(list_deployments(billing=mode))
@@ -229,7 +229,8 @@ async def deploy_command(
     as_json: bool,
 ) -> None:
     """Deploy a cloud function as an endpoint by default."""
-    from mobilerun.sandbox.deployment import _check_deploy_billing, deploy_file
+    from mobilerun.sandbox.billing import check_deploy_billing
+    from mobilerun.sandbox.deployment import deploy_file
     from mobilerun.sandbox.packaging import package, read_declaration
 
     if device is not None and device_free:
@@ -253,7 +254,7 @@ async def deploy_command(
 
     async def authorize(attempt: Billing) -> None:
         try:
-            await _check_deploy_billing(attempt)
+            await check_deploy_billing(attempt)
         except BillingRequired as exc:
             raise _TargetedBillingRequired(exc, summary) from exc
 
@@ -288,7 +289,7 @@ async def deploy_command(
 @coro
 async def list_command(billing: str | None, as_json: bool) -> None:
     """List deployed sandbox functions."""
-    from mobilerun.sandbox.deployment import list_deployments
+    from mobilerun.sandbox.flows import list_deployments
 
     records = await list_deployments(billing=_resolve_mode(billing))
     if as_json:
@@ -359,7 +360,7 @@ async def fire_command(
     as_json: bool,
 ) -> None:
     """Trigger a sandbox run without waiting for its result."""
-    from mobilerun.sandbox.deployment import fire_remote
+    from mobilerun.sandbox.execution import fire_remote
 
     mode = _resolve_mode(billing)
     payload = _payload(input_json, input_file)
@@ -409,7 +410,7 @@ async def runs_command(
     name: str, limit: int, billing: str | None, as_json: bool
 ) -> None:
     """List recent runs of a sandbox function."""
-    from mobilerun.sandbox.deployment import recent_runs
+    from mobilerun.sandbox.execution import recent_runs
 
     records = await recent_runs(name, limit, billing=_resolve_mode(billing))
     if as_json:
@@ -431,7 +432,8 @@ async def runs_command(
 async def _set_enabled(
     names: tuple[str, ...], enabled: bool, billing: str | None, yes: bool, as_json: bool
 ) -> None:
-    from mobilerun.sandbox.deployment import _require_paid, set_enabled
+    from mobilerun.sandbox.billing import require_paid
+    from mobilerun.sandbox.flows import set_enabled
 
     mode = _resolve_mode(billing)
     verb = "Enable" if enabled else "Disable"
@@ -443,7 +445,7 @@ async def _set_enabled(
 
         async def authorize(attempt: Billing) -> None:
             try:
-                _require_paid(billing=attempt)
+                require_paid(billing=attempt)
             except BillingRequired as exc:
                 raise _TargetedBillingRequired(exc, summary) from exc
 

@@ -55,7 +55,7 @@ def test_lazy_lookup_refreshes_after_redeploy(backend):
 @pytest.mark.parametrize("operation", ["fire", "enable", "call"])
 def test_remote_mutations_retry_with_paid(backend, monkeypatch, operation):
     from mobilerun.sandbox import app
-    from mobilerun.sandbox.deployment import _require_paid
+    from mobilerun.sandbox.billing import require_paid
 
     prompt = AsyncMock(return_value=True)
     monkeypatch.setattr(
@@ -68,7 +68,7 @@ def test_remote_mutations_retry_with_paid(backend, monkeypatch, operation):
     fake = backend[name]
 
     async def guarded(*args, billing):
-        _require_paid(billing=billing)
+        require_paid(billing=billing)
         return fake.return_value
 
     fake.side_effect = guarded
@@ -285,7 +285,7 @@ def test_nullable_and_generic_result(backend, value, model, expected):
 
 
 def test_run_result_propagates_failed_body_and_preserves_partial(monkeypatch):
-    operations = importlib.import_module("mobilerun.sandbox.deployment")
+    execution = importlib.import_module("mobilerun.sandbox.execution")
     handle = sandbox.Remote("x", output_type=Output)
     body = {"outcome": "failed", "result": {"n": 2}}
     snapshot = {
@@ -294,7 +294,7 @@ def test_run_result_propagates_failed_body_and_preserves_partial(monkeypatch):
         "result": {"steps": [{"uses": "functions.run", "body": body}]},
     }
     monkeypatch.setattr(
-        operations, "execution_snapshot", AsyncMock(return_value=snapshot)
+        execution, "execution_snapshot", AsyncMock(return_value=snapshot)
     )
     run = sandbox.Run(handle, execution_id="run")
     with pytest.raises(SandboxRunError, match="body failed"):
@@ -386,6 +386,7 @@ def test_explicit_deploy_is_exported_even_after_loading_submodule(monkeypatch):
 def test_sdk_deploy_escalation(monkeypatch, mode, tty, answer, yes, attempts):
     from mobilerun.errors import BillingRequired
     from mobilerun.sandbox import app, deployment
+    from mobilerun.sandbox.billing import require_paid
 
     seen = []
     prompts = []
@@ -401,7 +402,7 @@ def test_sdk_deploy_escalation(monkeypatch, mode, tty, answer, yes, attempts):
     async def deploy(path, *, device, device_free, billing, artifact):
         assert artifact is inspected
         seen.append(billing)
-        deployment._require_paid(billing=billing)
+        require_paid(billing=billing)
         return "created"
 
     async def prompt(_error):

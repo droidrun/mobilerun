@@ -6,10 +6,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from mobilerun.sandbox import clients
-from mobilerun.sandbox import deployment as deploy
+from mobilerun.sandbox import documents as sandbox_documents
 from tests.support.sandbox_fakes import InitialSandboxCloud as BaseInitialCloud
 from tests.support.sandbox_fixtures import changed as base_changed
 from tests.support.sandbox_fixtures import env as base_env
+from tests.support.sandbox_fixtures import patch_sandbox
 
 __all__ = [
     "base_changed",
@@ -66,7 +67,7 @@ def changed(base_changed):
 @pytest.fixture
 def initial_cloud(env, monkeypatch):
     env.cloud = InitialSandboxCloud(
-        deploy.build_document(env.artifact, "f", 1, device=None)
+        sandbox_documents.build_document(env.artifact, "f", 1, device=None)
     )
-    monkeypatch.setattr(deploy, "clients", env.cloud)
+    patch_sandbox(monkeypatch, "clients", env.cloud)
     return env

@@ -266,3 +266,63 @@ def test_sdk_does_not_prompt_without_visible_terminal(
                     lambda mode: send(billing=mode), Billing.INCLUDED
                 )
             )
+
+
+def test_guard_rule_is_declared_not_inferred_from_names():
+    def create(*, billing, plan=None, proxy=None):
+        return billing
+
+    # Names that used to trigger built-in rules must not change the minimum.
+    create.__module__ = "mobilerun.clients.cloud.devices"
+    undeclared = policy.requires(Billing.INCLUDED)(create)
+    declared = policy.requires(
+        Billing.INCLUDED, paid_if=lambda arguments: arguments["plan"] == "minute"
+    )(create)
+    connect = {"connect": {"country": "US"}}
+
+    assert undeclared(billing="included", plan="minute", proxy=connect) is (
+        Billing.INCLUDED
+    )
+    assert declared(billing="included", plan="subscription") is Billing.INCLUDED
+    assert declared(billing="paid", plan="minute") is Billing.PAID
+    with pytest.raises(BillingRequired) as raised:
+        declared(billing="included", plan="minute")
+    assert raised.value.needed is Billing.PAID
+    assert raised.value.given is Billing.INCLUDED
+
+
+def test_guard_rule_rejects_invalid_input_before_the_call():
+    def unusable(arguments):
+        raise ValueError("not a plan")
+
+    @policy.requires(Billing.INCLUDED, paid_if=unusable)
+    def create(*, billing, plan=None):
+        pytest.fail("guard must refuse first")
+
+    with pytest.raises(BillingError) as raised:
+        create(billing="paid", plan="weekly")
+    assert raised.value.code == "invalid_billing"
+    assert not isinstance(raised.value, BillingRequired)
+
+
+@pytest.mark.parametrize(
+    "proxy,expected",
+    [
+        ({"connect": {"country": "US"}}, True),
+        ({"connect": {"id": "proxy-1"}}, False),
+        ({"connect": {"country": ""}}, False),
+        ({"socks5": {"host": "127.0.0.1", "port": 1080}}, False),
+        ({"connect": "US"}, False),
+        (None, False),
+    ],
+)
+def test_only_a_new_connect_proxy_by_country_is_a_purchase(proxy, expected):
+    assert policy.buys_connect_proxy(proxy) is expected
+
+
+@pytest.mark.parametrize(
+    "plan,expected",
+    [("rent", True), ("auto", False), ("included", False), (None, False)],
+)
+def test_only_the_rent_plan_is_a_rental(plan, expected):
+    assert policy.rents_resource({"plan": plan}) is expected

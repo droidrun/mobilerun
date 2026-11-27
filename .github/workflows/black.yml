@@ -19,3 +19,8 @@ jobs:
           options: "--check --diff --verbose"
           src: "."
           version: "26.10.1"
+
+      - name: Type check
+        run: |
+          python -m pip install uv
+          uv run --locked --extra sandbox --extra dev mypy mobilerun

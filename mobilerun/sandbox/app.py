@@ -19,7 +19,10 @@ from pydantic_core import ErrorType, InitErrorDetails, PydanticCustomError
 from mobilerun.clients.cloud.billing import with_billing_retry
 from mobilerun.models.billing import Billing
 
-from . import deployment as _operations
+from . import deployment as _deployment
+from . import execution as _execution
+from . import flows as _flows
+from .billing import check_deploy_billing
 from .errors import SandboxDeclarationError, SandboxDeploymentError, SandboxRunError
 from .models import (
     FILES_RETURN_ERROR,
@@ -219,9 +222,7 @@ class Remote:
 
     @property
     def _description(self) -> JSON:
-        return _sync(
-            partial(_operations.describe_remote, self.name, billing=self._billing)
-        )
+        return _sync(partial(_flows.describe_remote, self.name, billing=self._billing))
 
     @property
     def function_id(self) -> str:
@@ -277,7 +278,7 @@ class Remote:
         fired, mode = _sync(
             partial(
                 with_billing_retry,
-                lambda attempt: _operations.fire_remote(
+                lambda attempt: _execution.fire_remote(
                     self.name, payload, billing=attempt
                 ),
                 self._mode(billing),
@@ -303,7 +304,7 @@ class Remote:
         if limit <= 0:
             return []
         mode = self._mode(billing)
-        rows = _sync(partial(_operations.recent_runs, self.name, limit, billing=mode))
+        rows = _sync(partial(_execution.recent_runs, self.name, limit, billing=mode))
         runs = []
         for row in rows:
             run = Run(self, execution_id=row["id"], snapshot=row)
@@ -318,9 +319,7 @@ class Remote:
         result, _ = _sync(
             partial(
                 with_billing_retry,
-                lambda attempt: _operations.set_enabled(
-                    self.name, True, billing=attempt
-                ),
+                lambda attempt: _flows.set_enabled(self.name, True, billing=attempt),
                 self._mode(billing),
                 yes=yes,
             )
@@ -330,9 +329,7 @@ class Remote:
     def disable(self, *, billing: Billing | str | None = None) -> JSON:
         """Pause this owned flow until enabled again."""
         return _sync(
-            partial(
-                _operations.set_enabled, self.name, False, billing=self._mode(billing)
-            )
+            partial(_flows.set_enabled, self.name, False, billing=self._mode(billing))
         )
 
 
@@ -360,7 +357,7 @@ class Run:
                 raise SandboxRunError("Provide an invocation or execution ID")
             self._id = _sync(
                 partial(
-                    _operations.resolve_execution,
+                    _execution.resolve_execution,
                     self.remote.name,
                     self.invocation_id,
                     deadline=time.monotonic()
@@ -373,7 +370,7 @@ class Run:
     @property
     def status(self) -> str:
         self._snapshot = _sync(
-            partial(_operations.execution_snapshot, self.id, billing=self._billing)
+            partial(_execution.execution_snapshot, self.id, billing=self._billing)
         )
         return self._snapshot["status"]
 
@@ -404,7 +401,7 @@ class Run:
             timeout = get_sandbox_settings().MOBILERUN_SANDBOX_RUN_TIMEOUT
         self._snapshot = _sync(
             partial(
-                _operations.wait_result,
+                _execution.wait_result,
                 self.remote.name,
                 invocation_id=self.invocation_id,
                 execution_id=self._id,
@@ -431,9 +428,7 @@ class Run:
 
     def logs(self) -> str:
         """Return execution logs through the cloud boundary."""
-        return _sync(
-            partial(_operations.execution_logs, self.id, billing=self._billing)
-        )
+        return _sync(partial(_execution.execution_logs, self.id, billing=self._billing))
 
 
 class Cloud:
@@ -501,12 +496,10 @@ def deploy(
     async def deploy_inspected() -> DeploymentReceipt:
         mode = resolve_billing(billing)
         validate_device(device)
-        _, mode = await with_billing_retry(
-            _operations._check_deploy_billing, mode, yes=yes
-        )
+        _, mode = await with_billing_retry(check_deploy_billing, mode, yes=yes)
         source = Path(path)
         artifact = package(source)
-        return await _operations.deploy_file(
+        return await _deployment.deploy_file(
             source,
             device=device,
             device_free=device_free,

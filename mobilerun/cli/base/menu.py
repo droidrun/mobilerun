@@ -15,10 +15,12 @@ from mobilerun.cli.base.prompts import (
     select_prompt,
     text_prompt,
 )
+from mobilerun.utils.terminal import can_prompt
 
 
 def is_interactive() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
+    """Return whether a prompt drawn on stdout can be answered."""
+    return can_prompt(sys.stdout)
 
 
 ChoicesProvider = Callable[[click.Context], Sequence[SelectChoice]]

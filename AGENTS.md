@@ -105,9 +105,12 @@ black --check --diff --verbose .
 mypy mobilerun
 ```
 
-Black 26.10.1 runs in CI. Ruff is a separate local check. Pyright is not
-configured or installed by the project's development dependencies; if available,
-`pyright mobilerun` is an additional check, not the documented CI gate.
+Black 26.10.1 and `mypy mobilerun` run in CI. Modules listed under
+`[[tool.mypy.overrides]]` in `pyproject.toml` are exempt until fixed; remove a
+module from that list when it is clean and never add one. Ruff is a separate
+local check. Pyright is not configured or installed by the project's development
+dependencies; if available, `pyright mobilerun` is an additional check, not the
+documented CI gate.
 
 Smoke tests are opt-in and can use real devices, cloud resources and LLM tokens.
 **Ask the user before running any paid smoke test, cloud operation or LLM call.**

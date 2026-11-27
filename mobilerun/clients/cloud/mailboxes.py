@@ -17,6 +17,7 @@ from mobilerun_sdk.types.mailboxes.message_list_response import Item as MessageI
 from mobilerun.clients.cloud.billing import (
     _billing_preference,
     _validate_create_params,
+    rents_resource,
     requires,
 )
 from mobilerun.clients.cloud.checkout import CheckoutMode, checkout_callback
@@ -33,7 +34,7 @@ from mobilerun.models.billing import Billing, ResourcePlan
 from mobilerun.models.checkout import PaymentSnapshot
 
 
-@requires(Billing.INCLUDED, operation="Create mailbox")
+@requires(Billing.INCLUDED, operation="Create mailbox", paid_if=rents_resource)
 async def create(
     *,
     billing: Billing,
