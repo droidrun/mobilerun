@@ -1,50 +1,44 @@
-"""
-Macro Replay Module - Replay recorded UI automation sequences.
-
-This module provides functionality to load and replay macro JSON files
-that were generated during MobileAgent trajectory recording.
-"""
+"""Deterministic, guarded replay on a caller-owned device."""
 
 import asyncio
-import json
 import logging
 import time
+from collections.abc import Awaitable, Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
-from pathlib import Path
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any
 
 from mobilerun.core.credentials import CredentialProvider
 from mobilerun.core.credentials.masking import CredentialMasks, masking_scope
 from mobilerun.core.devices import Device
 from mobilerun.core.state.base import StateProvider
-from mobilerun.errors.base import DeviceError, MobilerunError
-from mobilerun.macro.errors import MacroError, MacroMismatch
-from mobilerun.macro.models import (
-    MACRO_SCHEMA_VERSION,
-    UNSUPPORTED_SCHEMA_MESSAGE,
-    normalize_ui_state,
-)
+from mobilerun.errors.base import DeviceError
+from mobilerun.macro.errors import MacroError, MacroMismatch, MismatchPhase
+from mobilerun.macro.models import MacroStep
 from mobilerun.macro.settings import get_macro_settings
-from mobilerun.macro.utils import StateMatchResult, compare_states
+from mobilerun.macro.utils import (
+    capture_fingerprint,
+    compare_states,
+    has_masked_arguments,
+)
+from mobilerun.models import Fingerprint
 
 logger = logging.getLogger("mobilerun-macro")
 
-# Reverse map for legacy key_press macro entries
-_KEYCODE_TO_BUTTON = {4: "back", 3: "home", 66: "enter"}
+_OBSERVATION_ERRORS = (DeviceError, OSError, NotImplementedError)
+_Credential = tuple[CredentialProvider, str | None, str, str | None]
 
-# Carry the recording checked by the CLI through device selection and operator handoff.
-_replay_snapshot: ContextVar[tuple[Path, dict[str, Any]] | None] = ContextVar(
-    "macro_replay_snapshot", default=None
-)
+
+@dataclass
+class _ReplayMasks:
+    masks: CredentialMasks
+    prepared: bool = False
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class MacroPlayer:
-    """
-    A class for loading and replaying Mobilerun macro sequences.
-
-    This player can execute recorded UI actions (taps, swipes, text input, key presses)
-    on any supplied framework Device. Device lifetime belongs to the caller.
-    """
+    """Replay steps without constructing, recording or closing the device."""
 
     def __init__(
         self,
@@ -54,15 +48,8 @@ class MacroPlayer:
         state_threshold: float | None = None,
         state_poll_interval: float | None = None,
     ) -> None:
-        """
-        Initialize the MacroPlayer.
-
-        Args:
-            device: Caller-owned target device; replay never constructs a backend.
-            delay_between_actions: Delay in seconds between each action (default: 1.0s)
-        """
-        self.driver: Device | None = device
         settings = get_macro_settings()
+        self.driver = device
         self.delay_between_actions = (
             settings.MOBILERUN_MACRO_DELAY
             if delay_between_actions is None
@@ -83,490 +70,281 @@ class MacroPlayer:
             if state_poll_interval is None
             else state_poll_interval
         )
-        self.last_divergence: Optional[Dict[str, Any]] = None
         self.state_provider: StateProvider | None = None
         self.executed_steps = 0
+        self._tainted = False
+        self._replay_masks: ContextVar[_ReplayMasks | None] = ContextVar(
+            "macro_replay_masks", default=None
+        )
 
-    async def _initialize_driver(self) -> Device:
-        """Return the caller-owned device without constructing a backend."""
+    @property
+    def tainted(self) -> bool:
+        """Whether this player may have dispatched sensitive input; sticky."""
+        return self._tainted
+
+    @contextmanager
+    def replay_scope(self) -> Iterator[None]:
+        """Share credential masks across sequential play_step calls, then clear them."""
+        with self._mask_scope():
+            yield
+
+    @contextmanager
+    def _mask_scope(self) -> Iterator[_ReplayMasks]:
+        existing = self._replay_masks.get()
+        if existing is not None:
+            yield existing
+            return
+        with masking_scope() as masks:
+            state = _ReplayMasks(masks)
+            token = self._replay_masks.set(state)
+            try:
+                yield state
+            finally:
+                self._replay_masks.reset(token)
+
+    def _device(self) -> Device:
         if self.driver is None:
             raise MacroError("MacroPlayer requires a Device")
         return self.driver
 
-    def load_macro_from_file(self, macro_file_path: str | Path) -> Dict[str, Any]:
-        """
-        Load macro data from a JSON file.
-
-        Args:
-            macro_file_path: Path to the macro JSON file
-
-        Returns:
-            Dictionary containing the macro data
-        """
-        path = Path(macro_file_path)
-        snapshot = _replay_snapshot.get()
-        if snapshot is not None and path.absolute() == snapshot[0]:
-            return snapshot[1]
-        if path.is_dir():
-            path = path / "macro.json"
-        macro_data = json.loads(path.read_text())
-        if macro_data.get("macro_schema_version") != MACRO_SCHEMA_VERSION:
-            raise MacroError(UNSUPPORTED_SCHEMA_MESSAGE)
-        return macro_data
-
-    def load_macro_from_folder(self, trajectory_folder: str) -> Dict[str, Any]:
-        """
-        Load macro data from a trajectory folder.
-
-        Args:
-            trajectory_folder: Path to the trajectory folder containing macro.json
-
-        Returns:
-            Dictionary containing the macro data
-        """
-        return self.load_macro_from_file(trajectory_folder)
-
-    async def get_current_state_snapshot(self) -> Dict[str, Any]:
-        driver = await self._initialize_driver()
+    async def get_current_fingerprint(self) -> Fingerprint | None:
+        """Read the best available structural screen evidence, without UI text."""
+        driver = self._device()
         if self.state_provider is not None:
             try:
-                return normalize_ui_state(await self.state_provider.get_state())
-            except (DeviceError, OSError, NotImplementedError) as e:
-                logger.debug("Falling back to raw driver state: %s", type(e).__name__)
+                observed = capture_fingerprint(await self.state_provider.get_state())
+            except _OBSERVATION_ERRORS:
+                pass
+            else:
+                if observed is not None:
+                    return observed
         view = driver.state
         if view is not None:
             try:
-                return normalize_ui_state(await view.refresh())
-            except (DeviceError, OSError, NotImplementedError) as e:
-                logger.debug("Falling back to raw device state: %s", type(e).__name__)
-        raw_state = await driver._get_ui_tree()
-        return normalize_ui_state(raw_state)
-
-    async def wait_for_pre_state(
-        self, pre_state: Optional[Dict[str, Any]], step_number: int
-    ) -> tuple[bool, Optional[Dict[str, Any]], Optional[StateMatchResult]]:
-        if not pre_state:
-            return True, None, None
-
-        deadline = time.monotonic() + self.state_timeout
-        last_state = None
-        last_result = None
-
-        while True:
-            current_state = await self.get_current_state_snapshot()
-            result = compare_states(pre_state, current_state, self.state_threshold)
-            if result.matches:
-                return True, current_state, result
-
-            last_state = current_state
-            last_result = result
-            if time.monotonic() >= deadline:
-                logger.error(
-                    "State mismatch before step %s: %s", step_number, result.reason
-                )
-                return False, last_state, last_result
-
-            await asyncio.sleep(self.state_poll_interval)
-
-    def _credential_reference(
-        self, action: Dict[str, Any]
-    ) -> tuple[CredentialProvider, str | None, str, str | None] | None:
-        """Validate either recording format without observing or mutating the device."""
-        kind = action.get("action_type", action.get("type"))
-        if kind not in ("type_secret", "extension_call"):
+                observed = capture_fingerprint(await view.refresh())
+            except _OBSERVATION_ERRORS:
+                pass
+            else:
+                if observed is not None:
+                    return observed
+        try:
+            return capture_fingerprint(await driver._get_ui_tree())
+        except _OBSERVATION_ERRORS:
             return None
-        if action.get("protected", False) is not False:
+
+    async def _wait_for_guard(
+        self, expected: Fingerprint
+    ) -> tuple[bool, Fingerprint | None]:
+        deadline = time.monotonic() + self.state_timeout
+        while True:
+            observed = await self.get_current_fingerprint()
+            if compare_states(expected, observed, self.state_threshold):
+                return True, observed
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False, observed
+            # Engine polling is not an authored device wait.
+            await asyncio.sleep(min(remaining, self.state_poll_interval))
+
+    def _preflight(self, step: MacroStep) -> _Credential | None:
+        """Validate credential and redaction constraints before device observation."""
+        args: dict[str, Any] = step.args
+        if has_masked_arguments(args):
+            raise MacroError("Cannot replay redacted action arguments")
+        driver = self._device()
+        if step.action not in {"extension_call", "type_secret"}:
+            return None
+        if args.get("protected", False) is not False:
             raise MacroError("Protected credential replay requires host approval")
-        extensions = self.driver.extensions if self.driver is not None else {}
-        if kind == "extension_call":
-            owner, _, method = str(action.get("name")).partition(".")
-            vault = extensions.get(owner)
-            if method == "type_field" and vault is None:
-                raise MacroError(
-                    f"Extension '{owner}' is not bound for credential replay"
-                )
-            if method != "type_field" or not isinstance(vault, CredentialProvider):
-                return None
-            arguments = action.get("arguments")
-            if not isinstance(arguments, dict):
+        if step.action == "extension_call":
+            qualified = args.get("name")
+            arguments = args.get("arguments")
+            if not isinstance(qualified, str) or not isinstance(arguments, dict):
                 raise MacroError("Invalid extension_call action")
-            name = arguments.get("name")
+            owner, dot, method = qualified.partition(".")
+            if not owner or not dot or not method:
+                raise MacroError("Invalid extension_call action")
+            bound = driver.extensions.get(owner)
+            if bound is None:
+                raise MacroError("Extension is not bound for macro replay")
+            entry = driver.actions.get(qualified)
+            if entry.sensitive_parameters & arguments.keys():
+                raise MacroError("Cannot replay sensitive extension arguments")
+            if method != "type_field" or not isinstance(bound, CredentialProvider):
+                return None
+            vault = bound
         else:
-            arguments = action
-            name = action.get("name", action.get("secret", action.get("secret_id")))
-            vault = extensions.get("vault")
-        package = arguments.get("package")
+            arguments = args
+            default_vault = driver.extensions.get("vault")
+            if isinstance(default_vault, CredentialProvider):
+                vault = default_vault
+            else:
+                candidates = [
+                    v
+                    for v in driver.extensions.values()
+                    if isinstance(v, CredentialProvider)
+                ]
+                if len(candidates) != 1:
+                    raise MacroError("Bind one vault to replay a secret action")
+                vault = candidates[0]
+        package, name = arguments.get("package"), arguments.get("name")
         field = arguments.get("field", "password")
         if not any(isinstance(v, str) and v.strip() for v in (package, name)):
-            raise MacroError("type_secret action requires a package or name")
-        if not isinstance(vault, CredentialProvider):
-            candidates = [
-                v for v in extensions.values() if isinstance(v, CredentialProvider)
-            ]
-            if len(candidates) != 1:
-                raise MacroError("Bind one vault to replay a secret action")
-            vault = candidates[0]
+            raise MacroError("Credential action requires a package or name")
+        if (
+            (package is not None and not isinstance(package, str))
+            or (name is not None and not isinstance(name, str))
+            or not isinstance(field, str)
+            or not field.strip()
+        ):
+            raise MacroError("Invalid credential reference")
         if vault.requires_approval(package, field, name):
             raise MacroError("Protected credential replay requires host approval")
         return vault, package, field, name
 
-    async def replay_action(
-        self, action: Dict[str, Any], current_state: Optional[Dict[str, Any]] = None
-    ) -> bool:
-        """
-        Replay a single action.
-
-        Args:
-            action: Action dictionary containing type and parameters
-
-        Returns:
-            True if action was executed successfully, False otherwise
-        """
-        driver = await self._initialize_driver()
-        action_type = action.get("action_type", action.get("type", "unknown"))
-        credential = self._credential_reference(action)
-
-        try:
-            if action_type == "start_app":
-                package = action.get("package")
-                if not isinstance(package, str) or not package:
-                    raise MacroError("start_app action requires a package")
-                activity = action.get("activity", None)
-                await driver.start_app(package, activity)
-                return True
-
-            elif action_type == "open_url":
-                await driver.open_url(action["url"])
-                return True
-
-            elif action_type == "stop_app":
-                await driver.stop_app(action["package"])
-                return True
-
-            elif action_type == "press_key_code":
-                await driver.press_key_code(action["key_code"])
-                return True
-
-            elif action_type == "extension_call":
-                name = action.get("name")
-                arguments = action.get("arguments")
-                if (
-                    not isinstance(name, str)
-                    or "." not in name
-                    or not isinstance(arguments, dict)
-                ):
-                    raise MacroError("Invalid extension_call action")
-                extension = name.split(".", 1)[0]
-                if extension not in driver.extensions:
-                    # A missing binding is an environment error, not a UI mismatch:
-                    # agent-assisted replay must not silently improvise around it.
-                    raise MacroError(
-                        f"Extension '{extension}' is not bound for macro replay"
-                    )
-                entry = driver.actions.get(name)
-                if entry.sensitive_parameters & arguments.keys():
-                    raise MacroError(
-                        f"Cannot replay redacted sensitive arguments for {name}"
-                    )
-                await driver.actions.call(name, arguments, audience="operator")
-                return True
-
-            elif action_type == "tap":
-                x = action.get("x", 0)
-                y = action.get("y", 0)
-                logger.info(f" Tapping at ({x}, {y})")
-                await driver.tap(x, y)
-                return True
-
-            elif action_type == "swipe":
-                start_x = action.get("start_x", 0)
-                start_y = action.get("start_y", 0)
-                end_x = action.get("end_x", 0)
-                end_y = action.get("end_y", 0)
-                duration_ms = action.get("duration_ms", 300)
-
-                logger.info(
-                    f" Swiping from ({start_x}, {start_y}) to ({end_x}, {end_y}) in {duration_ms}ms"
-                )
-                await driver.swipe(start_x, start_y, end_x, end_y, duration_ms)
-                # Additional wait after swipe for UI to settle
-                await asyncio.sleep(2)
-                return True
-
-            elif action_type == "drag":
-                start_x = action.get("start_x", 0)
-                start_y = action.get("start_y", 0)
-                end_x = action.get("end_x", 0)
-                end_y = action.get("end_y", 0)
-                duration = action.get(
-                    "duration", action.get("duration_ms", 300) / 1000.0
-                )
-
-                logger.info(
-                    f" Dragging from ({start_x}, {start_y}) to ({end_x}, {end_y})"
-                )
-                await driver.drag(start_x, start_y, end_x, end_y, duration)
-                return True
-
-            elif action_type == "input_text":
-                text = action.get("text", "")
-                clear = action.get("clear", False)
-                logger.info("Inputting text")
-                await driver.input_text(text, clear)
-                return True
-
-            elif action_type == "type_secret":
-                assert credential is not None
-                vault, package, field, name = credential
-                await vault.type_field(package, field, name)
-                return True
-
-            elif action_type == "key_press":
-                keycode = action.get("keycode", 0)
-                button = _KEYCODE_TO_BUTTON.get(keycode)
-                if button:
-                    logger.info(f" Pressing button: {button}")
-                    await driver.press_button(button)
-                else:
-                    raise MacroError(f"Unknown keycode {keycode}")
-                return True
-
-            elif action_type == "button_press":
-                button = action.get("button", "")
-                logger.info(f" Pressing button: {button}")
-                await driver.press_button(button)
-                return True
-
-            elif action_type == "back":
-                logger.info("⬅  Pressing back button")
-                await driver.press_button("back")
-                return True
-
-            elif action_type == "wait":
-                duration = action.get("duration", 1.0)
-                logger.info(f"Waiting for {duration} seconds")
-                await driver.wait(duration)
-                return True
-
-            else:
-                raise MacroError(f"Unknown action type: {action_type}")
-
-        except MobilerunError:
-            raise
-        except Exception as exc:
-            raise MacroError(f"Error executing action {action_type}") from exc
-
-    async def replay_macro(
-        self,
-        macro_data: Dict[str, Any],
-        start_from_step: int = 0,
-        max_steps: Optional[int] = None,
-    ) -> bool:
-        """
-        Replay a complete macro sequence.
-
-        Args:
-            macro_data: Macro data dictionary loaded from JSON
-            start_from_step: Step number to start from (0-based, default: 0)
-            max_steps: Maximum number of steps to execute (default: all)
-
-        Returns:
-            True if all actions were executed successfully, False otherwise
-        """
-        with masking_scope() as masks:
-            return await self._replay_macro(
-                macro_data, start_from_step, max_steps, masks
-            )
-
     async def _prepare_masks(self, masks: CredentialMasks) -> None:
-        if not isinstance(self.driver, Device):
-            return
         try:
-            for extension in self.driver.extensions.values():
+            for extension in self._device().extensions.values():
                 if isinstance(extension, CredentialProvider):
                     await extension.prepare_masks(masks)
             return
         except Exception:
             pass
-        # A custom provider's error and its traceback can contain plaintext.
+        # Provider exceptions can contain values; don't attach their traceback.
         raise MacroError("Could not prepare credential masking")
 
-    async def _replay_macro(
-        self,
-        macro_data: Dict[str, Any],
-        start_from_step: int,
-        max_steps: int | None,
-        masks: CredentialMasks,
-    ) -> bool:
-        if not macro_data or "actions" not in macro_data:
-            raise MacroError("Invalid macro data - no actions found")
-        if macro_data.get("macro_schema_version") != MACRO_SCHEMA_VERSION:
-            raise MacroError(UNSUPPORTED_SCHEMA_MESSAGE)
+    async def _prepare_once(self, state: _ReplayMasks) -> CredentialMasks:
+        async with state.lock:
+            if not state.prepared:
+                await self._prepare_masks(state.masks)
+                state.prepared = True
+        return state.masks
 
+    async def _dispatch(
+        self, step: MacroStep, credential: _Credential | None
+    ) -> object:
+        driver = self._device()
+        args: dict[str, Any] = step.args
+        operation: Awaitable[object]
+        match step.action:
+            case "tap":
+                operation = driver.tap(args["x"], args["y"])
+            case "swipe":
+                operation = driver.swipe(
+                    args["start_x"],
+                    args["start_y"],
+                    args["end_x"],
+                    args["end_y"],
+                    args["duration_ms"],
+                )
+            case "drag":
+                operation = driver.drag(
+                    args["start_x"],
+                    args["start_y"],
+                    args["end_x"],
+                    args["end_y"],
+                    args["duration"],
+                )
+            case "input_text":
+                options = {
+                    key: args[key] for key in ("clear", "stealth", "wpm") if key in args
+                }
+                operation = driver.input_text(args["text"], **options)
+            case "start_app":
+                operation = driver.start_app(args["package"], args.get("activity"))
+            case "stop_app":
+                operation = driver.stop_app(args["package"])
+            case "open_url":
+                operation = driver.open_url(args["url"])
+            case "press_key_code":
+                operation = driver.press_key_code(args["key_code"])
+            case "button_press":
+                operation = driver.press_button(args["button"])
+            case "wait":
+                operation = driver.wait(args["duration"])
+            case "extension_call":
+                operation = driver.actions.call(
+                    args["name"], args["arguments"], audience="operator"
+                )
+            case "type_secret":
+                assert credential is not None
+                vault, package, field, name = credential
+                operation = vault.type_field(package, field, name)
+            case _:
+                raise MacroError("Unknown macro action")
+        return await operation
+
+    def _stop(
+        self,
+        step: MacroStep,
+        phase: MismatchPhase,
+        observed: Fingerprint | None,
+        masks: CredentialMasks,
+    ) -> MacroMismatch:
+        if masks.active or self.tainted:
+            # A repair add-on must not be handed a device with visible credentials.
+            raise MacroError(
+                f"Macro mismatch at step {step.i} ({phase}) during credential replay; handoff refused"
+            )
+        return MacroMismatch(step, phase, observed)
+
+    async def _play_step(
+        self, step: MacroStep, credential: _Credential | None, masks: CredentialMasks
+    ) -> None:
+        before = None
+        if step.before is not None:
+            matched, before = await self._wait_for_guard(step.before)
+            if not matched:
+                raise self._stop(step, "before", before, masks)
+        try:
+            try:
+                ok = await self._dispatch(step, credential) is not False
+            finally:
+                if masks.active:
+                    self._tainted = True
+        except MacroError:
+            raise
+        except Exception:
+            # Never attach backend exception text or a credential traceback.
+            ok = False
+        if not ok:
+            raise self._stop(step, "action", before, masks)
+        if step.after is not None:
+            matched, after = await self._wait_for_guard(step.after)
+            if not matched:
+                raise self._stop(step, "after", after, masks)
+        self.executed_steps += 1
+
+    async def play_step(self, step: MacroStep) -> None:
+        """Check the before guard, dispatch the action, then check the after guard."""
+        credential = self._preflight(step)
+        with self._mask_scope() as state:
+            masks = await self._prepare_once(state)
+            await self._play_step(step, credential, masks)
+
+    async def replay_macro(
+        self,
+        steps: Sequence[MacroStep],
+        start_from_step: int = 0,
+        max_steps: int | None = None,
+    ) -> bool:
+        """Replay selected rows; the zero-based offset is a position, not an ID."""
         self.executed_steps = 0
-        self.last_divergence = None
         if start_from_step < 0 or (max_steps is not None and max_steps < 0):
             raise MacroError("Step limits must not be negative")
-
-        actions = macro_data["actions"]
-        total_actions = len(actions)
-
-        # Apply start_from_step and max_steps filters
-        if start_from_step > 0:
-            actions = actions[start_from_step:]
-            logger.info(f" Starting from step {start_from_step + 1}")
-
-        if max_steps is not None:
-            actions = actions[:max_steps]
-            logger.info(f" Limiting to {max_steps} steps")
-
-        for action in actions:
-            self._credential_reference(action)
-
-        if actions:
-            await self._prepare_masks(masks)
-        logger.info(" Starting macro replay")
-        logger.info(f" Total actions to execute: {len(actions)} / {total_actions}")
-
-        success_count = 0
-        failed_count = 0
-
-        for i, action in enumerate(actions, start=start_from_step + 1):
-            action_type = action.get("action_type", action.get("type", "unknown"))
-
-            logger.info(f"\n Step {i}/{total_actions}: {action_type}")
-
-            state_matched, current_state, match_result = await self.wait_for_pre_state(
-                action.get("pre_state"), i
-            )
-            if not state_matched:
-                self.last_divergence = {
-                    "step": i,
-                    "action_type": action_type,
-                    "reason": match_result.reason if match_result else "state mismatch",
-                    "score": match_result.score if match_result else None,
-                }
-                if masks.active:
-                    # An add-on handling MacroMismatch could observe the raw device.
-                    raise MacroError(
-                        "State mismatch during credential replay; handoff refused"
-                    )
-                raise MacroMismatch(
-                    i - 1,
-                    macro_data["actions"][i - 1 :],
-                    current_state or {},
-                    self.last_divergence["reason"],
-                )
-
-            # Execute the action
-            success = await self.replay_action(action, current_state=current_state)
-
-            if success:
-                success_count += 1
-                self.executed_steps += 1
-                logger.info("    Action completed successfully")
-            else:
-                failed_count += 1
-                raise MacroError("Action failed")
-
-            # Wait between actions (except for the last one)
-            if i < start_from_step + len(actions):
-                logger.debug(f"   Waiting {self.delay_between_actions}s...")
-                await asyncio.sleep(self.delay_between_actions)
-
-        # Summary
-        total_executed = success_count + failed_count
-        success_rate = (
-            (success_count / total_executed * 100) if total_executed > 0 else 0
-        )
-
-        logger.info("\n Macro replay completed!")
-        logger.info(f" Success: {success_count}/{total_executed} ({success_rate:.1f}%)")
-
-        if failed_count > 0:
-            logger.warning(f"  Failed actions: {failed_count}")
-
-        return failed_count == 0
-
-
-# Utility functions for convenience
-
-
-async def replay_macro_file(
-    macro_file_path: str,
-    device: Device | None = None,
-    delay_between_actions: float | None = None,
-    start_from_step: int = 0,
-    max_steps: Optional[int] = None,
-    state_timeout: float | None = None,
-    state_threshold: float | None = None,
-) -> bool:
-    """
-    Convenience function to replay a macro from a file.
-
-    Args:
-        macro_file_path: Path to the macro JSON file
-        device: Caller-owned target device
-        delay_between_actions: Delay between actions in seconds
-        start_from_step: Step to start from (0-based)
-        max_steps: Maximum steps to execute
-
-    Returns:
-        True if replay was successful, False otherwise
-    """
-    player = MacroPlayer(
-        device=device,
-        delay_between_actions=delay_between_actions,
-        state_timeout=state_timeout,
-        state_threshold=state_threshold,
-    )
-
-    try:
-        macro_data = player.load_macro_from_file(macro_file_path)
-        return await player.replay_macro(
-            macro_data, start_from_step=start_from_step, max_steps=max_steps
-        )
-    except MobilerunError:
-        raise
-    except (OSError, ValueError) as exc:
-        raise MacroError("Could not load macro") from exc
-
-
-async def replay_macro_folder(
-    trajectory_folder: str,
-    device: Device | None = None,
-    delay_between_actions: float | None = None,
-    start_from_step: int = 0,
-    max_steps: Optional[int] = None,
-    state_timeout: float | None = None,
-    state_threshold: float | None = None,
-) -> bool:
-    """
-    Convenience function to replay a macro from a trajectory folder.
-
-    Args:
-        trajectory_folder: Path to the trajectory folder containing macro.json
-        device: Caller-owned target device
-        delay_between_actions: Delay between actions in seconds
-        start_from_step: Step to start from (0-based)
-        max_steps: Maximum steps to execute
-
-    Returns:
-        True if replay was successful, False otherwise
-    """
-    player = MacroPlayer(
-        device=device,
-        delay_between_actions=delay_between_actions,
-        state_timeout=state_timeout,
-        state_threshold=state_threshold,
-    )
-
-    try:
-        macro_data = player.load_macro_from_folder(trajectory_folder)
-        return await player.replay_macro(
-            macro_data, start_from_step=start_from_step, max_steps=max_steps
-        )
-    except MobilerunError:
-        raise
-    except (OSError, ValueError) as exc:
-        raise MacroError("Could not load macro") from exc
+        end = None if max_steps is None else start_from_step + max_steps
+        selected = steps[start_from_step:end]
+        credentials = [self._preflight(step) for step in selected]
+        if not selected:
+            return True
+        with self._mask_scope() as state:
+            masks = await self._prepare_once(state)
+            for index, (step, credential) in enumerate(
+                zip(selected, credentials, strict=True)
+            ):
+                if index:
+                    # Only explicit macro waits are recorded as device actions.
+                    await asyncio.sleep(self.delay_between_actions)
+                logger.info("Replaying macro step %s", step.i)
+                await self._play_step(step, credential, masks)
+        return True

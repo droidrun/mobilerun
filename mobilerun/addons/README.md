@@ -22,7 +22,7 @@ agent_macro = "example_plugin.replay:handoff"
   not when help is listed.
 - `mobilerun.operators`: `agent_macro` resolves to a **plain callable**, not a
   Click-decorated callback. The base invokes it with keyword arguments
-  `provider: str | None`, `model: str | None`, `path: str`, a resolved
+  `provider: str | None`, `model: str | None`, `path: str` (the pinned JSONL version), a resolved
   `target: DeviceTarget`, `delay: float`, `start_from: int`,
   `max_steps: int | None`, `debug: bool`, `dry_run: bool`,
   `state_timeout: float`, `state_threshold: float`, and
@@ -52,11 +52,11 @@ def test_handoff(monkeypatch):
     # Also replace the configuration loader with a fake.
     ep = next(ep for ep in entry_points(group="mobilerun.operators")
               if ep.name == "agent_macro")
-    ep.load()(provider=None, model=None, path="macro.json", target=object(),
+    ep.load()(provider=None, model=None, path="/macros/routine/v1.jsonl", target=object(),
               delay=0.0, start_from=1, max_steps=None, debug=False,
               dry_run=False, state_timeout=1.0, state_threshold=0.5,
               config_path=None)
-    assert calls[0][1]["path"] == "macro.json"
+    assert calls[0][1]["path"] == "/macros/routine/v1.jsonl"
 ```
 
 The `mobilerun/cli/plugins/` package contains the top-level CLI for this

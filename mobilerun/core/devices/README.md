@@ -15,7 +15,8 @@ async with AndroidDevice("emulator-5554", state_options=StateProviderOptions(vis
     assert device.state.current is state
     await device.tap_element(0)
     await device.wait(1)
-    print(device.recorded_actions)
+    device.finish("succeeded")
+    print(device.run_dir / "steps.jsonl")
 ```
 
 ## Quick example
@@ -80,8 +81,22 @@ or compatibility aliases. Advanced raw-driver composition lives in
   Legacy Portal uses the iOS text-tree provider; Portal HTTP uses the Android
   tree provider with point-space coordinates.
 - `RemoteDevice(url=...)` uses screenshot-only state by default.
-- `RecordingDevice(device)` records actions in `.recorded_actions`.
-- `StealthDevice(device)` applies humanized interaction behavior.
+- `RecordingDevice(device)` writes dispatched actions and outcomes to `steps.jsonl`
+  under a private run directory. The run starts on demand; `start_run()` can
+  reserve it earlier, and `finish(status, failed_step=None)` finalizes metadata
+  without closing the device. Actions can continue after `finish()`, but they
+  are not recorded. `step_index` is the last persisted row. Use
+  `with recorder.collect_steps() as ids:` for rows committed in the block by
+  this task and tasks it spawns. Tasks created outside the block are excluded.
+- `StealthDevice(device)` applies humanized interaction behavior and vetoes
+  recording in either wrapper order. Check `device.recording_allowed()` before
+  using `device.recording_device()` to reuse a caller-owned recorder.
+
+`capture="full"` (default) records before/after fingerprints, redacted UI and
+context JSON, and unredacted screenshots. Use `capture="actions"` to skip
+all automatic observations, especially for sensitive flows. Explicit
+`capture_fingerprint(fresh=True)` still works on demand when supported.
+See [runs](../runs/README.md) for settings and scoped recording policy.
 
 Wrappers explicitly delegate operations and private hooks. They do not forward
 unknown attributes. `do()` and `expect()` execute against the outer wrapper.

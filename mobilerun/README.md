@@ -176,6 +176,9 @@ Use a registered endpoint ID to [deliver sandbox function results](sandbox/READM
 
 ## CLI device selection
 
+For a local example that records `steps.jsonl`, builds a versioned macro, and
+loads it for replay, see [Record and replay a macro](../README.md#record-and-replay-a-macro).
+
 DEVICE is optional: run `mobilerun device connect <id>` to save a default, or choose from discovered devices. An explicit DEVICE takes precedence, followed by the saved `device.serial` and discovery. Run `mobilerun device disconnect` to clear the default. Python device APIs remain explicit.
 
 There is no legacy import compatibility layer. With the add-on installed,

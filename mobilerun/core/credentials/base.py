@@ -65,13 +65,18 @@ class CredentialProvider(Extension, ABC):
     async def _list_credentials(self, package: str | None = None) -> list[Credential]:
         """Read credentials internally."""
 
-    @action()
-    async def list(self, package: str | None = None) -> list[CredentialMetadata]:
-        """List available credential names and fields without their values."""
+    async def _credential_metadata(
+        self, package: str | None = None
+    ) -> list[CredentialMetadata]:
         return [
             {"package": item.package, "name": item.name, "fields": list(item.fields)}
             for item in await self._list_credentials(package)
         ]
+
+    @action()
+    async def list(self, package: str | None = None) -> list[CredentialMetadata]:
+        """List available credential names and fields without their values."""
+        return await self._credential_metadata(package)
 
     @device_action()
     async def type_field(
@@ -99,7 +104,7 @@ class CredentialProvider(Extension, ABC):
             ContextItem(
                 self.name,
                 "credentials",
-                {"credentials": cast(JSONValue, await self.list())},
+                {"credentials": cast(JSONValue, await self._credential_metadata())},
             ),
         )
 

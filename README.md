@@ -171,37 +171,31 @@ Configure an LLM first with `mobilerun agent llm configure`. `CloudDevice` uses 
 
 ### Record and replay a macro
 
-Record actions to `macro.json` using the schema from [macro_demo.py](tests/demos/macro_demo.py):
+Record actions on a local emulator, then publish the replayable steps as a versioned macro. These examples use no cloud resources or LLM tokens.
 
 ```python
-import json
 from pathlib import Path
 from mobilerun.core.devices import AndroidDevice, RecordingDevice
-from mobilerun.macro.models import MACRO_SCHEMA_VERSION
+from mobilerun.macro import build_macro
 
-async def record():
-    recorded = RecordingDevice(AndroidDevice("emulator-5554"))
-    try:
+async def record() -> Path:
+    async with RecordingDevice(AndroidDevice("emulator-5554")) as recorded:
         await recorded.press_button("home")
-        Path("macro.json").write_text(json.dumps({
-            "macro_schema_version": MACRO_SCHEMA_VERSION,
-            "actions": list(recorded.recorded_actions),
-        }))
-    finally:
-        await recorded.close()
+        recorded.finish("succeeded")
+        assert recorded.run_dir is not None
+        return build_macro(recorded.run_dir / "steps.jsonl", "go-home")
 ```
 
-Replay that file on the device:
+Reset the emulator to its initial screen, then replay the path returned by `record()`:
 
 ```python
+from pathlib import Path
 from mobilerun.core.devices import AndroidDevice
-from mobilerun.macro import MacroPlayer
+from mobilerun.macro import MacroPlayer, load_macro
 
-async def replay():
+async def replay(path: Path):
     async with AndroidDevice("emulator-5554") as device:
-        player = MacroPlayer(device)
-        if not await player.replay_macro(player.load_macro_from_file("macro.json")):
-            raise RuntimeError("Macro replay failed")
+        await MacroPlayer(device).replay_macro(load_macro(path))
 ```
 
 ### Credentials and vault

@@ -15,7 +15,7 @@ Keep shared value types here; device lifecycle and API calls belong in `core/` a
 - `checkout.py` — `Checkout` and `PaymentSnapshot` — checkout and payment values.
 - `location.py` — `Location` — latitude and longitude reported by a device.
 - `proxy.py` — `ProxyStatus` — proxy connection status.
-- `recording.py` — `RecordedAction` — recorded device action data.
+- `recording.py` — `RunRecord`, `RunStep`, and `Fingerprint` — validated run metadata, action outcomes, and screen evidence. `RecordingDevice` writes `runs/<id>/run.json` and append-only `runs/<id>/steps.jsonl` through [`RunWriter`](../core/runs/README.md).
 - `ui.py` — `UIElement` — UI snapshot element data.
 - `results.py` — `ExecutionResult`, `ExpectationVerdict`, `ExpectationResult` — typed task results, independent of execution and transport.
 

@@ -1,91 +1,85 @@
-"""State matching and logging helpers for macro replay."""
+"""Fingerprint matching, replay argument checks, and CLI logging."""
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from collections.abc import Mapping
 
-from mobilerun.macro.models import node_semantic_key
+from mobilerun.core.credentials.masking import current_masks
+from mobilerun.core.state.ui_state import UIState
 from mobilerun.macro.settings import get_macro_settings
+from mobilerun.models import Fingerprint
+from mobilerun.utils.redaction import _redact_secrets
+from mobilerun.utils.screen_fingerprint import fingerprint_matches, screen_fingerprint
 
 
-@dataclass(frozen=True)
-class StateMatchResult:
-    matches: bool
-    score: float
-    reason: str
+def capture_fingerprint(
+    state: UIState | Mapping[str, object] | None,
+) -> Fingerprint | None:
+    """Normalize either a state-provider view or a raw device dump."""
+    if state is None:
+        return None
+    if not isinstance(state, Mapping):
+        state = {"phone_state": state.phone_state, "elements": state.elements}
+    observed = screen_fingerprint(state)
+    masks = current_masks.get()
+    if masks is not None and masks.active:
+        masked = masks.snapshot(
+            {
+                "phone_state": {"app": observed.app, "activity": observed.activity},
+                "nodes": [{"id": key} for key in observed.elements],
+            }
+        )
+        observed = Fingerprint(
+            app=masked["phone_state"]["app"],
+            activity=masked["phone_state"]["activity"],
+            elements=tuple(node["id"] for node in masked["nodes"]),
+        )
+    if any(
+        _redact_secrets(value) != value
+        for value in (observed.app, observed.activity, *observed.elements)
+        if value is not None
+    ):
+        return None
+    return observed if observed.app or observed.activity or observed.elements else None
 
 
 def compare_states(
-    saved_state: Dict[str, Any],
-    current_state: Dict[str, Any],
-    threshold: float | None = None,
-) -> StateMatchResult:
+    expected: Fingerprint, observed: Fingerprint | None, threshold: float | None = None
+) -> bool:
+    """Check a macro guard against normalized, nonempty screen evidence."""
     if threshold is None:
         threshold = get_macro_settings().MOBILERUN_MACRO_STATE_THRESHOLD
-    saved_keys = _node_key_set(saved_state)
-    current_keys = _node_key_set(current_state)
-
-    if saved_keys or current_keys:
-        intersection = len(saved_keys & current_keys)
-        union = len(saved_keys | current_keys)
-        node_score = intersection / union if union else 1.0
-    else:
-        node_score = 1.0
-
-    phone_score = _phone_score(saved_state, current_state)
-    score = round((node_score * 0.85) + (phone_score * 0.15), 4)
-
-    if score >= threshold:
-        return StateMatchResult(True, score, f"state matched with score {score:.2f}")
-
-    return StateMatchResult(
-        False,
-        score,
-        f"state similarity {score:.2f} below threshold {threshold:.2f}",
-    )
+    return fingerprint_matches(expected, observed, threshold)
 
 
-def _node_key_set(state: Dict[str, Any]) -> set[Tuple[Any, ...]]:
-    return {
-        node_semantic_key(node)
-        for node in state.get("nodes", [])
-        if any(part is not None and part != "" for part in node_semantic_key(node))
-    }
-
-
-def _phone_score(saved_state: Dict[str, Any], current_state: Dict[str, Any]) -> float:
-    saved_phone = saved_state.get("phone_state") or {}
-    current_phone = current_state.get("phone_state") or {}
-    fields = [
-        field
-        for field in ("package", "activity")
-        if saved_phone.get(field) is not None or current_phone.get(field) is not None
-    ]
-    if not fields:
-        return 1.0
-    matches = sum(
-        1 for field in fields if saved_phone.get(field) == current_phone.get(field)
-    )
-    return matches / len(fields)
+def has_masked_arguments(value: object) -> bool:
+    """Detect reserved redaction markers inside nested action arguments."""
+    if isinstance(value, str):
+        return any(
+            marker in value
+            for marker in ("***", "<redacted>", "[redacted]", "[secret:")
+        )
+    if isinstance(value, dict):
+        return any(
+            has_masked_arguments(key) or has_masked_arguments(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(has_masked_arguments(item) for item in value)
+    return False
 
 
 def configure_macro_logging(debug: bool = False) -> logging.Logger:
     """Configure logging for the macro CLI."""
     logger = logging.getLogger("mobilerun-macro")
     logger.handlers = []
-
+    level = logging.DEBUG if debug else logging.INFO
     handler = logging.StreamHandler()
-
-    if debug:
-        level = logging.DEBUG
-        formatter = logging.Formatter("%(levelname)s %(name)s %(message)s", "%H:%M:%S")
-    else:
-        level = logging.INFO
-        formatter = logging.Formatter("%(message)s", "%H:%M:%S")
-
-    handler.setFormatter(formatter)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(levelname)s %(name)s %(message)s" if debug else "%(message)s"
+        )
+    )
     logger.addHandler(handler)
     logger.setLevel(level)
     logger.propagate = False
-
     return logger

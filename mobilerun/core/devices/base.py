@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterable,
+    Mapping,
+)
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import TracebackType
@@ -25,10 +32,12 @@ from mobilerun.core.devices.components.input_lock import (
     serialize_inputs,
 )
 from mobilerun.core.extensions import Action, ActionSet, Extension
-from mobilerun.core.extensions.actions import Declaration
-from mobilerun.core.extensions.registry import Registry
+from mobilerun.core.extensions.actions import Audience, BillingRetry, Declaration
+from mobilerun.core.extensions.base import _ExtensionAccess, _redact_bound_arguments
+from mobilerun.core.extensions.registry import ExtensionView, Registry
 from mobilerun.core.operator import Operator
 from mobilerun.core.proxy.target import ProxyTarget
+from mobilerun.core.runs import recording_scope
 from mobilerun.core.state.base import StateProvider
 from mobilerun.core.state.options import StateProviderFactory, StateProviderOptions
 from mobilerun.core.state.view import UIStateView
@@ -39,7 +48,7 @@ from mobilerun.errors import (
     NoFocusedInput,
 )
 from mobilerun.models.apps import App
-from mobilerun.models.context import ContextItem
+from mobilerun.models.context import ContextItem, JSONValue
 from mobilerun.models.files import DeviceFile
 from mobilerun.models.location import Location
 from mobilerun.models.results import (
@@ -61,7 +70,7 @@ class InstallOptions(TypedDict, total=False):
 
 if TYPE_CHECKING:
     from mobilerun.clients.cloud.client import AsyncMobilerun
-    from mobilerun.core.devices.recording import ActionRecording
+    from mobilerun.core.devices.recording import RecordingDevice
     from mobilerun.core.mailbox.base import Mailbox
     from mobilerun.core.phone_number.base import PhoneNumber
 
@@ -69,6 +78,28 @@ if TYPE_CHECKING:
 def _unwrap_device(device: Device) -> Device:
     """Find the innermost framework device, not its underlying driver."""
     return device._unwrap()
+
+
+class _UnrecordedActions(ActionSet):
+    """Preserve the invoking facade's veto for calls bound to sibling facades."""
+
+    async def call(
+        self,
+        name: str,
+        arguments: Mapping[str, JSONValue],
+        *,
+        audience: Audience = "python",
+        timeout: float | None = None,
+        billing_retry: BillingRetry | None = None,
+    ) -> object:
+        with recording_scope(enabled=False):
+            return await super().call(
+                name,
+                arguments,
+                audience=audience,
+                timeout=timeout,
+                billing_retry=billing_retry,
+            )
 
 
 @serialize_inputs
@@ -89,13 +120,13 @@ class Device:
 
     @property
     def extensions(self) -> Mapping[str, Extension]:
-        return self._extension_state.view
+        return ExtensionView(self._extension_state, self)
 
     def __getattr__(self, name: str) -> Extension:
         root = self._unwrap()
         registry = root.__dict__.get("_extensions")
         if registry is not None and name in registry.view:
-            return registry.view[name]
+            return self._extension_access(registry.view[name])
         if name == "proxy" and self.cloud_id is not None:
             raise AttributeError(
                 "Cloud phone has no active proxy; await proxy.bind(phone) to configure one without automatic provisioning"
@@ -127,7 +158,17 @@ class Device:
 
     @property
     def actions(self) -> ActionSet:
-        return ActionSet(self)
+        catalog = ActionSet if self.recording_allowed() else _UnrecordedActions
+        return catalog(self, facade=self)
+
+    def _extension_access(self, extension: Extension) -> Extension:
+        bound = extension._binding
+        if bound is not None and (
+            self.recording_device() is not bound.facade.recording_device()
+            or self.recording_allowed() != bound.facade.recording_allowed()
+        ):
+            return cast(Extension, _ExtensionAccess(extension, self))
+        return extension
 
     def _action_entries(self) -> tuple[Action, ...]:
         operations = {
@@ -157,10 +198,19 @@ class Device:
             entries.extend(extension._action_entries())
         return tuple(entries)
 
+    def known_codes_redactor(self) -> Callable[[str], str]:
+        """Return a live text redactor for verification codes learned by this device."""
+        return self._extension_state.known_codes.redact
+
+    def register_sensitive_values(self, values: Iterable[str]) -> None:
+        """Mask exact dispatched values for this device session without storing them on disk."""
+        self._extension_state.known_codes.remember_sensitive(values)
+
     async def context(self) -> tuple[ContextItem, ...]:
         items = []
-        for extension in tuple(self.extensions.values()):
-            items.extend(await extension.context())
+        with recording_scope(enabled=self.recording_allowed()):
+            for extension in tuple(self.extensions.values()):
+                items.extend(await extension.context())
         return tuple(items)
 
     @property
@@ -302,9 +352,13 @@ class Device:
     def _unwrap(self) -> Device:
         return self
 
-    @property
-    def _recording(self) -> ActionRecording | None:
+    def recording_device(self) -> RecordingDevice[Any] | None:
+        """Find a recording wrapper in this facade's chain, if present."""
         return None
+
+    def recording_allowed(self) -> bool:
+        """Whether this facade permits recording, independently of task policy."""
+        return True
 
     @property
     def _state_recovery(self) -> Callable[[], Awaitable[None]] | None:
@@ -388,6 +442,7 @@ class Device:
 
     async def _input_secret(self, value: str) -> bool:
         with secret_scope(value):
+            _redact_bound_arguments(self)
             try:
                 state = await self.state.refresh()
                 phone_state = state.phone_state
@@ -412,6 +467,9 @@ class Device:
                     raise NoFocusedInput(
                         "No text field is focused; tap the field before typing a credential"
                     )
+                self._extension_state.sensitive_ui = True
+                if value:
+                    self._extension_state.known_codes.observed_secrets.add(value)
                 return await self._input_text_raw(value)
             except Exception as exc:
                 message = _redact_secrets(str(exc))

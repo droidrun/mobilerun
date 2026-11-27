@@ -31,8 +31,13 @@ library, while `Device` methods act on one phone. For example,
 | Webhooks | `CloudWebhooks` | [webhooks/](webhooks/) | [WebhookEndpoint](../models/webhooks.py) | [webhooks.py](../clients/cloud/webhooks.py) |
 | Operators/tasks | `device.do()`, `device.expect()`, `Operator` | [operator/](operator/) | [ExecutionResult, ExpectationResult](../models/results.py), [CloudTaskInputs](../models/cloud_task.py) | [tasks.py](../clients/cloud/tasks.py) |
 | State | `device.state`, `StateProvider`, `UIState` | [state/](state/) | [UIElement](../models/ui.py) | — |
-| Recording | `RecordingDevice`, `recorded_actions` | [recording.py](devices/recording.py) | [RecordedAction](../models/recording.py) | — |
+| Runs and recording | `RecordingDevice`, `RunWriter`, `recording_scope()` | [devices/recording.py](devices/recording.py), [runs/](runs/README.md) | [RunRecord, RunStep, Fingerprint](../models/recording.py) | — |
 | Extensions | `Extension.bind()`, `device.extensions`, `device.actions` | [extensions/](extensions/) | [ContextItem](../models/context.py) | — |
+
+`RecordingDevice` writes each run under `runs/<id>/`: `run.json` contains the
+`RunRecord` metadata and terminal status, while `steps.jsonl` contains one
+`RunStep` per dispatched action, including outcomes and optional `Fingerprint`
+screen evidence. `core/runs/RunWriter` creates and appends these artifacts.
 
 **Examples:**
 

@@ -1,6 +1,7 @@
 """Device connection, cleanup, pooled operations and timeout contracts."""
 
 import asyncio
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -20,7 +21,6 @@ from mobilerun.core.devices.cloud import CloudDevice
 from mobilerun.core.devices.components.cloud_lifecycle import _CloudLifecycle
 from mobilerun.core.mailbox.cloud import CloudMailbox
 from mobilerun.core.operator import Operator
-from mobilerun.macro.player import MacroPlayer
 from mobilerun.models.apps import App
 from mobilerun.models.results import ExecutionResult, ExpectationVerdict
 
@@ -621,9 +621,6 @@ def test_macro_timeout_cancels_replay(monkeypatch):
         def __init__(self, device, **kwargs):
             pass
 
-        def load_macro_from_file(self, path):
-            return {}
-
         async def replay_macro(self, *args, **kwargs):
             try:
                 await asyncio.Event().wait()
@@ -631,6 +628,7 @@ def test_macro_timeout_cancels_replay(monkeypatch):
                 cancelled.append(True)
 
     monkeypatch.setattr(macro_module, "MacroPlayer", Player)
+    monkeypatch.setattr(macro_module, "load_macro", lambda path: [])
     with pytest.raises(TimeoutError):
         asyncio.run(macro_module.MacroOperator().execute(object(), "go", timeout=0.01))
     assert cancelled == [True]
@@ -686,17 +684,15 @@ def test_cloud_device_do_stops_task_on_timeout_or_cancel(cancel):
     asyncio.run(run())
 
 
-def test_wait_sleeps_records_and_replays(monkeypatch):
+def test_wait_sleeps_once_and_records_duration(monkeypatch, tmp_path):
     sleep = AsyncMock()
     monkeypatch.setattr(asyncio, "sleep", sleep)
     device = Device()
-    recording = RecordingDevice(device)
-    asyncio.run(StealthDevice(recording).wait(2.5))
+    recording = RecordingDevice(device, runs_dir=tmp_path, capture="actions")
+    asyncio.run(recording.wait(2.5))
     sleep.assert_awaited_once_with(2.5)
-    assert recording.recorded_actions == [{"action_type": "wait", "duration": 2.5}]
-    assert asyncio.run(MacroPlayer(device).replay_action(recording.recorded_actions[0]))
-    assert sleep.await_count == 2
-    assert sleep.await_args.args == (2.5,)
+    row = json.loads((recording.run_dir / "steps.jsonl").read_text())
+    assert (row["action"], row["args"]) == ("wait", {"duration": 2.5})
 
 
 def test_pool_waits_once_per_device_in_parallel(monkeypatch):

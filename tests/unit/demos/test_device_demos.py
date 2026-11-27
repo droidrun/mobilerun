@@ -274,10 +274,15 @@ def test_app_demo_decline_does_not_create(app_demo, monkeypatch):
     create.assert_not_called()
 
 
-def test_macro_records_replays_and_closes(monkeypatch, capsys):
+def test_macro_records_replays_and_closes(monkeypatch, tmp_path):
+    from mobilerun.macro import load_macro
     from tests.demos import macro_demo as demo
+    from tests.support.devices import MemoryDevice
 
-    device = Device()
+    monkeypatch.setenv("MOBILERUN_MACRO_DIRECTORY", str(tmp_path / "macros"))
+    monkeypatch.setenv("MOBILERUN_RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setenv("MOBILERUN_MACRO_DELAY", "0")
+    device = MemoryDevice()
     device.start_app = AsyncMock()
     device.tap = AsyncMock()
     device.press_button = AsyncMock()
@@ -287,15 +292,22 @@ def test_macro_records_replays_and_closes(monkeypatch, capsys):
     asyncio.run(demo.main())
     assert device.start_app.await_count == 2
     assert device.tap.await_count == 2
-    assert device.press_button.await_count == 2
+    assert device.press_button.await_count == 3
     device.close.assert_awaited_once()
-    assert "start_app" in capsys.readouterr().out
+    assert [step.action for step in load_macro("settings-demo")] == [
+        "start_app",
+        "tap",
+        "button_press",
+    ]
 
 
-def test_macro_closes_device_on_failure(monkeypatch):
+def test_macro_closes_device_on_failure(monkeypatch, tmp_path):
     from tests.demos import macro_demo as demo
+    from tests.support.devices import MemoryDevice
 
-    device = Device()
+    monkeypatch.setenv("MOBILERUN_RUNS_DIR", str(tmp_path / "runs"))
+    device = MemoryDevice()
+    device.press_button = AsyncMock()
     device.start_app = AsyncMock(side_effect=RuntimeError("failed"))
     device.close = AsyncMock()
     monkeypatch.setattr(demo, "AndroidDevice", lambda *a, **kw: device)

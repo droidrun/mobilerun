@@ -187,6 +187,11 @@ def test_utils_import_only_utils_from_mobilerun():
     violations = []
     for path in (ROOT / "utils").rglob("*.py"):
         for line, target in _references(path):
+            if path == ROOT / "utils/screen_fingerprint.py" and target in {
+                "mobilerun.models.recording",
+                "mobilerun.models.recording.Fingerprint",
+            }:
+                continue  # Pure run evidence value shared by core and replay.
             if target.startswith("mobilerun.") and not (
                 target == "mobilerun.utils" or target.startswith("mobilerun.utils.")
             ):
@@ -424,8 +429,9 @@ assert not any(m.startswith(("mobilerun.agents", "mobilerun_agents")) for m in s
 
 
 def test_macro_help_and_agent_dry_run_do_not_load_agents(tmp_path):
-    macro = tmp_path / "macro.json"
-    macro.write_text('{"macro_schema_version": "2.0", "actions": []}')
+    from tests.support.macro import write_macro
+
+    macro = write_macro(tmp_path)
     script = """
 import sys
 from click.testing import CliRunner
@@ -697,13 +703,15 @@ def test_package_readmes_do_not_use_template_filler():
 
 
 def test_macro_utilities_expose_state_matching_and_logging():
-    from mobilerun.macro.models import MACRO_SCHEMA_VERSION, normalize_ui_state
-    from mobilerun.macro.utils import compare_states, configure_macro_logging
+    from mobilerun.macro.utils import (
+        capture_fingerprint,
+        compare_states,
+        configure_macro_logging,
+    )
 
-    assert MACRO_SCHEMA_VERSION
+    assert callable(capture_fingerprint)
     assert callable(compare_states)
     assert callable(configure_macro_logging)
-    assert callable(normalize_ui_state)
 
 
 def test_skills_utils_parse_frontmatter_description():
@@ -729,13 +737,14 @@ def test_macro_runtime_defaults_read_environment(monkeypatch):
 
 def test_macro_matcher_threshold_reads_environment(monkeypatch):
     from mobilerun.macro.utils import compare_states
+    from mobilerun.models import Fingerprint
 
-    saved = {"phone_state": {"package": "a"}}
-    current = {"phone_state": {"package": "b"}}
-    monkeypatch.setenv("MOBILERUN_MACRO_STATE_THRESHOLD", "0.9")
-    assert not compare_states(saved, current).matches
-    monkeypatch.setenv("MOBILERUN_MACRO_STATE_THRESHOLD", "0.8")
-    assert compare_states(saved, current).matches
+    saved = Fingerprint(app="a", activity=None, elements=("id:x", "id:y"))
+    current = Fingerprint(app="a", activity=None, elements=("id:x",))
+    monkeypatch.setenv("MOBILERUN_MACRO_STATE_THRESHOLD", "0.51")
+    assert not compare_states(saved, current)
+    monkeypatch.setenv("MOBILERUN_MACRO_STATE_THRESHOLD", "0.5")
+    assert compare_states(saved, current)
 
 
 def test_macro_list_default_directory_reads_environment(monkeypatch, tmp_path):

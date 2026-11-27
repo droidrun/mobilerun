@@ -6,21 +6,31 @@ import asyncio
 import inspect
 import logging
 import re
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import ExitStack, nullcontext
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterator,
+    Sequence,
+)
+from contextlib import AsyncExitStack, ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
+from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from pydantic import BaseModel
 
 from mobilerun.core.extensions.actions import (
     Action,
+    ActionInfo,
     ActionSet,
     Declaration,
+    _authorize_dispatch,
     action,
     device_action,
 )
-from mobilerun.core.extensions.registry import Binding
+from mobilerun.core.extensions.registry import ActionOutcome, Binding, invoking_facade
 from mobilerun.errors.base import CloudError, MobilerunError, is_value_safe
 from mobilerun.errors.operators import (
     ExtensionActionError,
@@ -30,6 +40,8 @@ from mobilerun.errors.operators import (
 )
 from mobilerun.models.cloud_task import CloudTaskInputs
 from mobilerun.models.context import ContextItem
+from mobilerun.utils.codes import verification_read_codes
+from mobilerun.utils.redaction import mask_step_args
 
 if TYPE_CHECKING:
     from mobilerun.core.devices.base import Device
@@ -38,6 +50,9 @@ _active: ContextVar[Extension | None] = ContextVar("extension_action", default=N
 _sensitive_action: ContextVar[bool] = ContextVar(
     "sensitive_extension_action", default=False
 )
+_observed_outcome: ContextVar[ActionOutcome | None] = ContextVar(
+    "observed_extension_outcome", default=None
+)
 
 
 def _inside_bound_action(device: Device) -> bool:
@@ -45,6 +60,120 @@ def _inside_bound_action(device: Device) -> bool:
     active = _active.get()
     bound = active.device if active is not None else None
     return bound is not None and bound._extension_state is device._extension_state
+
+
+def _redact_bound_arguments(device: Device) -> None:
+    outcome = _observed_outcome.get()
+    if outcome is not None and _inside_bound_action(device):
+        outcome.redact_arguments()
+
+
+class _ExtensionAccess:
+    """Retain the invoking device for actions reached through a facade."""
+
+    def __init__(self, extension: Extension, facade: Device) -> None:
+        self._extension = extension
+        self._facade = facade
+
+    @property
+    def __class__(self) -> type[Extension]:
+        return type(self._extension)
+
+    @property
+    def actions(self) -> ActionSet:
+        return ActionSet(self._extension, facade=self._facade)
+
+    @contextmanager
+    def _invocation(self) -> Iterator[None]:
+        from mobilerun.core.runs import recording_scope
+
+        token = invoking_facade.set(self._facade)
+        try:
+            with recording_scope(enabled=self._facade.recording_allowed()):
+                yield
+        finally:
+            invoking_facade.reset(token)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            return getattr(self._extension, name)
+        with self._invocation():
+            member = getattr(self._extension, name)
+        if not callable(member):
+            return member
+
+        if inspect.iscoroutinefunction(member):
+
+            @wraps(member)
+            async def invoke(*args: Any, **kwargs: Any) -> Any:
+                with self._invocation():
+                    return self._wrap_lazy(await member(*args, **kwargs))
+
+            return invoke
+
+        @wraps(member)
+        def call(*args: Any, **kwargs: Any) -> Any:
+            with self._invocation():
+                result = member(*args, **kwargs)
+            if inspect.isawaitable(result):
+
+                async def await_result() -> Any:
+                    with self._invocation():
+                        return self._wrap_lazy(await result)
+
+                return await_result()
+            return self._wrap_lazy(result)
+
+        return call
+
+    def _wrap_lazy(self, result: Any) -> Any:
+        if inspect.isasyncgen(result):
+            return self._iterate_async(result)
+        if inspect.isgenerator(result):
+            return self._iterate(result)
+        return result
+
+    def _iterate(self, iterator: Generator[Any, Any, Any]) -> Generator[Any, Any, Any]:
+        advance: Callable[[], Any] = partial(next, iterator)
+        try:
+            while True:
+                with self._invocation():
+                    item = advance()
+                try:
+                    value = yield item
+                except GeneratorExit:
+                    raise
+                except BaseException as error:
+                    advance = partial(iterator.throw, error)
+                else:
+                    advance = partial(iterator.send, value)
+        except StopIteration as stop:
+            return stop.value
+        finally:
+            with self._invocation():
+                iterator.close()
+
+    async def _iterate_async(
+        self, iterator: AsyncGenerator[Any, Any]
+    ) -> AsyncGenerator[Any, Any]:
+        advance: Callable[[], Awaitable[Any]] = iterator.__anext__
+        try:
+            while True:
+                with self._invocation():
+                    item = await advance()
+                try:
+                    value = yield item
+                except GeneratorExit:
+                    raise
+                except BaseException as error:
+                    advance = partial(iterator.athrow, error)
+                else:
+                    advance = partial(iterator.asend, value)
+        except StopAsyncIteration:
+            return
+        finally:
+            with self._invocation():
+                await iterator.aclose()
 
 
 def _sanitize_safe_chain(error: MobilerunError) -> None:
@@ -143,7 +272,7 @@ class Extension:
     async def check_bind(self, device: Device) -> Sequence[Extension]:
         return tuple(
             other
-            for other in device.extensions.values()
+            for other in device._extension_state.view.values()
             if self.exclusive is not None
             and other.exclusive == self.exclusive
             and other is not self
@@ -184,7 +313,7 @@ class Extension:
         """Update resource-owned backend state after binding read-back."""
 
     def _check_name(self, device: Device, conflicts: Sequence[Extension] = ()) -> None:
-        occupied = device.extensions.get(self.name)
+        occupied = device._extension_state.view.get(self.name)
         if (
             self.name == "device"
             or any(self.name in vars(base) for base in type(device).__mro__)
@@ -381,46 +510,90 @@ class Extension:
                 )
             return device
 
-        from mobilerun.core.extensions.actions import _sensitive_values
+        from mobilerun.core.extensions.actions import iter_sensitive_values
+        from mobilerun.core.runs import recording_scope
         from mobilerun.utils.redaction import secret_scope
 
-        async with nullcontext() if nested else self._action_lock:
+        lock = nullcontext() if nested else self._action_lock
+        async with lock, AsyncExitStack() as dispatch_scope:
             device = device_for_call()
+            facade = invoking_facade.get()
+            if device is not None and (
+                facade is None or facade._extension_state is not device._extension_state
+            ):
+                facade = device
+            if facade is not None and not facade.recording_allowed():
+                dispatch_scope.enter_context(recording_scope(enabled=False))
             values = inspect.signature(entry._call).bind(*args[1:], **kwargs)
             values.apply_defaults()
             arguments = {
                 key: value for key, value in values.arguments.items() if key != "self"
             }
             validated = entry.validate(arguments)
+            _authorize_dispatch(
+                ActionInfo(
+                    self.role, self.name, fn.__name__, entry.supports_billing_retry
+                )
+            )
             token = _active.set(self)
             sensitivity_token = _sensitive_action.set(
                 _sensitive_action.get() or bool(entry.sensitive_parameters)
             )
+            outcome = ActionOutcome()
+            outcome_token = _observed_outcome.set(outcome) if not nested else None
             try:
                 with ExitStack() as secrets:
                     for key in entry.sensitive_parameters:
-                        for value in _sensitive_values(validated[key]):
+                        for value in iter_sensitive_values(validated[key]):
                             secrets.enter_context(secret_scope(value))
-                    observers = (
-                        tuple(device._extension_state.observers)
-                        if device is not None and not nested
-                        else ()
-                    )
-                    if observers:
-                        model = cast(type[BaseModel], entry._arguments)
-                        safe = model.model_construct(**validated).model_dump(
-                            mode="json", exclude=set(entry.sensitive_parameters)
-                        )
-                        safe.update(
-                            dict.fromkeys(entry.sensitive_parameters, "<redacted>")
-                        )
-                    result = entry.validate_result(
-                        await fn(self, device, **validated)
-                        if entry.requires_device
-                        else await fn(self, **validated)
-                    )
-                    for observe in observers:
-                        observe(entry.name, safe)
+                    async with AsyncExitStack() as stack:
+                        if device is not None:
+                            registry = device._extension_state
+                            if entry.sensitive_parameters:
+                                registry.sensitive_ui = True
+                                if nested:
+                                    _redact_bound_arguments(device)
+                            recorder = (
+                                facade.recording_device()
+                                if facade is not None and facade.recording_allowed()
+                                else None
+                            )
+                            observe = (
+                                registry.observers.get(recorder)
+                                if recorder is not None and not nested
+                                else None
+                            )
+                            if observe is not None:
+                                model = cast(type[BaseModel], entry._arguments)
+                                safe = model.model_construct(**validated).model_dump(
+                                    mode="json", exclude=set(entry.sensitive_parameters)
+                                )
+                                safe.update(
+                                    dict.fromkeys(entry.sensitive_parameters, "***")
+                                )
+                                safe = mask_step_args(
+                                    safe,
+                                    contains_code=registry.matches_sensitive_argument,
+                                )
+                                outcome.arguments = safe
+                                await stack.enter_async_context(
+                                    observe(facade or device, entry.name, safe, outcome)
+                                )
+                        try:
+                            result = entry.validate_result(
+                                await fn(self, device, **validated)
+                                if entry.requires_device
+                                else await fn(self, **validated)
+                            )
+                        except BaseException as error:
+                            outcome.error = type(error).__name__
+                            raise
+                        if result is False:
+                            outcome.error = "returned_false"
+                        if device is not None:
+                            device._extension_state.remember_verification_codes(
+                                *verification_read_codes(self.role, fn.__name__, result)
+                            )
                     return result
             except Exception as error:
                 if isinstance(error, MobilerunError) and is_value_safe(error):
@@ -458,5 +631,7 @@ class Extension:
                     raise wrapped from error
                 raise wrapped from None
             finally:
+                if outcome_token is not None:
+                    _observed_outcome.reset(outcome_token)
                 _sensitive_action.reset(sensitivity_token)
                 _active.reset(token)

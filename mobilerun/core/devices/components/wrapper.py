@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Unpack, cast
 
 from mobilerun_core_local.driver.base import DeviceDriver, PlatformUnsupportedError
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from mobilerun.core.devices.components.identifiers import _sanitize_identifier
 from mobilerun.core.devices.components.raw import _translate_unsupported
 from mobilerun.core.operator import Operator
 from mobilerun.core.proxy.target import ProxyTarget
+from mobilerun.core.runs import recording_scope
 from mobilerun.core.state.base import StateProvider
 from mobilerun.core.state.options import StateProviderFactory, StateProviderOptions
 from mobilerun.errors import DeviceOperationNotSupported
@@ -25,9 +26,10 @@ from mobilerun.models.results import ExecutionResult, ExpectationResult
 
 T = TypeVar("T", bound=BaseModel)
 D = TypeVar("D", bound=Device)
+R = TypeVar("R")
 
 if TYPE_CHECKING:
-    from mobilerun.core.devices.recording import ActionRecording
+    from mobilerun.core.devices.recording import RecordingDevice
     from mobilerun.core.mailbox.base import Mailbox
     from mobilerun.core.phone_number.base import PhoneNumber
 
@@ -68,7 +70,7 @@ class DeviceWrapper(Device, Generic[D]):
         await self._inner.set_timezone(timezone)
 
     async def open_url(self, url: str) -> None:
-        await self._inner.open_url(url)
+        await self._delegate_action(self._inner.open_url(url))
 
     async def set_language(self, locale: str) -> None:
         await self._inner.set_language(locale)
@@ -144,11 +146,11 @@ class DeviceWrapper(Device, Generic[D]):
 
     @property
     def number(self) -> PhoneNumber:
-        return self._inner.number
+        return cast("PhoneNumber", self._resource_lookup("sms", "phone_number"))
 
     @property
     def mailbox(self) -> Mailbox:
-        return self._inner.mailbox
+        return cast("Mailbox", self._resource_lookup("email", "mailbox"))
 
     @property
     def _proxy_target(self) -> ProxyTarget:
@@ -184,9 +186,15 @@ class DeviceWrapper(Device, Generic[D]):
     ) -> ExpectationResult:
         return await Device.expect(self, condition, operator=operator, timeout=timeout)
 
-    @property
-    def _recording(self) -> ActionRecording | None:
-        return self._inner._recording
+    def recording_device(self) -> RecordingDevice[Any] | None:
+        return self._inner.recording_device()
+
+    def recording_allowed(self) -> bool:
+        return self._inner.recording_allowed()
+
+    async def _delegate_action(self, operation: Awaitable[R]) -> R:
+        with recording_scope(enabled=self.recording_allowed()):
+            return await operation
 
     @property
     def _state_recovery(self) -> Callable[[], Awaitable[None]] | None:
@@ -210,34 +218,38 @@ class DeviceWrapper(Device, Generic[D]):
     async def input_text(
         self, text: str, clear: bool = False, stealth: bool = False, wpm: int = 0
     ) -> bool:
-        return await self._inner.input_text(text, clear, stealth, wpm)
+        return await self._delegate_action(
+            self._inner.input_text(text, clear, stealth, wpm)
+        )
 
     async def _input_text_raw(
         self, text: str, clear: bool = False, stealth: bool = False, wpm: int = 0
     ) -> bool:
-        return await self._inner._input_text_raw(text, clear, stealth, wpm)
+        return await self._delegate_action(
+            self._inner._input_text_raw(text, clear, stealth, wpm)
+        )
 
     async def wait(self, seconds: float) -> None:
-        await self._inner.wait(seconds)
+        await self._delegate_action(self._inner.wait(seconds))
 
     async def tap(self, x: int, y: int) -> None:
-        await self._inner.tap(x, y)
+        await self._delegate_action(self._inner.tap(x, y))
 
     async def swipe(
         self, x1: int, y1: int, x2: int, y2: int, duration_ms: float = 1000
     ) -> None:
-        await self._inner.swipe(x1, y1, x2, y2, duration_ms)
+        await self._delegate_action(self._inner.swipe(x1, y1, x2, y2, duration_ms))
 
     async def drag(
         self, x1: int, y1: int, x2: int, y2: int, duration: float = 3.0
     ) -> None:
-        await self._inner.drag(x1, y1, x2, y2, duration)
+        await self._delegate_action(self._inner.drag(x1, y1, x2, y2, duration))
 
     async def press_button(self, button: str) -> None:
-        await self._inner.press_button(button)
+        await self._delegate_action(self._inner.press_button(button))
 
     async def press_key_code(self, key_code: int) -> None:
-        await self._inner.press_key_code(key_code)
+        await self._delegate_action(self._inner.press_key_code(key_code))
 
     async def install_apk(
         self, path: str | Path, **kwargs: Unpack[InstallOptions]
@@ -250,13 +262,15 @@ class DeviceWrapper(Device, Generic[D]):
     async def _swipe_humanized(
         self, x1: int, y1: int, x2: int, y2: int, duration_ms: float = 1000
     ) -> None:
-        await self._inner._swipe_humanized(x1, y1, x2, y2, duration_ms)
+        await self._delegate_action(
+            self._inner._swipe_humanized(x1, y1, x2, y2, duration_ms)
+        )
 
     async def start_app(self, package: str, activity: str | None = None) -> str:
-        return await self._inner.start_app(package, activity)
+        return await self._delegate_action(self._inner.start_app(package, activity))
 
     async def stop_app(self, package: str) -> str:
-        return await self._inner.stop_app(package)
+        return await self._delegate_action(self._inner.stop_app(package))
 
     async def uninstall_app(self, package: str) -> str:
         return await self._inner.uninstall_app(package)

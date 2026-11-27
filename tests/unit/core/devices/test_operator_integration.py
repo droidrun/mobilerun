@@ -1,6 +1,7 @@
 """Regressions from the device-contract review, with no live resources."""
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,7 +110,9 @@ class InputOperator(Operator):
 @pytest.mark.parametrize("method", ["do", "expect"])
 @pytest.mark.parametrize("mode", ["recording", "stealth", "nested"])
 @pytest.mark.parametrize("selection", ["attached", "default", "explicit"])
-def test_wrapper_operators_keep_outer_identity(monkeypatch, method, mode, selection):
+def test_wrapper_operators_keep_outer_identity(
+    monkeypatch, method, mode, selection, tmp_path
+):
     operator = InputOperator()
     inner = InputDevice()
     monkeypatch.setattr(inner, "wait", AsyncMock(return_value=None))
@@ -117,7 +120,7 @@ def test_wrapper_operators_keep_outer_identity(monkeypatch, method, mode, select
         inner._operator = operator
     elif selection == "default":
         monkeypatch.setattr(inner, "_default_operator", lambda: operator)
-    recording = RecordingDevice(inner)
+    recording = RecordingDevice(inner, runs_dir=tmp_path, capture="actions")
     device = (
         recording
         if mode == "recording"
@@ -136,9 +139,13 @@ def test_wrapper_operators_keep_outer_identity(monkeypatch, method, mode, select
             " ",
             "world",
         ]
-    if mode != "stealth":
-        assert recording.recorded_actions[0] == {"action_type": "tap", "x": 1, "y": 2}
-        assert recording.recorded_actions[-1]["action_type"] == "swipe"
+    if mode == "recording":
+        lines = (recording.run_dir / "steps.jsonl").read_text().splitlines()
+        first, *_, last = map(json.loads, lines)
+        assert (first["action"], first["args"]) == ("tap", {"x": 1, "y": 2})
+        assert last["action"] == "swipe"
+    else:
+        assert recording.run_dir is None
 
 
 @pytest.mark.parametrize("wrapped", [False, True])

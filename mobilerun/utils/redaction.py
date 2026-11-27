@@ -4,12 +4,15 @@ import json
 import logging
 import re
 import traceback
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
+from weakref import WeakSet
+
+from pydantic import JsonValue
 
 # A period immediately following a digit only joins another digit, not a new
 # sentence. Possessive runs consume each span of spaces/digits without backtracking.
@@ -27,8 +30,7 @@ _active_secrets: ContextVar[_Variants | None] = ContextVar(
 )
 
 
-def _variants(values: tuple[str, ...]) -> _Variants | None:
-    parent = _active_secrets.get()
+def _variants(values: tuple[str, ...], parent: _Variants | None) -> _Variants | None:
     literals = set(parent.literals) if parent else set()
     numbers = set(parent.digits) if parent else set()
     for value in filter(None, values):
@@ -91,7 +93,10 @@ def _numeric_spans(text: str, numbers: frozenset[str]) -> Iterator[tuple[int, in
 
 
 def _redact_secrets(text: str) -> str:
-    variants = _active_secrets.get()
+    return _redact_variants(text, _active_secrets.get())
+
+
+def _redact_variants(text: str, variants: _Variants | None) -> str:
     if not variants:
         return text
     spans = list(_numeric_spans(text, variants.digits)) if variants.digits else []
@@ -111,6 +116,169 @@ def _redact_secrets(text: str) -> str:
     return "".join([*parts, text[end:]])
 
 
+class KnownCodes:
+    """Device-local verification codes retained only in memory."""
+
+    def __init__(self) -> None:
+        self._variants: _Variants | None = None
+        self.sensitive_values: set[str] = set()
+        self.observed_secrets: set[str] = set()
+
+    def remember(self, *codes: str) -> None:
+        self._variants = _variants(codes, self._variants)
+        if self._variants is not None:
+            self._enable_log_masking()
+
+    def remember_sensitive(self, values: Iterable[str]) -> None:
+        self.sensitive_values.update(filter(None, values))
+        if self.sensitive_values:
+            self._enable_log_masking()
+
+    def _enable_log_masking(self) -> None:
+        _known_codes.add(self)
+        _install_secret_factory()
+        _install_extra_redaction()
+
+    def redact(self, text: str) -> str:
+        return _redact_variants(text, self._variants)
+
+    def redact_sensitive_text(self, text: str, *, include_observed: bool = True) -> str:
+        values = (
+            self.sensitive_values | self.observed_secrets
+            if include_observed
+            else self.sensitive_values
+        )
+        for value in sorted(values, key=len, reverse=True):
+            text = re.sub(rf"(?<!\w){re.escape(value)}(?!\w)", "***", text)
+        return text
+
+
+_known_codes: WeakSet[KnownCodes] = WeakSet()
+
+
+def _redact_log(text: str) -> str:
+    text = _redact_secrets(text)
+    for codes in tuple(_known_codes):
+        text = codes.redact(codes.redact_sensitive_text(text, include_observed=False))
+    return text
+
+
+def mask_step_args(
+    args: dict[str, JsonValue], *, contains_code: Callable[[str], bool] | None = None
+) -> dict[str, JsonValue]:
+    """Mask active secrets and device-known codes throughout a JSON argument tree."""
+
+    def mask_dict(values: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        return {
+            (
+                "***"
+                if contains_code is not None and contains_code(key)
+                else _redact_secrets(key)
+            ): mask(value)
+            for key, value in values.items()
+        }
+
+    def mask(value: JsonValue) -> JsonValue:
+        if isinstance(value, dict):
+            return mask_dict(value)
+        if isinstance(value, list):
+            return [mask(item) for item in value]
+        if value is not None:
+            text = str(value)
+            if _redact_secrets(text) != text or (
+                contains_code is not None and contains_code(text)
+            ):
+                return "***"
+        return value
+
+    return mask_dict(args)
+
+
+def is_secure_ui_node(node: dict[str, JsonValue]) -> bool:
+    """Recognize Android, iOS, and generic secure input markers."""
+    for key, value in node.items():
+        name = key.lower().replace("_", "").replace("-", "")
+        text = str(value).lower() if isinstance(value, (str, int)) else ""
+        if name in {
+            "ispassword",
+            "password",
+            "secure",
+            "issecure",
+            "securetextentry",
+            "issecuretextentry",
+        } and text in {"true", "1", "yes"}:
+            return True
+        if name in {"type", "inputtype", "classname", "class"}:
+            if "password" in text or "securetextfield" in text:
+                return True
+            if name == "inputtype":
+                try:
+                    if int(text, 0) & 0xFF in {0x12, 0x81, 0x91, 0xE1}:
+                        return True
+                except ValueError:
+                    pass
+    details = node.get("details")
+    return isinstance(details, dict) and is_secure_ui_node(details)
+
+
+def mask_secure_ui(
+    ui: dict[str, JsonValue], *, retain_targeting: bool = False
+) -> dict[str, JsonValue]:
+    """Remove secure values and their copies; optionally keep live targets."""
+    protected = False
+    values: set[str] = set()
+    targeting = (
+        {"index", "bounds", "displayBounds", "className", "resourceId", "tapBlockers"}
+        if retain_targeting
+        else set()
+    )
+
+    def remove(value: JsonValue) -> JsonValue:
+        nonlocal protected
+        if isinstance(value, dict):
+            if is_secure_ui_node(value):
+                protected = True
+                for name, item in value.items():
+                    if name not in targeting:
+                        collect(item)
+                return {
+                    **{name: item for name, item in value.items() if name in targeting},
+                    "isPassword": True,
+                    "text": "***",
+                }
+            return {key: remove(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [remove(item) for item in value]
+        return value
+
+    def collect(value: JsonValue) -> None:
+        if isinstance(value, dict):
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, str) and value:
+            values.add(value)
+
+    elements = remove(ui.get("elements"))
+    remove(ui.get("phone_state"))
+    if not protected:
+        return ui
+    # Both summaries are independently rendered and may repeat a password.
+    # Phone state can also carry a separately formatted focused-element copy.
+    return {
+        **ui,
+        "elements": mask_step_args(
+            {"elements": elements},
+            contains_code=lambda text: any(value in text for value in values),
+        ).get("elements", []),
+        "phone_state": {},
+        "formatted_text": "***",
+        "focused_text": "***",
+    }
+
+
 def _install_secret_factory() -> None:
     previous = logging.getLogRecordFactory()
     if getattr(previous, "_mobilerun_secret_redaction", False):
@@ -118,18 +286,18 @@ def _install_secret_factory() -> None:
 
     def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
         record = previous(*args, **kwargs)
-        if _active_secrets.get():
-            record.msg = _redact_secrets(record.getMessage())
+        if _active_secrets.get() or _known_codes:
+            record.msg = _redact_log(record.getMessage())
             record.args = ()
             if record.exc_info:
-                record.exc_text = _redact_secrets(
+                record.exc_text = _redact_log(
                     "".join(traceback.format_exception(*record.exc_info))
                 )
                 record.exc_info = None
             elif record.exc_text:
-                record.exc_text = _redact_secrets(record.exc_text)
+                record.exc_text = _redact_log(record.exc_text)
             if record.stack_info:
-                record.stack_info = _redact_secrets(record.stack_info)
+                record.stack_info = _redact_log(record.stack_info)
         return record
 
     setattr(factory, "_mobilerun_secret_redaction", True)  # noqa: B010
@@ -157,16 +325,16 @@ def _install_extra_redaction() -> None:
         record = previous(
             self, name, level, fn, lno, msg, args, exc_info, func, extra, sinfo
         )
-        if extra and _active_secrets.get():
+        if extra and (_active_secrets.get() or _known_codes):
             for key in extra:
                 value = record.__dict__[key]
                 rendered = str(value)
-                redacted = _redact_secrets(rendered)
+                redacted = _redact_log(rendered)
                 if rendered != redacted:
                     record.__dict__[key] = redacted
                 elif not isinstance(value, str):
                     representation = repr(value)
-                    redacted_repr = _redact_secrets(representation)
+                    redacted_repr = _redact_log(representation)
                     if representation != redacted_repr:
                         record.__dict__[key] = redacted_repr
         return record
@@ -184,7 +352,7 @@ def secret_scope(*values: str) -> Iterator[None]:
     """
     _install_secret_factory()
     _install_extra_redaction()
-    token = _active_secrets.set(_variants(values))
+    token = _active_secrets.set(_variants(values, _active_secrets.get()))
     try:
         yield
     finally:

@@ -1,345 +1,238 @@
-"""Guarded macro replay, UI state matching, and error propagation."""
+"""Guarded playback uses original evidence indices and fails closed."""
 
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-import yaml
 
-from mobilerun.core.credentials import DictCredentials
-from mobilerun.core.devices.base import Device as DeviceMixin
+from mobilerun.core.credentials import CredentialPolicy, DictCredentials
+from mobilerun.errors.base import DeviceError
 from mobilerun.macro.errors import MacroError, MacroMismatch
-from mobilerun.macro.models import normalize_ui_state
-from mobilerun.macro.player import MacroPlayer, replay_macro_file
-from mobilerun.macro.utils import compare_states
+from mobilerun.macro.models import MacroStep
+from mobilerun.macro.operator import MacroOperator
+from mobilerun.macro.player import MacroPlayer
+from mobilerun.models import Fingerprint
+from tests.support.macro import FakeDevice, write_macro
+
+READY = Fingerprint(app="settings", activity=".Ready", elements=("id:continue",))
+DONE = Fingerprint(app="settings", activity=".Done", elements=())
 
 
-def _state(text="Continue", bounds="10,20,110,60", extra=None):
-    element = {
-        "index": 4,
-        "resourceId": "com.example:id/continue",
-        "className": "android.widget.Button",
-        "text": text,
-        "contentDescription": "",
-        "clickable": True,
-        "enabled": True,
-        "focused": False,
-        "bounds": bounds,
-    }
-    if extra:
-        element.update(extra)
+def test_stepwise_replay_refuses_handoff_after_a_vault_row():
+    from mobilerun.core.credentials.masking import current_masks
+
+    async def run():
+        device = FakeDevice(_screen(".Wrong"))
+        device._input_secret = AsyncMock(return_value=True)
+        await DictCredentials({"login": "example-secret"}).bind(device)
+        player = MacroPlayer(device, state_timeout=0)
+        with player.replay_scope():
+            await player.play_step(_step(action="type_secret", args={"name": "login"}))
+            assert player.tainted
+            assert current_masks.get().active
+            with pytest.raises(MacroError, match="handoff refused"):
+                await player.play_step(_step(before=READY))
+        assert current_masks.get() is None
+        assert player.tainted
+
+    asyncio.run(run())
+
+
+def test_masks_prepare_once_per_replay_scope_and_lazily_outside_it():
+    class Vault(DictCredentials):
+        preparations = 0
+
+        async def prepare_masks(self, masks):
+            self.preparations += 1
+            await super().prepare_masks(masks)
+
+    async def run():
+        device = FakeDevice()
+        vault = await Vault({"login": "example-secret"}).bind(device)
+        player = MacroPlayer(device)
+        with player.replay_scope():
+            assert vault.preparations == 0
+            await player.play_step(_step())
+            with player.replay_scope():
+                await player.play_step(_step())
+        assert vault.preparations == 1
+        await player.play_step(_step())
+        assert vault.preparations == 2
+
+    asyncio.run(run())
+
+
+def _screen(activity, element=None):
     return {
-        "elements": [element],
-        "phone_state": {
-            "package": "com.example",
-            "activity": ".MainActivity",
-            "battery": 64,
-        },
-        "screen_width": 400,
-        "screen_height": 800,
+        "phone_state": {"packageName": "settings", "activityName": activity},
+        "elements": [element] if element is not None else [],
     }
 
 
-def test_normalized_matching_ignores_volatile_fields_but_detects_meaningful_changes():
-    saved = normalize_ui_state(_state(extra={"index": 99, "visible": True}))
-    same_screen = normalize_ui_state(_state(extra={"index": 1, "visible": False}))
-    different_screen = normalize_ui_state(_state(text="Delete"))
-
-    assert compare_states(saved, same_screen, threshold=0.85).matches
-
-    result = compare_states(saved, different_screen, threshold=0.85)
-    assert not result.matches
-    assert "below threshold" in result.reason
+def _step(**fields):
+    return MacroStep(**{"i": 7, "action": "tap", "args": {"x": 60, "y": 40}, **fields})
 
 
-def test_normalized_matching_ignores_bounds_movement():
-    saved = normalize_ui_state(_state(bounds="10,20,110,60"))
-    moved = normalize_ui_state(_state(bounds="50,100,250,180"))
+def test_player_polls_guards_and_uses_saved_coordinates():
+    device = FakeDevice(
+        _screen(".Loading"),
+        _screen(".Ready", {"resourceId": "continue", "bounds": "100,100,120,120"}),
+        _screen(".Done"),
+    )
+    player = MacroPlayer(device, state_timeout=0.5, state_poll_interval=0)
 
-    assert compare_states(saved, moved, threshold=0.85).matches
+    asyncio.run(player.play_step(_step(before=READY, after=DONE, target="continue")))
 
-
-class FakeDriver(DeviceMixin):
-    platform = "android"
-    state = None
-
-    def __init__(self, states):
-        super().__init__()
-        self.states = list(states)
-        self.taps = []
-        self.inputs = []
-
-    async def connect(self):
-        return None
-
-    async def _get_ui_tree(self):
-        if len(self.states) > 1:
-            return self.states.pop(0)
-        return self.states[0]
-
-    async def tap(self, x, y):
-        self.taps.append((x, y))
-
-    async def input_text(self, text, clear=False):
-        self.inputs.append((text, clear))
-        return True
-
-    async def _input_text_raw(self, text, clear=False, stealth=False, wpm=0):
-        return await self.input_text(text, clear)
+    assert device.taps == [(60, 40)]
+    assert device.observations == 3
 
 
-def _raw_state(text="Continue", bounds="10,20,110,60"):
-    return {
-        "a11y_tree": [
-            {
-                "resourceId": "com.example:id/continue",
-                "className": "android.widget.Button",
-                "text": text,
-                "clickable": True,
-                "enabled": True,
-                "bounds": bounds,
-            }
-        ],
-        "phone_state": {"package": "com.example", "activity": ".MainActivity"},
-        "screen_width": 400,
-        "screen_height": 800,
-    }
+@pytest.mark.parametrize("phase", ["before", "action", "after"])
+def test_divergence_reports_original_index_and_phase(phase):
+    class RejectTap(FakeDevice):
+        async def tap(self, x, y):
+            if phase == "action":
+                raise DeviceError("not accepted")
+            await super().tap(x, y)
+
+    ready = _screen(".Ready", {"resourceId": "continue"})
+    device = RejectTap(_screen(".Wrong") if phase == "before" else ready, ready)
+    player = MacroPlayer(device, state_timeout=0)
+    step = _step(before=READY, after=DONE)
+
+    with pytest.raises(MacroMismatch, match=rf"step 7.*{phase}") as caught:
+        asyncio.run(player.replay_macro([_step(i=2), step], start_from_step=1))
+
+    assert caught.value.step is step
+    assert caught.value.phase == phase
+    assert caught.value.observed == (
+        Fingerprint(app="settings", activity=".Wrong", elements=())
+        if phase == "before"
+        else READY
+    )
+    assert device.taps == ([(60, 40)] if phase == "after" else [])
 
 
-def _macro_action(pre_state, action_type="tap"):
-    action = {
-        "action_type": action_type,
-        "pre_state": pre_state,
-        "recorded_at_ms": 1000,
-        "elapsed_since_previous_ms": 0,
-    }
-    if action_type == "tap":
-        action.update(
-            {
-                "x": 60,
-                "y": 40,
-            }
+def test_false_input_text_stops_at_action_without_checking_after():
+    class RejectText(FakeDevice):
+        async def input_text(self, text, clear=False):
+            self.inputs.append((text, clear))
+            return False
+
+    device = RejectText()
+    player = MacroPlayer(device, state_timeout=0)
+    step = _step(
+        action="input_text", args={"text": "offline", "clear": True}, after=DONE
+    )
+    with pytest.raises(MacroMismatch) as caught:
+        asyncio.run(player.play_step(step))
+    assert caught.value.phase == "action"
+    assert caught.value.observed is None
+    assert device.inputs == [("offline", True)]
+    assert device.observations == 0
+
+
+@pytest.mark.parametrize("guard", ["before", "after"])
+def test_missing_observed_evidence_cannot_pass_present_guard(guard):
+    device = FakeDevice({})
+    player = MacroPlayer(device, state_timeout=0, state_threshold=0)
+
+    with pytest.raises(MacroMismatch) as caught:
+        asyncio.run(player.play_step(_step(**{guard: READY})))
+
+    assert caught.value.phase == guard
+    assert caught.value.observed is None
+    assert device.taps == ([(60, 40)] if guard == "after" else [])
+
+
+def test_missing_guards_skip_observation():
+    device = FakeDevice({})
+    asyncio.run(MacroPlayer(device).play_step(_step()))
+    assert device.taps == [(60, 40)]
+    assert device.observations == 0
+
+
+def test_unavailable_state_samples_are_not_observations():
+    device = FakeDevice(None)
+    player = MacroPlayer(device, state_timeout=0)
+    with pytest.raises(MacroMismatch) as caught:
+        asyncio.run(player.play_step(_step(before=READY)))
+    assert caught.value.observed is None
+    assert device.taps == []
+
+
+def test_active_credential_masks_match_recorded_structural_keys():
+    async def run():
+        device = FakeDevice(_screen(".Ready", {"resourceId": "private-canary"}))
+        vault = await DictCredentials({"login": "private-canary"}).bind(device)
+        vault.policies = (CredentialPolicy("login", mask_from_start=True),)
+        player = MacroPlayer(device, state_timeout=0)
+        expected = READY.model_copy(update={"elements": ("id:[secret:login]",)})
+        await player.play_step(_step(before=expected))
+        assert device.taps == [(60, 40)]
+
+    asyncio.run(run())
+
+
+def test_credential_reference_types_field_without_persisting_value(caplog):
+    async def run():
+        device = FakeDevice()
+        device._input_secret = AsyncMock(return_value=True)
+        await DictCredentials({"login": "private-canary"}).bind(device)
+        await MacroPlayer(device).play_step(
+            _step(action="type_secret", args={"name": "login"})
         )
-    return action
+        device._input_secret.assert_awaited_once_with("private-canary")
+
+    with caplog.at_level("DEBUG"):
+        asyncio.run(run())
+    assert "private-canary" not in caplog.text
 
 
-def test_guarded_replay_waits_until_expected_state_appears_then_taps_saved_coordinates():
-    saved_state = normalize_ui_state(_raw_state())
-    player = MacroPlayer(
-        delay_between_actions=0,
-        state_timeout=0.5,
-        state_poll_interval=0.01,
-    )
-    player.driver = FakeDriver(
-        [_raw_state(text="Loading"), _raw_state(bounds="50,100,250,180")]
-    )
-    macro_data = {
-        "macro_schema_version": "2.0",
-        "description": "continue",
-        "actions": [_macro_action(saved_state)],
-    }
-
-    success = asyncio.run(player.replay_macro(macro_data))
-
-    assert success
-    assert player.driver.taps == [(60, 40)]
-
-
-def test_replay_ignores_stale_target_hint_and_uses_recorded_coordinates():
-    saved_state = normalize_ui_state(_raw_state())
-    action = _macro_action(saved_state)
-    action["target_hint"] = saved_state["nodes"][0]
-    player = MacroPlayer(
-        delay_between_actions=0,
-        state_timeout=0.5,
-        state_poll_interval=0.01,
-    )
-    player.driver = FakeDriver([_raw_state(bounds="50,100,250,180")])
-    macro_data = {
-        "macro_schema_version": "2.0",
-        "description": "continue",
-        "actions": [action],
-    }
-
-    success = asyncio.run(player.replay_macro(macro_data))
-
-    assert success
-    assert player.driver.taps == [(60, 40)]
-
-
-def test_stop_mode_aborts_on_state_mismatch_with_divergence_report():
-    saved_state = normalize_ui_state(_raw_state())
-    player = MacroPlayer(
-        delay_between_actions=0,
-        state_timeout=0.01,
-        state_poll_interval=0.01,
-    )
-    player.driver = FakeDriver([_raw_state(text="Delete")])
-    macro_data = {
-        "macro_schema_version": "2.0",
-        "description": "continue",
-        "actions": [_macro_action(saved_state)],
-    }
-
-    with pytest.raises(MacroMismatch):
-        asyncio.run(player.replay_macro(macro_data))
-    assert player.driver.taps == []
-    assert player.last_divergence["step"] == 1
-    assert "below threshold" in player.last_divergence["reason"]
-
-
-def test_current_state_snapshot_requires_device_ui_state():
-    class IncompleteDevice:
-        async def _get_ui_tree(self):
-            return {}
-
-    player = MacroPlayer(IncompleteDevice())
-    with pytest.raises(AttributeError, match="state"):
-        asyncio.run(player.get_current_state_snapshot())
-
-
-def test_current_state_snapshot_prefers_state_provider_when_available():
-    class FakeProvider:
-        async def get_state(self):
-            return SimpleNamespace(
-                elements=[
-                    {
-                        "resourceId": "com.example:id/provider",
-                        "className": "android.widget.TextView",
-                        "text": "Provider formatted state",
-                        "bounds": "0,0,100,100",
-                    }
-                ],
-                phone_state={"package": "com.example", "activity": ".Main"},
-                screen_width=100,
-                screen_height=100,
-            )
-
-    player = MacroPlayer(delay_between_actions=0)
-    player.driver = FakeDriver([_raw_state(text="Raw state")])
-    player.state_provider = FakeProvider()
-
-    snapshot = asyncio.run(player.get_current_state_snapshot())
-
-    assert snapshot["nodes"][0]["text"] == "Provider formatted state"
-
-
-def test_type_secret_replay_resolves_secret_without_logging_value(caplog):
-    caplog.set_level("DEBUG")
-
-    saved_state = normalize_ui_state(_raw_state())
-    player = MacroPlayer(delay_between_actions=0)
-    player.driver = FakeDriver([_raw_state()])
-    player.driver.state = SimpleNamespace(
-        refresh=AsyncMock(
-            return_value=SimpleNamespace(
-                phone_state={
-                    "focusedElement": {"className": "EditText"},
-                    "isEditable": True,
-                }
-            )
+def test_credential_preflight_blocks_earlier_actions_and_observation():
+    async def run():
+        device = FakeDevice()
+        vault = await DictCredentials({"login": "example-only"}).bind(device)
+        vault.policies = (CredentialPolicy("login", requires_approval=True),)
+        player = MacroPlayer(device)
+        protected = _step(
+            i=8,
+            action="extension_call",
+            args={
+                "name": "vault.type_field",
+                "arguments": {"name": "login", "field": "password", "package": None},
+            },
         )
-    )
-    player.state_provider = SimpleNamespace(
-        get_state=AsyncMock(return_value=_raw_state())
-    )
-    asyncio.run(DictCredentials({"login_password": "s3cr3t"}).bind(player.driver))
-    macro_data = {
-        "macro_schema_version": "2.0",
-        "description": "type secret",
-        "actions": [
-            {
-                "action_type": "type_secret",
-                "secret_id": "login_password",
-                "clear": False,
-                "pre_state": saved_state,
-            }
-        ],
-    }
+        with pytest.raises(MacroError, match="approval"):
+            await player.replay_macro([_step(before=READY), protected])
+        assert device.taps == []
+        assert device.observations == 0
 
-    success = asyncio.run(player.replay_macro(macro_data))
-
-    assert success
-    assert player.driver.inputs == [("s3cr3t", False)]
-    assert "s3cr3t" not in caplog.text
+    asyncio.run(run())
 
 
-def test_type_secret_replay_fails_without_typing_when_secret_missing():
-    saved_state = normalize_ui_state(_raw_state())
-    player = MacroPlayer(delay_between_actions=0)
-    player.driver = FakeDriver([_raw_state()])
-    assert not player.driver.extensions
-    macro_data = {
-        "macro_schema_version": "2.0",
-        "description": "type secret",
-        "actions": [
-            {
-                "action_type": "type_secret",
-                "secret_id": "missing_password",
-                "clear": False,
-                "pre_state": saved_state,
-            }
-        ],
-    }
-
-    with pytest.raises(MacroError, match="Bind one vault"):
-        asyncio.run(player.replay_macro(macro_data))
-    assert player.driver.inputs == []
-
-
-def test_type_secret_replay_does_not_load_environment_config(tmp_path, monkeypatch):
-
-    secrets = tmp_path / "secrets.yaml"
-    secrets.write_text(yaml.safe_dump({"secrets": {"login": "test-value"}}))
-    config = tmp_path / "custom.yaml"
-    config.write_text(
-        yaml.safe_dump(
-            {"_version": 8, "credentials": {"enabled": True, "file_path": str(secrets)}}
-        )
-    )
-    monkeypatch.setenv("MOBILERUN_CONFIG", str(config))
-    monkeypatch.setenv("MOBILERUN_USER_CONFIG_DIR", str(tmp_path / "missing"))
-    device = FakeDriver([_raw_state()])
-    player = MacroPlayer(device)
-
-    with pytest.raises(MacroError, match="Bind one vault"):
-        asyncio.run(
-            player.replay_action({"action_type": "type_secret", "secret_id": "login"})
-        )
+def test_masked_macro_argument_is_not_sent_to_device():
+    device = FakeDevice()
+    step = _step(action="input_text", args={"text": "prefix [secret:login]"})
+    with pytest.raises(MacroError, match="redacted"):
+        asyncio.run(MacroPlayer(device).play_step(step))
     assert device.inputs == []
 
 
-@pytest.mark.parametrize(
-    "action, message",
-    [({"type": "unknown"}, None), ({"type": "start_app"}, "start_app.*package")],
-    ids=["unknown", "missing-package"],
-)
-def test_invalid_replay_action_raises_macro_error(action, message):
-    player = MacroPlayer(device=object())
-    with pytest.raises(MacroError, match=message):
-        asyncio.run(player.replay_action(action))
+def test_operator_consumes_preflight_snapshot_even_if_file_changes(tmp_path):
+    from mobilerun.macro.builder import _replay_snapshot, load_macro
 
+    path = write_macro(tmp_path)
+    snapshot = load_macro(path)
+    token = _replay_snapshot.set((path, snapshot))
+    try:
+        write_macro(
+            tmp_path, rows=[{"i": 2, "action": "tap", "args": {"x": 1, "y": 2}}]
+        )
+        device = FakeDevice()
+        result = asyncio.run(MacroOperator().execute(device, str(path)))
+    finally:
+        _replay_snapshot.reset(token)
 
-def test_state_programmer_error_is_not_swallowed():
-    class Provider:
-        async def get_state(self):
-            raise TypeError("programmer bug")
-
-    player = MacroPlayer(device=object())
-    player.state_provider = Provider()
-    with pytest.raises(TypeError, match="programmer bug"):
-        asyncio.run(player.get_current_state_snapshot())
-
-
-def test_file_helper_propagates_mismatch(monkeypatch):
-    mismatch = MacroMismatch(0, [], {}, "mismatch")
-    monkeypatch.setattr(MacroPlayer, "load_macro_from_file", lambda *args: {})
-
-    async def replay(*args, **kwargs):
-        raise mismatch
-
-    monkeypatch.setattr(MacroPlayer, "replay_macro", replay)
-    with pytest.raises(MacroMismatch) as caught:
-        asyncio.run(replay_macro_file("unused"))
-    assert caught.value is mismatch
+    assert result.success and result.steps == 1
+    assert device.taps == [(10, 20)]

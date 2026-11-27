@@ -38,12 +38,16 @@ DEVICE_NAMES = {
     "input_text",
     "install_apk",
     "install_app",
+    "known_codes_redactor",
+    "register_sensitive_values",
     "list_apps",
     "list_files",
     "mailbox",
     "number",
     "open_url",
     "platform",
+    "recording_allowed",
+    "recording_device",
     "press_button",
     "press_key_code",
     "pull_file",
@@ -83,7 +87,16 @@ def test_exact_device_cloud_and_pool_surfaces():
     }
     pool = DevicePool([Device()])
     assert {n for n in dir(pool) if not n.startswith("_")} == (
-        DEVICE_NAMES - {"identifier", "pull_file", "cloud_id"}
+        DEVICE_NAMES
+        - {
+            "identifier",
+            "pull_file",
+            "cloud_id",
+            "known_codes_redactor",
+            "register_sensitive_values",
+            "recording_device",
+            "recording_allowed",
+        }
     ) | {"devices", "bind_each"}
 
 

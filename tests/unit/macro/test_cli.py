@@ -17,10 +17,6 @@ from mobilerun.cli.app import cli
 from mobilerun.cli.devices.base import discovery, options, selection
 from mobilerun.cli.devices.base.options import device_options
 from mobilerun.macro.cli import macro
-from mobilerun.macro.errors import MacroError
-from mobilerun.macro.models import normalize_ui_state
-from mobilerun.macro.player import MacroPlayer
-from mobilerun.macro.recorder import MacroRecorder
 from mobilerun.macro.utils import configure_macro_logging
 from mobilerun.models.results import ExecutionResult
 from tests.support.macro import FakeDevice, write_macro
@@ -92,7 +88,7 @@ def test_macro_cli_mismatch_exits_nonzero_without_action(monkeypatch, tmp_path):
         ],
     )
     assert result.exit_code == 1
-    assert "mismatch before step 1" in result.output
+    assert "mismatch at step 1 (before)" in result.output
     assert device.taps == []
 
 
@@ -108,26 +104,45 @@ def test_dry_run_does_not_connect(monkeypatch, tmp_path):
     assert device.taps == []
 
 
-def test_record_without_state_has_no_guard():
-    action = MacroRecorder().record_wait(0)
-    assert action["pre_state"] is None
-    assert action.get("post_state") is None
-    assert asyncio.run(MacroPlayer().wait_for_pre_state(action["pre_state"], 1))[0]
-
-
-def test_duck_typed_state_can_omit_optional_attributes():
-    state = normalize_ui_state(SimpleNamespace())
-    assert state["nodes"] == []
-    assert state["screen"] == {"width": None, "height": None}
-
-
-def test_unknown_keycode_is_error():
-    with pytest.raises(MacroError, match="keycode"):
-        asyncio.run(
-            MacroPlayer(device=object()).replay_action(
-                {"type": "key_press", "keycode": 999}
-            )
+def test_versioned_targets_list_and_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILERUN_MACRO_DIRECTORY", str(tmp_path))
+    folder = tmp_path / "routine"
+    folder.mkdir()
+    pin = write_macro(folder)
+    current = folder / "v10.jsonl"
+    current.write_text(
+        '{"i":3,"action":"tap","args":{"x":11,"y":20}}\n'
+        '{"i":8,"action":"wait","args":{"duration":0}}\n'
+    )
+    (folder / "v2.jsonl").write_text(pin.read_text())
+    (tmp_path / "other").mkdir()
+    runner = CliRunner()
+    listing = runner.invoke(macro, ["list", "--json"])
+    assert listing.exit_code == 0, listing.output
+    assert json.loads(listing.output) == [
+        {"name": "routine", "version": "v10.jsonl", "actions": 2}
+    ]
+    for target in ("routine", str(folder), str(current)):
+        result = runner.invoke(
+            macro, ["replay", target, "--dry-run", "--start-from", "2"]
         )
+        assert result.exit_code == 0, result.output
+        assert result.output == "8: wait duration=0\n"
+    result = runner.invoke(macro, ["replay", str(pin), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert result.output == "1: tap x=10 y=20\n"
+
+
+@pytest.mark.parametrize("flags", [[], ["--yes"], ["--on-mismatch", "agent"]])
+def test_invalid_macro_fails_before_device_discovery(tmp_path, monkeypatch, flags):
+    discovery = AsyncMock(side_effect=AssertionError("must not discover"))
+    monkeypatch.setattr(options, "discover_devices", discovery)
+    path = tmp_path / "v1.jsonl"
+    path.write_text("not a macro\n")
+    result = CliRunner().invoke(macro, ["replay", str(path), *flags])
+    assert result.exit_code == 1
+    assert "Invalid JSONL row 1" in result.output
+    discovery.assert_not_awaited()
 
 
 def test_optional_device_with_no_discovery(monkeypatch):
@@ -173,9 +188,8 @@ def test_macro_dry_run_never_discovers_device(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "mobilerun.cli.devices.base.options.discover_devices", discovery
     )
-    path = tmp_path / "macro.json"
-    path.write_text(
-        json.dumps({"macro_schema_version": "2.0", "actions": [{"type": "wait"}]})
+    path = write_macro(
+        tmp_path, rows=[{"i": 1, "action": "wait", "args": {"duration": 0}}]
     )
     result = CliRunner().invoke(macro, ["replay", str(path), "--dry-run"])
     assert result.exit_code == 0, repr(result.exception)
@@ -183,10 +197,9 @@ def test_macro_dry_run_never_discovers_device(monkeypatch, tmp_path):
     discovery.assert_not_called()
 
 
-def test_legacy_replay_flags_are_accepted(monkeypatch, tmp_path):
+def test_replay_flags_are_accepted_in_dry_run(tmp_path):
 
-    path = tmp_path / "macro.json"
-    path.write_text(json.dumps({"macro_schema_version": "2.0", "actions": []}))
+    path = write_macro(tmp_path)
     result = CliRunner().invoke(
         macro,
         [
@@ -233,8 +246,7 @@ def test_replay_config_reaches_device_connection(monkeypatch, tmp_path):
         "execute",
         AsyncMock(return_value=ExecutionResult(success=True, device="fake")),
     )
-    path = tmp_path / "macro.json"
-    path.write_text(json.dumps({"macro_schema_version": "2.0", "actions": []}))
+    path = write_macro(tmp_path)
     result = CliRunner().invoke(macro, ["replay", str(path), "-d", "serial"])
     assert result.exit_code == 0, repr(result.exception)
     assert connect.await_args.kwargs["config"] is config
@@ -267,19 +279,22 @@ def test_macro_agent_handoff_accepts_injected_runner(tmp_path):
 
 def test_preview_shows_coordinates_without_snapshot_or_payload(tmp_path):
     secret = "PRIVATE-UI-TEXT" * 1000
-    actions = [
+    rows = [
         {
-            "action_type": "tap",
-            "x": 10,
-            "y": 20,
-            "pre_state": {"text": secret},
-            "post_state": {"text": secret},
+            "i": 1,
+            "action": "tap",
+            "args": {"x": 10, "y": 20},
+            "before": {"app": secret, "activity": None, "elements": []},
+            "note": secret,
         },
-        {"type": "input_text", "text": secret},
-        {"type": "extension_call", "arguments": {"password": secret}},
+        {"i": 2, "action": "input_text", "args": {"text": secret}},
+        {
+            "i": 3,
+            "action": "extension_call",
+            "args": {"name": "vault.action", "arguments": {"password": secret}},
+        },
     ]
-    path = tmp_path / "macro.json"
-    path.write_text(json.dumps({"macro_schema_version": "2.0", "actions": actions}))
+    path = write_macro(tmp_path, rows=rows)
     result = CliRunner().invoke(macro, ["replay", str(path), "--dry-run"])
     assert result.exit_code == 0, result.exception
     assert "PRIVATE-UI-TEXT" not in result.output

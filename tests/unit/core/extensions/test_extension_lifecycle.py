@@ -149,7 +149,7 @@ def test_billing_retry_action_can_have_public_owner_argument():
     asyncio.run(scenario())
 
 
-def test_diamond_inheritance_uses_merged_action_visibility_and_sensitivity():
+def test_diamond_inheritance_uses_merged_action_visibility_and_sensitivity(tmp_path):
     class Private(Extension):
         @action(public=False, sensitive_parameters=frozenset({"text"}))
         async def echo(self, text: str) -> int:
@@ -169,14 +169,15 @@ def test_diamond_inheritance_uses_merged_action_visibility_and_sensitivity():
         pass
 
     async def scenario():
-        phone = RecordingDevice(MemoryDevice())
+        phone = RecordingDevice(MemoryDevice(), runs_dir=tmp_path, capture="actions")
         await Diamond().bind(phone)
         for audience in ("cli", "operator"):
             assert "extension.echo" not in {
                 entry.name for entry in phone.actions.list(audience=audience)
             }
         assert await phone.actions.call("extension.echo", {"text": "secret"}) == 7
-        assert phone.recorded_actions[-1]["arguments"] == {"text": "<redacted>"}
+        row = json.loads((phone.run_dir / "steps.jsonl").read_text())
+        assert row["args"]["arguments"] == {"text": "***"}
         await phone.close()
 
     asyncio.run(scenario())

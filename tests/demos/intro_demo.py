@@ -2,11 +2,9 @@
 
 import argparse
 import asyncio
-import json
 import logging
 import sys
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 if __package__ in (None, ""):
@@ -24,8 +22,7 @@ from mobilerun.core.devices import (  # noqa: E402
     DevicePool,
     RecordingDevice,
 )
-from mobilerun.macro import MacroOperator, MacroRecorder  # noqa: E402
-from mobilerun.macro.models import MACRO_SCHEMA_VERSION  # noqa: E402
+from mobilerun.macro import MacroOperator, build_macro  # noqa: E402
 from mobilerun.models import Billing  # noqa: E402
 from mobilerun.sandbox import cloud  # noqa: E402
 from mobilerun.skills import list_skills  # noqa: E402
@@ -87,33 +84,22 @@ async def macro_demo(device: Device) -> None:
     print("── macro demo: start ──")
 
     # Step 1: record actions while they happen on the device.
-    recording = RecordingDevice(device)
+    # UI state can differ between runs, so leave these demo actions unguarded.
+    recording = RecordingDevice(device, capture="actions")
     await recording.start_app("com.android.settings")
     await recording.wait(2)
     await recording.swipe(500, 1600, 500, 500, 500)
     await recording.wait(1)
     await recording.press_button("back")
-    recorder = MacroRecorder()
-    # UI state can differ between runs, so leave these demo actions unguarded.
-    for action in recording.recorded_actions:
-        recorder.record_action(action)["pre_state"] = None
+    recording.finish("succeeded")
+    assert recording.run_dir is not None
+    # Step 2: publish a version without replacing any previous demo macro.
+    path = build_macro(recording.run_dir / "steps.jsonl", "intro-demo")
 
-    with TemporaryDirectory() as directory:
-        # Step 2: save the recorded actions as a macro file.
-        path = Path(directory) / "macro.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "macro_schema_version": MACRO_SCHEMA_VERSION,
-                    "actions": recorder.actions,
-                }
-            )
-        )
-
-        # Step 3: return home, then replay with a one-call operator.
-        await device.press_button("home")
-        result = await device.do("Replay", operator=MacroOperator(path))
-        print("macro replay:", result.success)
+    # Step 3: return home, then replay with a one-call operator.
+    await device.press_button("home")
+    result = await device.do("Replay", operator=MacroOperator(path))
+    print("macro replay:", result.success)
 
     print("── macro demo: done ──")
 

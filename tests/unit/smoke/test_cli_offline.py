@@ -1,6 +1,5 @@
 """Offline smoke contracts for CLI completion, privacy, installers, and app IDs."""
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +21,7 @@ def test_installed_cli_bash_completion(monkeypatch):
     )
 
 
-def test_offline_cli_protects_local_skill_and_macro_text(tmp_path):
+def test_offline_cli_protects_local_skill_notes(tmp_path):
     from mobilerun.skills.bundle import bundle_folders
 
     def cli(*args):
@@ -45,23 +44,24 @@ def test_offline_cli_protects_local_skill_and_macro_text(tmp_path):
     assert refused.returncode != 0
     assert notes.read_text() == "keep me"
 
-    macro = tmp_path / "macro.json"
-    macro.write_text(
-        json.dumps(
-            {
-                "macro_schema_version": "2.0",
-                "actions": [
-                    {
-                        "type": "tap",
-                        "x": 4,
-                        "y": 5,
-                        "pre_state": {"text": "SYNTHETIC-PRIVATE"},
-                    }
-                ],
-            }
-        )
+
+def test_offline_cli_previews_generated_macro_without_key(tmp_path, monkeypatch):
+    from mobilerun.macro import build_macro
+    from tests.support.macro import write_steps
+
+    monkeypatch.delenv("MOBILERUN_API_KEY", raising=False)
+    monkeypatch.setenv("MOBILERUN_MACRO_DIRECTORY", str(tmp_path / "macros"))
+    steps = write_steps(
+        tmp_path, {"args": {"x": 4, "y": 5}, "note": "SYNTHETIC-PRIVATE"}
     )
-    preview = cli("macro", "replay", str(macro), "--dry-run")
+    assert build_macro(steps, "example").name == "v1.jsonl"
+    preview = subprocess.run(
+        [sys.executable, "-m", "mobilerun", "macro", "replay", "example", "--dry-run"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert preview.returncode == 0, preview.stderr
     assert "tap x=4 y=5" in preview.stdout
     assert "SYNTHETIC-PRIVATE" not in preview.stdout + preview.stderr

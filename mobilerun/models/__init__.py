@@ -8,7 +8,15 @@ from .credentials import Credential, CredentialMetadata
 from .files import DeviceFile, WorkspaceFile
 from .location import Location
 from .proxy import ProxyStatus
-from .recording import RecordedAction
+from .recording import (
+    Actor,
+    DeviceInfo,
+    Fingerprint,
+    RunKind,
+    RunRecord,
+    RunStatus,
+    RunStep,
+)
 from .results import ExecutionResult, ExpectationResult, ExpectationVerdict
 from .ui import UIElement
 
@@ -25,7 +33,13 @@ __all__ = [
     "WorkspaceFile",
     "Location",
     "ProxyStatus",
-    "RecordedAction",
+    "Actor",
+    "DeviceInfo",
+    "Fingerprint",
+    "RunKind",
+    "RunRecord",
+    "RunStatus",
+    "RunStep",
     "CredentialMetadata",
     "UIElement",
     "PaymentSnapshot",

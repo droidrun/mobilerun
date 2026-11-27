@@ -1,6 +1,7 @@
 """Extension binding, action dispatch, and optional resource contracts."""
 
 import asyncio
+import json
 from enum import Enum
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock
@@ -124,7 +125,7 @@ def test_compatibility_precedes_force_and_reserved_names_fail():
     asyncio.run(scenario())
 
 
-def test_named_actions_record_through_outer_wrapper():
+def test_named_actions_record_through_outer_wrapper(tmp_path):
     class Example(Extension):
         @action()
         async def echo(self, value: str) -> str:
@@ -133,25 +134,28 @@ def test_named_actions_record_through_outer_wrapper():
 
     async def scenario():
         raw = MemoryDevice(supported_operations=frozenset({"input_text"}))
-        recording = RecordingDevice(raw)
+        recording = RecordingDevice(raw, runs_dir=tmp_path, capture="actions")
         await recording.actions.call("device.input_text", {"text": "hello"})
         ext = Example(name="example")
         await ext.bind(raw)
-        await ext.echo("world")
-        assert recording.recorded_actions == [
-            {"action_type": "input_text", "text": "hello", "clear": False},
-            {
-                "action_type": "extension_call",
-                "name": "example.echo",
-                "arguments": {"value": "world"},
-            },
+        await recording.example.echo("world")
+        lines = (recording.run_dir / "steps.jsonl").read_text().splitlines()
+        assert [(row["action"], row["args"]) for row in map(json.loads, lines)] == [
+            (
+                "input_text",
+                {"text": "hello", "clear": False, "stealth": False, "wpm": 0},
+            ),
+            (
+                "extension_call",
+                {"name": "example.echo", "arguments": {"value": "world"}},
+            ),
         ]
         await recording.close()
 
     asyncio.run(scenario())
 
 
-def test_undecorated_action_override_keeps_recording():
+def test_undecorated_action_override_keeps_recording(tmp_path):
     class Parent(Extension):
         @action()
         async def value(self) -> int:
@@ -164,12 +168,158 @@ def test_undecorated_action_override_keeps_recording():
             return 2
 
     async def scenario():
-        device = RecordingDevice(MemoryDevice())
+        device = RecordingDevice(MemoryDevice(), runs_dir=tmp_path, capture="actions")
         child = Child(name="child")
         await child.bind(device)
         assert await child.value() == 2
-        assert device.recorded_actions[0]["name"] == "child.value"
+        row = json.loads((device.run_dir / "steps.jsonl").read_text())
+        assert row["args"]["name"] == "child.value"
         await device.close()
+
+    asyncio.run(scenario())
+
+
+def test_observer_records_outer_dispatch_outcomes_without_primitive_duplicates(
+    tmp_path,
+):
+    class Example(Extension):
+        @device_action()
+        async def write(self, device: Device, mode: str) -> bool:
+            """Write the requested value and return a status."""
+            await device.input_text(mode)
+            if mode == "raise":
+                raise ValueError("backend details")
+            return mode == "ok"
+
+    async def scenario():
+        raw = MemoryDevice()
+        recording = RecordingDevice(raw, runs_dir=tmp_path, capture="actions")
+        ext = await Example().bind(recording)
+        with pytest.raises(ExtensionActionError):
+            await recording.actions.call("extension.write", {"mode": 7})
+        assert recording.run_dir is None
+        assert await ext.write("ok") is True
+        assert await ext.write("false") is False
+        with pytest.raises(ExtensionActionError):
+            await ext.write("raise")
+        lines = (recording.run_dir / "steps.jsonl").read_text().splitlines()
+        assert [(r["action"], r["ok"], r["error"]) for r in map(json.loads, lines)] == [
+            ("extension_call", True, None),
+            ("extension_call", False, "returned_false"),
+            ("extension_call", False, "ValueError"),
+        ]
+        assert raw.inputs == ["ok", "false", "raise"]
+
+    asyncio.run(scenario())
+
+
+def test_nested_sensitive_action_redacts_public_aliases(tmp_path):
+    class Example(Extension):
+        @action()
+        async def outer(self, public_alias: str) -> None:
+            """Pass a value to the nested action."""
+            await self.inner(public_alias)
+
+        @action(sensitive_parameters=frozenset({"secret"}))
+        async def inner(self, secret: str) -> None:
+            """Accept a sensitive value."""
+            pass
+
+    async def scenario():
+        recording = RecordingDevice(
+            MemoryDevice(), runs_dir=tmp_path, capture="actions"
+        )
+        extension = await Example().bind(recording)
+        await extension.outer("private-canary")
+        evidence = (recording.run_dir / "steps.jsonl").read_text()
+        assert "private-canary" not in evidence
+        row = json.loads(evidence)
+        assert row["args"]["arguments"] == {"public_alias": "***"}
+
+    asyncio.run(scenario())
+
+
+def test_stealth_catalog_vetoes_extension_bound_to_raw_sibling(tmp_path):
+    class Example(Extension):
+        @action()
+        async def ready(self) -> bool:
+            """Return readiness."""
+            return True
+
+    async def scenario():
+        raw = MemoryDevice()
+        recording = RecordingDevice(raw, runs_dir=tmp_path, capture="actions")
+        await Example().bind(raw)
+        assert (
+            await StealthDevice(recording).actions.call("extension.ready", {}) is True
+        )
+        assert recording.run_dir is None
+
+    asyncio.run(scenario())
+
+
+def test_only_invoking_recorder_observes_direct_and_catalog_extension_calls(tmp_path):
+    class Example(Extension):
+        @action()
+        async def ready(self) -> bool:
+            """Return readiness."""
+            return True
+
+    async def scenario():
+        raw = MemoryDevice()
+        first = RecordingDevice(raw, runs_dir=tmp_path, capture="actions")
+        second = RecordingDevice(raw, runs_dir=tmp_path, capture="actions")
+        await Example().bind(first)
+        assert await StealthDevice(first).extension.ready()
+        assert await StealthDevice(first).extensions["extension"].ready()
+        assert await raw.extension.ready()
+        assert first.run_dir is None and second.run_dir is None
+        assert await second.extension.ready()
+        assert first.step_index == 0 and second.step_index == 1
+        assert await first.actions.call("extension.ready", {})
+        assert first.step_index == second.step_index == 1
+
+    asyncio.run(scenario())
+
+
+def test_dispatch_guard_blocks_nested_commerce_even_without_recording():
+    from mobilerun.core.extensions import dispatch_guard
+
+    calls = []
+
+    async def retry(owner, policy):
+        calls.append("paid")
+
+    class Example(Extension):
+        role = "phone_number"
+
+        @action()
+        async def outer(self) -> None:
+            """Call the nested method."""
+            await self.buy()
+
+        @action(billing_retry=retry)
+        async def buy(self) -> None:
+            """Simulate a paid dispatch."""
+            calls.append("paid")
+
+    def deny(info):
+        if info.supports_billing_retry:
+            assert (info.extension_role, info.extension_name, info.action_name) == (
+                "phone_number",
+                "example",
+                "buy",
+            )
+            raise ExtensionActionError("commerce blocked")
+
+    async def scenario():
+        example = Example(name="example")
+        with dispatch_guard(deny), dispatch_guard(lambda info: None):
+            with pytest.raises(ExtensionActionError, match="commerce blocked"):
+                await example.outer()
+        assert calls == []
+        await example.outer()
+        assert calls == ["paid"]
 
     asyncio.run(scenario())
 
@@ -522,13 +672,11 @@ def test_every_provider_binds_and_unbinds_in_order(kind, tmp_path, monkeypatch):
         wrapped = StealthDevice(RecordingDevice(phone))
         await provider.bind(wrapped)
         await provider.bind(phone)
-        assert (
-            dict(phone.extensions)
-            == dict(wrapped.extensions)
-            == {"vault": first, "second": provider}
-        )
+        assert list(phone.extensions) == list(wrapped.extensions) == ["vault", "second"]
+        assert phone.extensions["vault"] is first
+        assert wrapped.extensions["second"] is provider
         await first.unbind()
-        assert dict(phone.extensions) == {"second": provider}
+        assert list(phone.extensions) == ["second"]
         await provider.unbind()
         await provider.unbind()
         assert not phone.extensions
@@ -560,8 +708,8 @@ def test_mailbox_binding_is_local_and_supports_local_typing():
 
     async def exercise():
         await mailbox.bind(RecordingDevice(phone))
-        assert phone.mailbox is mailbox
-        assert await mailbox.wait_for_code() == "123456"
+        assert phone.extensions[mailbox.name].device is mailbox.device
+        assert await phone.mailbox.wait_for_code() == "123456"
         await mailbox.unbind()
         with pytest.raises(DeviceOperationNotSupported, match="No email extension"):
             _ = phone.mailbox

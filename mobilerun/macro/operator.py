@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, Unpack
 from pydantic import BaseModel
 
 from mobilerun.core.operator import Operator
+from mobilerun.macro.builder import load_macro
+from mobilerun.macro.models import MacroStep
 from mobilerun.macro.player import MacroPlayer
 from mobilerun.models.results import ExecutionResult
 
@@ -47,20 +49,20 @@ class MacroOperator(Operator):
         if output is not None:
             raise ValueError("Strict macro replay does not produce structured output")
         player = MacroPlayer(device, **self.player_options)
-        data = player.load_macro_from_file(self.macro_file or instruction)
+        steps = load_macro(self.macro_file or instruction)
         async with asyncio.timeout(timeout):
-            return await self._execute_macro(player, device, data, max_steps=max_steps)
+            return await self._execute_macro(player, device, steps, max_steps=max_steps)
 
     async def _execute_macro(
         self,
         player: MacroPlayer,
         device: "Device",
-        data: dict[str, Any],
+        steps: list[MacroStep],
         *,
         max_steps: int | None = None,
     ) -> ExecutionResult[Any]:
         success = await player.replay_macro(
-            data, start_from_step=self.start_from_step, max_steps=max_steps
+            steps, start_from_step=self.start_from_step, max_steps=max_steps
         )
         return ExecutionResult(
             success=success,

@@ -9,8 +9,10 @@ from uuid import uuid4
 import pytest
 
 from mobilerun import AndroidDevice, RecordingDevice
+from mobilerun.macro import MacroStep, build_macro
 from mobilerun.macro.errors import MacroError
 from mobilerun.macro.player import MacroPlayer
+from tests.support.macro import read_run_steps
 from tests.support.smoke_settings import CLOUD_ID, SERIAL
 
 VALUE = "demo-user"
@@ -88,54 +90,45 @@ def test_credentials_type_real_field(local_ready, tmp_path, monkeypatch, caplog,
 
 
 @pytest.mark.smoke_device
-def test_record_secret_and_replay_wait(local_ready, tmp_path, caplog):
+def test_record_secret_and_replay_wait(local_ready, tmp_path, caplog, monkeypatch):
     from mobilerun.core.credentials import DictCredentials
     from mobilerun.core.devices import AndroidDevice
     from mobilerun.core.devices.recording import RecordingDevice
     from mobilerun.macro.operator import MacroOperator
 
     caplog.set_level("DEBUG")
+    monkeypatch.setenv("MOBILERUN_MACRO_DIRECTORY", str(tmp_path / "macros"))
 
     async def run():
         device = AndroidDevice(serial=SERIAL, use_tcp=True, portal_mode="required")
         vault = await DictCredentials({"TEST": VALUE}).bind(device)
         await device.connect()
-        recorder = RecordingDevice(device)
+        recorder = RecordingDevice(device, runs_dir=tmp_path, capture="actions")
         try:
             await settings_search(device)
             await vault.type_field(None, "password", name="TEST")
             await recorder.wait(0.4)
-            assert [a["action_type"] for a in recorder.recorded_actions] == [
+            recorder.finish("succeeded")
+            assert [row.action for row in read_run_steps(recorder.run_dir)] == [
                 "extension_call",
                 "wait",
             ]
-            assert VALUE not in repr(recorder.recorded_actions)
-            path = tmp_path / "macro.json"
-            path.write_text(
-                json.dumps(
-                    {
-                        "macro_schema_version": "2.0",
-                        "actions": recorder.recorded_actions,
-                    }
-                )
-            )
-            assert VALUE not in path.read_text()
-            # Extension-call replay is not implemented; replay the recorded wait.
-            path.write_text(
-                json.dumps(
-                    {
-                        "macro_schema_version": "2.0",
-                        "actions": [recorder.recorded_actions[-1]],
-                    }
-                )
-            )
+            assert recorder.run_dir is not None
+            steps = recorder.run_dir / "steps.jsonl"
+            assert VALUE not in steps.read_text()
+            assert VALUE not in build_macro(steps, "credential").read_text()
+            # Avoid retyping the credential: select only the recorded wait.
+            path = build_macro(steps, "wait", step_ids={2})
             started = time.monotonic()
             result = await MacroOperator(str(path), delay_between_actions=0).execute(
                 device, ""
             )
             assert result.success and time.monotonic() - started >= 0.4
         finally:
-            await device.press_button("home")
+            try:
+                await device.press_button("home")
+            finally:
+                await recorder.close()
 
     asyncio.run(run())
     assert VALUE not in caplog.text
@@ -181,16 +174,17 @@ def test_cloud_credentials_list(cloud_ready):
 def test_protected_step_prevents_navigation(local_ready):
     async def run():
         async with RecordingDevice(AndroidDevice(SERIAL)) as recorder:
-            macro = {
-                "macro_schema_version": "2.0",
-                "actions": [
-                    {"type": "button_press", "button": "home"},
-                    {"type": "type_secret", "name": "example", "protected": True},
-                ],
-            }
+            macro = [
+                MacroStep(i=1, action="button_press", args={"button": "home"}),
+                MacroStep(
+                    i=2,
+                    action="type_secret",
+                    args={"name": "example", "protected": True},
+                ),
+            ]
             with pytest.raises(MacroError, match="approval"):
                 await MacroPlayer(recorder).replay_macro(macro)
-            assert not recorder.recorded_actions
+            assert recorder.run_dir is None
 
     asyncio.run(run())
 

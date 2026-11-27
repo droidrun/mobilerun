@@ -39,9 +39,8 @@ from mobilerun.errors import (
     NoFocusedInput,
 )
 from mobilerun.macro.errors import MacroError
-from mobilerun.macro.models import normalize_ui_state
+from mobilerun.macro.models import MacroStep
 from mobilerun.macro.player import MacroPlayer
-from mobilerun.macro.utils import compare_states
 from tests.support.devices import MemoryDevice
 from tests.support.extensions import check_extension_contract
 
@@ -189,7 +188,7 @@ def test_cloud_paginated_cached_and_login_key(monkeypatch):
     ]
 
 
-def test_device_order_recording_wrappers_pool_and_no_log(caplog):
+def test_device_order_recording_wrappers_pool_and_no_log(caplog, tmp_path):
     caplog.set_level("DEBUG")
     first = DictCredentials({"login": "private-first"})
     second = DictCredentials(
@@ -198,15 +197,14 @@ def test_device_order_recording_wrappers_pool_and_no_log(caplog):
     device = FakeDevice()
     asyncio.run(first.bind(device))
     asyncio.run(second.bind(device))
-    recording = RecordingDevice(device)
+    recording = RecordingDevice(device, runs_dir=tmp_path, capture="actions")
     stealth = StealthDevice(recording)
-    assert dict(recording.extensions) == {"vault": first, "second": second}
-    assert dict(stealth.extensions) == dict(recording.extensions)
+    assert list(stealth.extensions) == list(recording.extensions) == ["vault", "second"]
 
     async def run():
-        assert await first.type_field(None, "password", name="login") is None
-        assert await second.type_field(None, "password", name="other") is None
-        assert DevicePool([recording]).extensions[0]["vault"] is first
+        assert await recording.vault.type_field(None, "password", name="login") is None
+        assert await recording.second.type_field(None, "password", name="other") is None
+        assert DevicePool([recording]).extensions[0]["vault"].device is device
         assert await first.type_field(None, "password", name="login") is None
 
     asyncio.run(run())
@@ -215,8 +213,13 @@ def test_device_order_recording_wrappers_pool_and_no_log(caplog):
         "private-other",
         "private-first",
     ]
-    assert recording.recorded_actions[0]["name"] == "vault.type_field"
-    assert "private-" not in repr(recording.recorded_actions)
+    evidence = (recording.run_dir / "steps.jsonl").read_text()
+    first_row, *_ = map(json.loads, evidence.splitlines())
+    assert first_row["args"] == {
+        "name": "vault.type_field",
+        "arguments": {"package": None, "field": "password", "name": "login"},
+    }
+    assert "private-" not in evidence
     assert "private-" not in caplog.text
 
 
@@ -224,8 +227,7 @@ def test_device_order_recording_wrappers_pool_and_no_log(caplog):
     "reference",
     [
         {"package": "com.gmail", "field": "email", "name": "work"},
-        {"secret": "login"},
-        {"secret_id": "login"},
+        {"name": "login"},
     ],
 )
 def test_macro_uses_device_credentials(reference, caplog):
@@ -238,8 +240,10 @@ def test_macro_uses_device_credentials(reference, caplog):
         }
     )
     asyncio.run(provider.bind(device))
-    assert asyncio.run(
-        MacroPlayer(device).replay_action({"action_type": "type_secret", **reference})
+    asyncio.run(
+        MacroPlayer(device).play_step(
+            MacroStep(i=1, action="type_secret", args=reference)
+        )
     )
     device.input_text.assert_awaited_once_with("private-value")
     assert "private-value" not in caplog.text
@@ -707,13 +711,13 @@ def test_new_child_and_isolated_logger_redact_at_record_creation(caplog):
     ],
 )
 def test_secret_input_redacts_logs_exceptions_and_recording(
-    device_factory, logger_name, caplog
+    device_factory, logger_name, caplog, tmp_path
 ):
     secret = "SENSITIVE-CANARY-9321"
     logger = logging.getLogger(logger_name)
     caplog.set_level(logging.DEBUG, logger=logger_name)
     device = device_factory()
-    recorded = RecordingDevice(device)
+    recorded = RecordingDevice(device, runs_dir=tmp_path, capture="actions")
 
     async def raw(value, *args, **kwargs):
         try:
@@ -733,7 +737,9 @@ def test_secret_input_redacts_logs_exceptions_and_recording(
     asyncio.run(run())
     assert secret not in caplog.text
     assert all(secret not in repr(record.__dict__) for record in caplog.records)
-    assert secret not in repr(recorded.recorded_actions)
+    evidence = (recorded.run_dir / "steps.jsonl").read_text()
+    assert secret not in evidence
+    assert json.loads(evidence)["args"]["text"] == "***"
 
 
 @pytest.mark.usefixtures("focused_state")
@@ -771,7 +777,9 @@ def test_redaction_context_is_task_local_and_is_reset(caplog):
 @pytest.mark.parametrize(
     "secret", ["cloud-sdk-secret-canary", "sdk-secret\nwith'quote"]
 )
-def test_real_cloud_sdk_debug_options_are_redacted(monkeypatch, caplog, secret):
+def test_real_cloud_sdk_debug_options_are_redacted(
+    monkeypatch, caplog, secret, tmp_path
+):
     caplog.set_level(logging.DEBUG, logger="mobilerun_sdk._base_client")
     clients = []
 
@@ -791,9 +799,11 @@ def test_real_cloud_sdk_debug_options_are_redacted(monkeypatch, caplog, secret):
         device = CloudDevice(
             "device", api_key="test", base_url="https://example.invalid"
         )
-        recording = RecordingDevice(device)
+        recording = RecordingDevice(device, runs_dir=tmp_path, capture="actions")
         assert await recording._input_secret(secret)
-        assert not recording.recorded_actions
+        evidence = (recording.run_dir / "steps.jsonl").read_text()
+        assert secret not in evidence
+        assert json.loads(evidence)["args"]["text"] == "***"
         for client in clients:
             await client.close()
 
@@ -804,7 +814,7 @@ def test_real_cloud_sdk_debug_options_are_redacted(monkeypatch, caplog, secret):
 
 
 @pytest.mark.usefixtures("focused_state")
-def test_android_driver_failed_adb_shell_log_is_redacted(caplog):
+def test_android_driver_failed_adb_shell_log_is_redacted(caplog, tmp_path):
     secret = "android-adb-secret-canary"
     caplog.set_level(logging.DEBUG, logger="mobilerun_core_local")
     device = AndroidDevice("device")
@@ -820,11 +830,13 @@ def test_android_driver_failed_adb_shell_log_is_redacted(caplog):
     device._driver.input_text = input_text
 
     async def run():
-        recording = RecordingDevice(device)
+        recording = RecordingDevice(device, runs_dir=tmp_path, capture="actions")
         with pytest.raises(ValueError) as error:
             await recording._input_secret(secret)
         assert secret not in str(error.value)
-        assert not recording.recorded_actions
+        evidence = (recording.run_dir / "steps.jsonl").read_text()
+        assert secret not in evidence
+        assert json.loads(evidence)["args"]["text"] == "***"
 
     asyncio.run(run())
     assert any(
@@ -836,12 +848,13 @@ def test_android_driver_failed_adb_shell_log_is_redacted(caplog):
 def test_reordered_split_echo_masks_only_bounded_fragments():
     masks = CredentialMasks()
     masks.register("pin", "123456")
-    state = normalize_ui_state(
-        [
-            {"text": text, "contentDescription": f"Order 1234; group {echo}"}
+    state = {
+        "phone_state": {},
+        "nodes": [
+            {"text": text, "content_description": f"Order 1234; group {echo}"}
             for text, echo in [("123", "456"), ("456", "123")]
-        ]
-    )
+        ],
+    }
     assert [node["content_description"] for node in masks.snapshot(state)["nodes"]] == [
         "Order 1234; group [secret:pin]"
     ] * 2
@@ -850,19 +863,20 @@ def test_reordered_split_echo_masks_only_bounded_fragments():
 def test_split_pin_masks_echoes_without_erasing_description_text():
     masks = CredentialMasks()
     masks.register("pin", "123456")
-    state = normalize_ui_state(
-        [
-            {"text": p, "contentDescription": f"Digit group: {p}; done"}
+    state = {
+        "phone_state": {},
+        "nodes": [
+            {"text": p, "content_description": f"Digit group: {p}; done"}
             for p in ("123", "456")
-        ]
-    )
+        ],
+    }
     for node in masks.snapshot(state)["nodes"]:
         assert node["text"] == "[secret:pin]"
         assert node["content_description"] == "Digit group: [secret:pin]; done"
 
 
 def snapshot(masks, *texts):
-    return masks.snapshot(normalize_ui_state([{"text": t} for t in texts]))
+    return masks.snapshot({"phone_state": {}, "nodes": [{"text": t} for t in texts]})
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -899,18 +913,18 @@ def test_missing_named_credential_binding_fails_before_tap(protected):
         device = MemoryDevice()
         device.tap = AsyncMock()
         await DictCredentials({"login": "test"}).bind(device)
-        macro = {
-            "macro_schema_version": "2.0",
-            "actions": [
-                {"type": "tap"},
-                {
-                    "type": "extension_call",
+        macro = [
+            MacroStep(i=1, action="tap", args={"x": 1, "y": 2}),
+            MacroStep(
+                i=2,
+                action="extension_call",
+                args={
                     "name": "other_vault.type_field",
                     "arguments": {"name": "login"},
                     "protected": protected,
                 },
-            ],
-        }
+            ),
+        ]
         with pytest.raises(MacroError):
             await MacroPlayer(device, delay_between_actions=0).replay_macro(macro)
         device.tap.assert_not_awaited()
@@ -922,9 +936,10 @@ def test_masks_preserve_digit_word_boundaries_and_unrelated_label_text():
     masks = CredentialMasks()
     masks.register("pin", "123")
     masks.register("name", "Ann")
-    assert not compare_states(
-        snapshot(masks, "Order 1234"), snapshot(masks, "Order 9123"), 1.0
-    ).matches
+    assert snapshot(masks, "Order 1234", "Order 9123")["nodes"] == [
+        {"text": "Order 1234"},
+        {"text": "Order 9123"},
+    ]
     text = "Ann versus Annie: 123 or 1234"
     assert (
         snapshot(masks, text)["nodes"][0]["text"]

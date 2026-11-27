@@ -6,41 +6,29 @@ python -m tests.demos.macro_demo [--serial emulator-5554]
 
 import argparse
 import asyncio
-import json
 import sys
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from mobilerun.core.devices import AndroidDevice, RecordingDevice  # noqa: E402
-from mobilerun.macro import MacroPlayer  # noqa: E402
-from mobilerun.macro.models import MACRO_SCHEMA_VERSION  # noqa: E402
+from mobilerun.macro import MacroPlayer, build_macro, load_macro  # noqa: E402
 
 
 async def main(serial: str = "emulator-5554") -> None:
     device = AndroidDevice(serial)
-    recorded = RecordingDevice(device)
-    try:
+    async with device:
+        await device.press_button("home")
+        recorded = RecordingDevice(device, capture="actions")
         await recorded.start_app("com.android.settings")
         await recorded.tap(200, 200)
         await recorded.press_button("home")
-        actions = list(recorded.recorded_actions)
-        for step in actions:
-            print(step)
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "macro.json"
-            path.write_text(
-                json.dumps(
-                    {"macro_schema_version": MACRO_SCHEMA_VERSION, "actions": actions}
-                )
-            )
-            player = MacroPlayer(device)
-            if not await player.replay_macro(player.load_macro_from_file(path)):
-                raise RuntimeError("Macro replay failed")
-    finally:
-        await recorded.close()
+        recorded.finish("succeeded")
+        assert recorded.run_dir is not None
+        path = build_macro(recorded.run_dir / "steps.jsonl", "settings-demo")
+        print("macro version:", path)
+        await MacroPlayer(device).replay_macro(load_macro(path))
 
 
 if __name__ == "__main__":

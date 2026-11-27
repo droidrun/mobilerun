@@ -375,8 +375,10 @@ def test_subscription_resume_never_prompts(
     ],
 )
 def test_bound_cloud_sms_retries_only_sdk_send(
-    monkeypatch, alias, mode, yes, reply, exit_code, sends
+    monkeypatch, tmp_path, alias, mode, yes, reply, exit_code, sends
 ):
+    from tests.support.macro import read_run_steps
+
     class BoundNumber(CloudPhoneNumber):
         async def check_bind(self, device):
             return ()
@@ -407,7 +409,7 @@ def test_bound_cloud_sms_retries_only_sdk_send(
     )
     sdk = NS(numbers=NS(messages=NS(send=transport)))
     number = BoundNumber("number-id", billing=mode, client=sdk, name=alias)
-    phone = RecordingDevice(Device())
+    phone = RecordingDevice(Device(), runs_dir=tmp_path, capture="actions")
     phone.close = AsyncMock()
     asyncio.run(number.bind(phone))
     open_phone = AsyncMock(return_value=phone)
@@ -447,19 +449,17 @@ def test_bound_cloud_sms_retries_only_sdk_send(
     assert attempts == expected_attempts
     open_phone.assert_awaited_once()
     phone.close.assert_awaited_once()
+    (row,) = read_run_steps(phone.run_dir)
+    assert row.ok is bool(sends) and row.action == "extension_call"
+    assert row.args == {
+        "name": f"{alias}.send",
+        "arguments": {"to": "5550100", "text": "hello"},
+    }
     if sends:
         assert json.loads(result.stdout)["data"]["id"] == "sms-id"
         transport.assert_awaited_once_with("number-id", to="5550100", body="hello")
-        assert list(phone.recorded_actions) == [
-            {
-                "action_type": "extension_call",
-                "name": f"{alias}.send",
-                "arguments": {"to": "5550100", "text": "hello"},
-            }
-        ]
     else:
         transport.assert_not_called()
-        assert not phone.recorded_actions
         assert ("Cancelled" if reply is False else "--yes") in result.stderr
 
 

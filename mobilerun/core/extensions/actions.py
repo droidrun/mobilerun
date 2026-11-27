@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from functools import wraps
@@ -23,6 +25,7 @@ from typing import (
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, create_model
 
+from mobilerun.core.extensions.registry import invoking_facade
 from mobilerun.errors.operators import ExtensionActionError
 from mobilerun.models.billing import Billing
 from mobilerun.models.context import JSONValue
@@ -35,6 +38,36 @@ P = ParamSpec("P")
 R = TypeVar("R")
 S = TypeVar("S")
 Audience = Literal["python", "operator", "cli"]
+
+
+@dataclass(frozen=True)
+class ActionInfo:
+    """Value-free metadata supplied to pre-dispatch authorization guards."""
+
+    extension_role: str | None
+    extension_name: str | None
+    action_name: str
+    supports_billing_retry: bool
+
+
+_dispatch_guards: ContextVar[tuple[Callable[[ActionInfo], None], ...]] = ContextVar(
+    "extension_dispatch_guards", default=()
+)
+
+
+@contextmanager
+def dispatch_guard(predicate: Callable[[ActionInfo], None]) -> Iterator[None]:
+    """Authorize each declared action before dispatch; nested guards accumulate."""
+    token = _dispatch_guards.set((*_dispatch_guards.get(), predicate))
+    try:
+        yield
+    finally:
+        _dispatch_guards.reset(token)
+
+
+def _authorize_dispatch(info: ActionInfo) -> None:
+    for predicate in _dispatch_guards.get():
+        predicate(info)
 
 
 class BillingRetry(Protocol):
@@ -295,22 +328,22 @@ class Action:
         return cast(JSONValue, self._returns.dump_python(result, mode="json"))
 
 
-def _sensitive_values(value: Any) -> Iterator[str]:
-    """Register sensitive scalar values, including structured action arguments."""
+def iter_sensitive_values(value: object) -> Iterator[str]:
+    """Yield scalar strings from nested values, including mapping keys."""
     if isinstance(value, Enum):
-        yield from _sensitive_values(value.value)
+        yield from iter_sensitive_values(value.value)
     elif isinstance(value, BaseModel):
-        yield from _sensitive_values(value.model_dump())
+        yield from iter_sensitive_values(value.model_dump())
     elif is_dataclass(value) and not isinstance(value, type):
         for item in fields(value):
-            yield from _sensitive_values(getattr(value, item.name))
+            yield from iter_sensitive_values(getattr(value, item.name))
     elif isinstance(value, Mapping):
         for key, item in value.items():
-            yield from _sensitive_values(key)
-            yield from _sensitive_values(item)
+            yield from iter_sensitive_values(key)
+            yield from iter_sensitive_values(item)
     elif isinstance(value, (list, tuple, set, frozenset)):
         for item in value:
-            yield from _sensitive_values(item)
+            yield from iter_sensitive_values(item)
     elif value is not None:
         yield str(value)
 
@@ -342,8 +375,11 @@ def _sanitize_sensitive_schema(schema: dict[str, Any], names: frozenset[str]) ->
 class ActionSet:
     """A live catalog; stale callers still validate current binding state."""
 
-    def __init__(self, source: Device | Extension) -> None:
+    def __init__(
+        self, source: Device | Extension, *, facade: Device | None = None
+    ) -> None:
         self._source = source
+        self._facade = facade
 
     def list(self, *, audience: Audience = "python") -> tuple[Action, ...]:
         return tuple(
@@ -372,13 +408,20 @@ class ActionSet:
         if audience != "python" and not entry.public:
             raise ExtensionActionError(f"Action {name} is restricted")
         validated = entry.validate(arguments)
-        async with asyncio.timeout(timeout):
-            if billing_retry is not None:
-                if entry._retry_call is None:
-                    raise ExtensionActionError(
-                        f"Action {name} does not support billing retry"
+        if entry.owner == "device":
+            _authorize_dispatch(ActionInfo(None, None, name.partition(".")[2], False))
+        token = invoking_facade.set(self._facade) if self._facade is not None else None
+        try:
+            async with asyncio.timeout(timeout):
+                if billing_retry is not None:
+                    if entry._retry_call is None:
+                        raise ExtensionActionError(
+                            f"Action {name} does not support billing retry"
+                        )
+                    return entry.validate_result(
+                        await entry._retry_call(billing_retry, validated)
                     )
-                return entry.validate_result(
-                    await entry._retry_call(billing_retry, validated)
-                )
-            return entry.validate_result(await entry._call(**validated))
+                return entry.validate_result(await entry._call(**validated))
+        finally:
+            if token is not None:
+                invoking_facade.reset(token)

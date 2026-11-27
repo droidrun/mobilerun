@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from mobilerun.clients.cloud import devices
 from mobilerun.config.settings import Settings
@@ -86,7 +87,13 @@ def test_location_is_a_shared_value_model() -> None:
     ("name", "module"),
     [
         ("ProxyStatus", "proxy"),
-        ("RecordedAction", "recording"),
+        ("RunRecord", "recording"),
+        ("RunStep", "recording"),
+        ("Fingerprint", "recording"),
+        ("DeviceInfo", "recording"),
+        ("RunKind", "recording"),
+        ("RunStatus", "recording"),
+        ("Actor", "recording"),
         ("CredentialMetadata", "credentials"),
         ("UIElement", "ui"),
         ("PaymentSnapshot", "checkout"),
@@ -106,6 +113,53 @@ def test_existing_core_exports_keep_model_identity() -> None:
 
     assert ProxyStatus is ModelProxyStatus
     assert UIElement is ModelUIElement
+
+
+def test_run_schema_serializes_utc_and_round_trips_json_values() -> None:
+    from mobilerun.models import DeviceInfo, Fingerprint, RunRecord, RunStep
+
+    t = datetime(2026, 1, 1, 2, tzinfo=timezone(timedelta(hours=2)))
+    record = RunRecord(
+        run_id="a1",
+        kind="recording",
+        device=DeviceInfo(platform="android", identifier="local"),
+        started_at=t,
+    )
+    step = RunStep(
+        i=1,
+        started_at=t,
+        finished_at=t + timedelta(seconds=1),
+        action="tap",
+        args={"point": [0, 5]},
+        ok=True,
+        by="script",
+        after=Fingerprint(app="example", activity=None, elements=("class:Button",)),
+    )
+    assert record.model_dump(mode="json")["started_at"] == "2026-01-01T00:00:00Z"
+    assert record.status == "running"
+    assert step.model_dump(mode="json")["started_at"] == "2026-01-01T00:00:00Z"
+    assert step.model_dump(mode="json")["finished_at"] == "2026-01-01T00:00:01Z"
+    assert RunStep.model_validate_json(step.model_dump_json()) == step
+
+
+@pytest.mark.parametrize(
+    "override", [{"i": 0}, {"started_at": datetime(2026, 1, 1)}, {"by": "other"}]
+)
+def test_run_step_rejects_invalid_input(override) -> None:
+    from mobilerun.models import RunStep
+
+    now = datetime.now(timezone.utc)
+    values = dict(
+        i=1,
+        started_at=now,
+        finished_at=now,
+        action="tap",
+        args={},
+        ok=True,
+        by="script",
+    )
+    with pytest.raises(ValidationError):
+        RunStep.model_validate(values | override)
 
 
 @pytest.mark.parametrize("plan", [Plan.MINUTE, "minute"])

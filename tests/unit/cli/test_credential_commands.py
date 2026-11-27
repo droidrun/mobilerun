@@ -836,19 +836,14 @@ def test_macro_cli_attaches_config_file_before_replay(
     tmp_path, monkeypatch, configured_path
 ):
     from mobilerun.macro.cli import macro
+    from tests.support.macro import write_macro
 
     module = importlib.import_module("mobilerun.macro.cli.replay")
     secrets = tmp_path / "credentials.yaml"
     secrets.write_text("login: private-value\n")
     secrets.chmod(0o600)
-    path = tmp_path / "macro.json"
-    path.write_text(
-        json.dumps(
-            {
-                "macro_schema_version": "2.0",
-                "actions": [{"action_type": "type_secret", "secret": "login"}],
-            }
-        )
+    path = write_macro(
+        tmp_path, rows=[{"i": 1, "action": "type_secret", "args": {"name": "login"}}]
     )
     config = SimpleNamespace(
         credentials={

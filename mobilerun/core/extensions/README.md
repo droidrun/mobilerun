@@ -131,6 +131,28 @@ while the body and observers run, including nested sensitive calls. Exported
 sensitive schemas also remove `enum` and `pattern` values from reachable definitions;
 runtime validation keeps the original constraints.
 
+When a recorder observes a bound action, it brackets dispatch after argument and
+binding validation. It writes one outcome for the outer action, including a
+`False` return or exception code, not extra rows for primitives or same-extension
+actions it calls. Direct calls through a device or its action catalog use that
+facade's recording policy, including calls through `device.extensions[name]`.
+Calls on the original extension handle use its bound device. Sensitive
+arguments are replaced with `***`; results and exception
+messages are not persisted. `wait_for_code()` values are tracked in memory so
+later actions and logs can mask the code. Verification reads such as `messages()`
+also register codes. `device.known_codes_redactor()` returns a live text redactor
+for that device and its facades. Full recording screenshots are not redacted.
+Register additional exact sensitive values before dispatch with
+`device.register_sensitive_values(values)`. The device and its facades retain
+them in memory for recording, live observation, and log redaction.
+
+Use `with dispatch_guard(predicate):` to authorize declared actions before
+execution, including nested extension actions and actions on unrecorded
+devices. The predicate receives `ActionInfo` and denies dispatch by raising.
+Nested scopes add checks rather than replace them. `supports_billing_retry`
+identifies actions with a declared billing retry path, not permission to spend;
+cloud billing policy remains enforced at the client boundary.
+
 Extensions can declare `role: ClassVar[str | None]` (default `None`). The built-in
 mailbox and phone-number bases declare `mailbox` and `phone_number`. Device resource
 shortcuts select by role, preferring the default `email`/`sms` name, then a unique

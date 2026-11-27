@@ -696,15 +696,16 @@ def test_missing_aapt_explains_build_tools(monkeypatch, tmp_path):
         apk.inspect_apk(tmp_path / "app.apk")
 
 
-def test_recording_device_records_package_string():
+def test_recording_device_records_package_string(tmp_path):
     from mobilerun.core.devices.recording import RecordingDevice
 
     inner = Device()
     inner.start_app = AsyncMock(return_value="ok")
-    device = RecordingDevice(inner)
+    device = RecordingDevice(inner, runs_dir=tmp_path, capture="actions")
     app = App("org.example", "1", "Example")
     assert asyncio.run(device.start_app(app.package)) == "ok"
-    assert device.recorded_actions[-1]["package"] == "org.example"
+    row = json.loads((device.run_dir / "steps.jsonl").read_text())
+    assert row["args"]["package"] == "org.example"
 
 
 def test_cloud_install_rejects_stale_installed_version(monkeypatch):

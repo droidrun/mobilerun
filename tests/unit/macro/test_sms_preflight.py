@@ -1,7 +1,6 @@
 """Paid replay consent through the real CLI and an offline device."""
 
 import asyncio
-import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
@@ -16,6 +15,7 @@ from mobilerun.macro import MacroOperator
 from mobilerun.macro.cli import macro
 from mobilerun.macro.cli.replay import run_replay
 from tests.support.devices import MemoryDevice
+from tests.support.macro import write_macro
 
 
 class Outbox(Extension):
@@ -42,25 +42,25 @@ def replay_sms(tmp_path, monkeypatch, request):
     if name != "outbox":
         outbox.role = None
     asyncio.run(outbox.bind(device))
-    path = tmp_path / "macro.json"
-    messages = ["first", "second"]
-    path.write_text(
-        json.dumps(
-            {
-                "macro_schema_version": "2.0",
-                "actions": [
-                    {"action_type": "tap", "x": 10, "y": 20},
-                    *[
-                        {
-                            "type": "extension_call",
-                            "name": f"{name}.send",
-                            "arguments": {"to": "+15550100000", "text": text},
-                        }
-                        for text in messages
-                    ],
-                ],
-            }
-        )
+    monkeypatch.setenv("MOBILERUN_MACRO_DIRECTORY", str(tmp_path))
+    folder = tmp_path / "routine"
+    folder.mkdir()
+    write_macro(
+        folder,
+        rows=[
+            {"i": 1, "action": "tap", "args": {"x": 10, "y": 20}},
+            *[
+                {
+                    "i": i,
+                    "action": "extension_call",
+                    "args": {
+                        "name": f"{name}.send",
+                        "arguments": {"to": "+15550100000", "text": text},
+                    },
+                }
+                for i, text in enumerate(("first", "second"), 2)
+            ],
+        ],
     )
     monkeypatch.setattr(selection, "connect_target", AsyncMock(return_value=device))
     monkeypatch.setattr(billing, "billing_prompt_is_interactive", lambda: True)
@@ -73,7 +73,7 @@ def replay_sms(tmp_path, monkeypatch, request):
             macro,
             [
                 "replay",
-                str(path),
+                "routine",
                 *(["offline-cloud", "--cloud"] if explicit_target else []),
                 "--delay",
                 "0",
@@ -203,21 +203,29 @@ def test_agent_handoff_replay_keeps_the_sms_preflight(replay_sms):
     assert outbox.messages == []
 
 
+@pytest.mark.parametrize("flags", [(), ("--yes",), ("--on-mismatch", "agent")])
 def test_replay_uses_the_recording_checked_before_open(
-    replay_sms, monkeypatch, tmp_path
+    replay_sms, monkeypatch, tmp_path, flags
 ):
     invoke, device, outbox, confirm = replay_sms
-    path = tmp_path / "macro.json"
+    path = tmp_path / "routine" / "v1.jsonl"
+    parent = Context(macro)
+
+    def handoff(*, provider, model, **options):
+        assert options["path"] == str(path)
+        run_replay(MacroOperator, **options)
+
+    parent.meta["macro_agent_handoff"] = handoff
 
     @asynccontextmanager
     async def fake_open(target):
-        data = json.loads(path.read_text())
-        data["actions"] = data["actions"][1:]
-        path.write_text(json.dumps(data))
+        replacement = "\n".join(path.read_text().splitlines()[1:]) + "\n"
+        path.write_text(replacement)
+        (path.parent / "v2.jsonl").write_text(replacement)
         yield device
 
     monkeypatch.setattr(options.DeviceTarget, "open", fake_open)
-    result = invoke("--max-steps", "1")
+    result = invoke("--max-steps", "1", *flags, parent=parent)
 
     assert result.exit_code == 0, result.output
     confirm.assert_not_awaited()

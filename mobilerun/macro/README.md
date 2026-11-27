@@ -1,90 +1,52 @@
-# macro/
+# Macros
 
-Use `await device.wait(seconds)` instead of `asyncio.sleep()` — plain sleeps are
-not recorded by RecordingDevice, so a replayed macro would run without the pause.
-Prefer `device.wait` as the default way to pause.
-
-Secret replay always uses the supplied device's credentials providers. Attach
-providers with `await provider.bind(device)`; the player never loads its
-own credentials. `type_secret` actions reference `package`, `field` and `name`.
-Flat `secret`/`secret_id` references become a name lookup without a package filter.
-The replay CLI can attach a configured file (`credentials.enabled` and
-`credentials.file_path`) or a flat mapping before execution.
-
-**Purpose:** Record device actions and replay them with state guards.
-
-**What belongs here / what doesn't:** Recording, matching, and deterministic replay belong here; LLM fallback belongs in the add-on’s `agent_macro` entry point.
-
-**Contents:**
-
-- `__init__.py` — Package exports.
-- `cli/` — Macro list and replay commands.
-- `errors.py` — Replay mismatch errors.
-- `models.py` — State normalization and schema types.
-- `settings.py` — Environment-backed replay defaults.
-- `utils.py` — State matching and logging helpers.
-- `operator.py` — Macro-backed operator.
-- `player.py` — Replay engine.
-- `recorder.py` — Action recording.
-
-## Quick example
-
-Record actions on a local Android emulator and replay the saved macro:
+Build a replayable macro from a device [run](../core/runs/README.md). Each
+successful selected action becomes a JSONL row with its original step ID,
+arguments, and any before/after screen guards. Failed actions and actions
+with masked arguments are omitted. Run timestamps, actors, errors, and
+screenshots are not part of the macro.
 
 ```python
-import asyncio, json
 from pathlib import Path
-from mobilerun.core.devices import AndroidDevice, RecordingDevice
-from mobilerun.macro import MacroPlayer
-from mobilerun.macro.models import MACRO_SCHEMA_VERSION
 
-async def main():
-    device = AndroidDevice("emulator-5554")
-    recorded = RecordingDevice(device)
-    try:
-        await recorded.start_app("com.android.settings")
-        await recorded.wait(1)
-        await recorded.tap(200, 200)
-        path = Path("macro.json")
-        path.write_text(json.dumps({"macro_schema_version": MACRO_SCHEMA_VERSION, "actions": recorded.recorded_actions}))
-        player = MacroPlayer(device)
-        assert await player.replay_macro(player.load_macro_from_file(path))
-    finally:
-        await recorded.close()
+from mobilerun.macro import MacroPlayer, build_macro, load_macro
 
-asyncio.run(main())
+path = build_macro(Path("/path/to/run/steps.jsonl"), "open-settings")
+
+async def replay(device):
+    player = MacroPlayer(device)
+    await player.replay_macro(load_macro(path))
 ```
 
-Or replay the saved file from the CLI:
+Names and directories load the latest numeric version. Pass an exact file to
+pin a version. For example, `open-settings` can load `v10.jsonl` while
+`macros/open-settings/v9.jsonl` still pins version 9. Publishing never replaces
+an existing version. Legacy v2 `macro.json` files are not supported.
 
-```sh
-mobilerun macro replay macro.json emulator-5554
-```
+By default the macro store is `<MOBILERUN_USER_CONFIG_DIR>/macros`.
+Set `MOBILERUN_MACRO_DIRECTORY` to change it, or use `mobilerun macro path` to
+find its current location. The replay delay, guard timeout, similarity
+threshold and polling interval default to 1 second, 5 seconds, 0.85 and 0.5
+seconds, respectively. Explicit `MacroPlayer` options take precedence over the
+corresponding `MOBILERUN_MACRO_*` settings.
 
-See [macro_demo.py](../../tests/demos/macro_demo.py) and [CLI commands](cli/README.md).
-Cloud devices can incur charges.
+The player uses recorded coordinates, even if an element moves. It does not
+open, wrap, or close the device. A step with no guard skips that check; a
+present guard requires screen evidence. `MacroMismatch` identifies the
+original row and failing phase (`before`, `action`, or `after`). A mismatch
+during masked credential replay stops without handing off the device.
 
-`mobilerun macro replay` asks once before looking up or opening a device if
-the selected steps could send SMS. Recordings do not store extension roles,
-so replay counts every recorded extension `.send` call as possible SMS
-regardless of billing mode. Pass `--yes` to approve without prompting;
-non-interactive replay refuses without it. `--dry-run` neither asks for
-confirmation nor sends messages.
+Credentials come only from providers bound to the supplied device. Replay
+checks the selected steps before dispatch; protected credentials and masked
+literals are not replayed. The [CLI](cli/README.md) also asks for consent
+before device selection if the steps may send SMS. Cloud use can incur charges.
 
-`mobilerun macro list` uses `<MOBILERUN_USER_CONFIG_DIR>/macros` by default.
-This replaces the previous `./trajectories` default; set
-`MOBILERUN_MACRO_DIRECTORY=trajectories` to keep using that directory. Relative
-overrides resolve from the current working directory; `~` is expanded.
-Run `mobilerun macro path` to see the resolved directory and whether it exists,
-or add `--json` for its path, existence and source (`env` or `default`).
-If the default directory
-does not exist, it reports no macros (or `[]` with `--json`) and exits successfully.
-An explicitly supplied missing directory exits with code 1 and reports
-`Macro directory not found: <path>`.
+| File | Responsibility |
+| --- | --- |
+| `builder.py`, `models.py` | Build, version and load typed macro rows |
+| `player.py`, `errors.py` | Guarded replay and phase-specific failures |
+| `operator.py` | Run a macro through the shared device operator interface |
+| `settings.py`, `utils.py` | Replay defaults, fingerprint matching and logging |
+| `cli/` | List and replay macros from the terminal |
 
-Replay defaults can be overridden with `MOBILERUN_MACRO_DELAY`,
-`MOBILERUN_MACRO_STATE_TIMEOUT`, `MOBILERUN_MACRO_STATE_THRESHOLD`, and
-`MOBILERUN_MACRO_POLL_INTERVAL`. Set `MOBILERUN_MACRO_DIRECTORY` to change the
-default list directory. Explicit replay options take precedence.
-
-**Depends on / used by:** Uses the shared base. Independent of sandbox/, skills/, and the `mobilerun_agents` add-on; only shared CLI helper `cli/base/` is allowed.
+Agent-assisted repair belongs to the separate `mobilerun_agents` add-on.

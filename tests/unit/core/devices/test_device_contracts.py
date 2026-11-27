@@ -392,7 +392,7 @@ def test_nested_lifecycle_await_is_outer_and_cleanup_is_once(wrappers):
 @pytest.mark.parametrize(
     "wrappers", [(RecordingDevice, StealthDevice), (StealthDevice, RecordingDevice)]
 )
-def test_vault_recording_and_raw_secret_typing_in_both_orders(wrappers):
+def test_stealth_veto_preserves_raw_secret_typing_in_both_orders(wrappers):
 
     root = CapabilityDevice()
     wrapped = wrappers[0](wrappers[1](root))
@@ -415,12 +415,8 @@ def test_vault_recording_and_raw_secret_typing_in_both_orders(wrappers):
     asyncio.run(run())
     assert root.typed == ["literal{{secret}}"]
     assert len(wrapped.extensions) == 1
-    assert wrapped._recording is not None
-    assert [a["action_type"] for a in wrapped._recording.recorded_actions] == [
-        "extension_call",
-        "swipe",
-    ]
-    assert "literal" not in repr(wrapped._recording.recorded_actions)
+    assert wrapped.recording_device() is not None
+    assert wrapped.recording_device().run_dir is None
 
 
 def test_raw_adapter_requires_pairing_and_does_not_infer_close(monkeypatch):

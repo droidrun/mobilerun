@@ -564,6 +564,8 @@ def test_path_source_from_dotenv(monkeypatch, tmp_path, group, variable):
 
 
 def test_macro_default_path_and_list(monkeypatch, tmp_path):
+    from tests.support.macro import write_macro
+
     monkeypatch.delenv("MOBILERUN_MACRO_DIRECTORY", raising=False)
     monkeypatch.setenv("MOBILERUN_USER_CONFIG_DIR", str(tmp_path))
     runner = CliRunner()
@@ -574,8 +576,9 @@ def test_macro_default_path_and_list(monkeypatch, tmp_path):
         "exists": False,
         "source": "default",
     }
-    (tmp_path / "macros" / "demo").mkdir(parents=True)
-    (tmp_path / "macros" / "demo" / "macro.json").write_text("{}")
+    folder = tmp_path / "macros" / "demo"
+    folder.mkdir(parents=True)
+    write_macro(folder)
     result = runner.invoke(cli, ["macro", "list", "--json"])
     assert result.exit_code == 0, result.output
     assert [entry["name"] for entry in json.loads(result.output)] == ["demo"]
@@ -754,3 +757,19 @@ def test_local_credentials_path_expands_default_directory(monkeypatch):
         get_settings().local_credentials_path
         == Path.home() / "custom-config/credentials.yaml"
     )
+
+
+@pytest.mark.parametrize("raw", [None, "", "~/custom-runs"])
+def test_run_defaults_and_directory_override(monkeypatch, tmp_path, raw):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MOBILERUN_USER_CONFIG_DIR", str(tmp_path / "config"))
+    for name in (
+        "MOBILERUN_RUNS_DIR",
+        "MOBILERUN_RUN_SETTLE_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    if raw is not None:
+        monkeypatch.setenv("MOBILERUN_RUNS_DIR", raw)
+    settings = get_settings()
+    assert settings.runs_dir == tmp_path / ("custom-runs" if raw else "config/runs")
+    assert settings.MOBILERUN_RUN_SETTLE_SECONDS == 0.25

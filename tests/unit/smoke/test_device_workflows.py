@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.macro import read_run_steps
 from tests.support.smoke_settings import CLOUD_ID, SERIAL
 
 
@@ -47,10 +48,10 @@ def test_local_wrapper_and_pool_state(local_ready):
                 assert states[0] is wrapped.state.current
                 assert states[0].elements
                 await wrapped.press_button("home")
-                assert wrapped.recorded_actions[-1] == {
-                    "action_type": "button_press",
-                    "button": "home",
-                }
+                row = read_run_steps(wrapped.run_dir)[-1]
+                assert row.ok and row.action == "button_press"
+                assert row.args == {"button": "home"}
+                wrapped.finish("succeeded")
             finally:
                 await root.press_button("home")
 
@@ -201,11 +202,13 @@ def test_cloud_counter_upload_install_and_uninstall(cloud_ready, counter_apk):
 
 
 @pytest.mark.smoke_device
-def test_record_named_home_then_replay_wait(local_ready):
+def test_record_named_home_then_replay_wait(local_ready, tmp_path, monkeypatch):
     from mobilerun import AndroidDevice, RecordingDevice
     from mobilerun.core.devices import Device
     from mobilerun.core.extensions import Extension, device_action
-    from mobilerun.macro.player import MacroPlayer
+    from mobilerun.macro import MacroPlayer, build_macro, load_macro
+
+    monkeypatch.setenv("MOBILERUN_MACRO_DIRECTORY", str(tmp_path / "macros"))
 
     class Navigation(Extension):
         @device_action()
@@ -214,18 +217,18 @@ def test_record_named_home_then_replay_wait(local_ready):
             await device.press_button("home")
 
     async def run():
-        async with RecordingDevice(AndroidDevice(SERIAL)) as recorder:
+        async with AndroidDevice(SERIAL) as device:
+            recorder = RecordingDevice(device, runs_dir=tmp_path, capture="actions")
             navigation = await Navigation(name="navigation").bind(recorder)
             await navigation.home()
-            wait = {"action_type": "wait", "duration": 0.01}
-            await MacroPlayer(recorder).replay_action(wait)
-            assert recorder.recorded_actions == [
-                {
-                    "action_type": "extension_call",
-                    "name": "navigation.home",
-                    "arguments": {},
-                },
-                wait,
-            ]
+            await recorder.wait(0.01)
+            recorder.finish("succeeded")
+            home, wait = read_run_steps(recorder.run_dir)
+            assert home.ok and home.action == "extension_call"
+            assert home.args == {"name": "navigation.home", "arguments": {}}
+            assert wait.ok and wait.action == "wait" and wait.args == {"duration": 0.01}
+            assert recorder.run_dir is not None
+            path = build_macro(recorder.run_dir / "steps.jsonl", "home", step_ids={2})
+            assert await MacroPlayer(device).replay_macro(load_macro(path))
 
     asyncio.run(run())

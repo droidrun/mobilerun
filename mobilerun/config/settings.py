@@ -95,6 +95,14 @@ class Settings(BaseSettings):
     MOBILERUN_CLOUD_DEVICE_TYPE: str = "android_cloud_phone"
     """Cloud device type."""
 
+    # ── Run recording
+
+    MOBILERUN_RUNS_DIR: Path | None = None
+    """Run directory override. Defaults to <MOBILERUN_USER_CONFIG_DIR>/runs."""
+
+    MOBILERUN_RUN_SETTLE_SECONDS: float = Field(0.25, ge=0, allow_inf_nan=False)
+    """Seconds to wait between a recorded action and its after-screen sample."""
+
     # ── Cloud API and tasks
 
     MOBILERUN_BILLING: Billing = Billing.PAID
@@ -178,10 +186,17 @@ class Settings(BaseSettings):
             return cls.model_fields[info.field_name].default
         return value
 
-    @field_validator("MOBILERUN_CREDENTIALS_FILE", mode="before")
+    @field_validator("MOBILERUN_CREDENTIALS_FILE", "MOBILERUN_RUNS_DIR", mode="before")
     @classmethod
-    def _empty_credentials_uses_default(cls, value):
+    def _empty_path_uses_default(cls, value):
         return None if value == "" else value
+
+    @property
+    def runs_dir(self) -> Path:
+        """Resolve the recording directory without creating it."""
+        return (
+            self.MOBILERUN_RUNS_DIR or self.MOBILERUN_USER_CONFIG_DIR / "runs"
+        ).expanduser()
 
     @property
     def local_credentials_path(self) -> Path:

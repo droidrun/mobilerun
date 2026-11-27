@@ -1,8 +1,12 @@
-"""A guarded macro stopped before an action could safely execute."""
+"""Errors for building and playing deterministic macros."""
 
-from typing import Any
+from typing import Literal
 
 from mobilerun.errors.base import MobilerunError
+from mobilerun.macro.models import MacroStep
+from mobilerun.models import Fingerprint
+
+MismatchPhase = Literal["before", "action", "after"]
 
 
 class MacroError(MobilerunError):
@@ -10,15 +14,17 @@ class MacroError(MobilerunError):
 
 
 class MacroMismatch(MacroError, RuntimeError):
+    """Replay stopped at a guard or action for an original macro row."""
+
+    value_safe = True
+
     def __init__(
         self,
-        step_index: int,
-        remaining_actions: list[dict[str, Any]],
-        current_state: dict[str, Any],
-        reason: str = "state mismatch",
+        step: MacroStep,
+        phase: MismatchPhase,
+        observed: Fingerprint | None,
     ) -> None:
-        self.step_index = step_index
-        self.remaining_actions = remaining_actions
-        self.current_state = current_state
-        self.reason = reason
-        super().__init__(f"Macro state mismatch before step {step_index + 1}: {reason}")
+        self.step = step
+        self.phase = phase
+        self.observed = observed
+        super().__init__(f"Macro mismatch at step {step.i} ({phase})")

@@ -227,6 +227,8 @@ def test_first_party_commands_are_entry_points():
 def test_macro_replay_plugin_dispatches_operator_entry_point(monkeypatch, tmp_path):
     from importlib import metadata
 
+    from tests.support.macro import write_macro
+
     received = {}
     operator = Entry("agent_macro", lambda **kwargs: received.update(kwargs))
     original = metadata.entry_points
@@ -235,8 +237,7 @@ def test_macro_replay_plugin_dispatches_operator_entry_point(monkeypatch, tmp_pa
         return [operator] if group == "mobilerun.operators" else original(group=group)
 
     monkeypatch.setattr(plugins.metadata, "entry_points", entries)
-    path = tmp_path / "macro.json"
-    path.write_text('{"macro_schema_version": "2.0", "actions": []}')
+    path = write_macro(tmp_path)
     result = CliRunner().invoke(
         cli,
         ["macro", "replay", str(path), "--on-mismatch", "agent", "--android", "fake"],

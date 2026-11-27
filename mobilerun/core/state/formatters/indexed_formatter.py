@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from mobilerun.core.state.elements import _parse_bounds
 from mobilerun.utils.coordinates import bounds_to_normalized
 from mobilerun.utils.geometry import rects_overlap
+from mobilerun.utils.redaction import is_secure_ui_node
 
 from .base import TreeFormatter
 
@@ -267,4 +268,6 @@ class IndexedFormatter(TreeFormatter):
         }
         if display_bounds_str is not None:
             formatted["displayBounds"] = display_bounds_str
+        if is_secure_ui_node(node):
+            formatted["isPassword"] = True
         return formatted

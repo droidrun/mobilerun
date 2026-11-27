@@ -145,6 +145,9 @@ class CloudCredentials(DictCredentials):
     @action()
     async def list(self, package: str | None = None) -> list[dict]:
         """List vault metadata without secret values."""
+        return await self._credential_metadata(package)
+
+    async def _credential_metadata(self, package: str | None = None) -> list[dict]:
         items = await self._list_credentials(package)
         result = []
         for item in items:

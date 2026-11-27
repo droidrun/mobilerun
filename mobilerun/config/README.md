@@ -99,11 +99,15 @@ case-sensitive environment names.
 | --- | --- |
 | Paths | `MOBILERUN_USER_CONFIG_DIR`, `MOBILERUN_CONFIG`, `MOBILERUN_CREDENTIALS_FILE`, `MOBILERUN_MACRO_DIRECTORY` (macro list; defaults to `<MOBILERUN_USER_CONFIG_DIR>/macros`), `MOBILERUN_LOG_LEVEL` |
 | Devices | `MOBILERUN_PORTAL_REMOTE_PORT` (default `8080`), `MOBILERUN_ANDROID_DEVICE_TYPE` (AVD name; unset by default), `MOBILERUN_CLOUD_DEVICE_TYPE` (default `android_cloud_phone`) |
+| Run recording | `MOBILERUN_RUNS_DIR` (unset or empty: `<MOBILERUN_USER_CONFIG_DIR>/runs`, resolved by `get_settings().runs_dir`), `MOBILERUN_RUN_SETTLE_SECONDS` (default `0.25`, full capture only) |
 | Cloud | `MOBILERUN_BILLING` (`paid` by default; `included` / `no_commerce` restrict charges), `MOBILERUN_CLOUD_PROXY_COUNTRY` (default `us`), `MOBILERUN_CLOUD_PROXY_SMART_IP`, `MOBILERUN_CLOUD_BASE_URL`, `MOBILERUN_CLOUD_API_TIMEOUT`, `MOBILERUN_CLOUD_NUMBER_READY_TIMEOUT_SECONDS`, `MOBILERUN_CLOUD_APP_INSTALL_TIMEOUT_SECONDS`, `MOBILERUN_CLOUD_TASK_TIMEOUT_SECONDS`, `MOBILERUN_CLOUD_TASK_POLL_INTERVAL_SECONDS` |
 | Cloud webhooks | `MOBILERUN_WEBHOOK_PAGE_SIZE` (default `100`, from `1` to `100`), `MOBILERUN_WEBHOOK_PING_TIMEOUT` (default `15` seconds, greater than `0` and at most `60`) |
 | Device auth | `MOBILERUN_AUTH_URL`, `MOBILERUN_DEVICE_AUTH_REQUEST_TIMEOUT`, `MOBILERUN_DEVICE_AUTH_MIN_POLL_INTERVAL`, `MOBILERUN_DEVICE_AUTH_SLOW_DOWN_BUMP` |
 | UI state | `MOBILERUN_STATE_RETRY_DELAYS`, `MOBILERUN_STATE_MAX_RETRIES`, `MOBILERUN_STATE_RECOVERY_AFTER_ATTEMPT`, `MOBILERUN_STATE_MAX_TIMEOUT_ATTEMPTS`, `MOBILERUN_STATE_SLOW_FETCH_NOTICE_S` |
 | Screenshots | `MOBILERUN_MODEL_SCREENSHOT_MAX_SIDE` |
+
+Capture level is selected on `RecordingDevice`, not globally. Screenshots in
+`capture="full"` are not redacted; use `capture="actions"` for sensitive flows.
 
 `MOBILERUN_AGENTS` overrides the agent registry as a JSON object. Each agent has `skills` and `mcp` user/project path pairs and can supply an `mcp_format` override. Hints can use `{server_name}`. Set an unsupported integration to `null`. MCP-specific environment settings are documented in [mcp/](../mcp/README.md).
 

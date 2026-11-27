@@ -14,6 +14,7 @@ from mobilerun.cli.app import cli
 from mobilerun.cli.devices.base import selection
 from mobilerun.cli.devices.group import device
 from mobilerun.models.billing import Billing
+from tests.support.macro import write_macro
 
 CLOUD_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -411,8 +412,7 @@ def test_agent_replay_device_option_reaches_replay(monkeypatch, tmp_path, flag):
     monkeypatch.setattr(
         module, "run_replay", lambda operator, **kwargs: received.append(kwargs)
     )
-    path = tmp_path / "macro.json"
-    path.write_text("{}")
+    path = write_macro(tmp_path)
     result = CliRunner().invoke(
         cli, ["macro-agent", "replay", str(path), flag, "serial"]
     )
@@ -460,8 +460,7 @@ def test_macro_dry_run_keeps_transport_flags_without_device(monkeypatch, tmp_pat
     )
     connect = AsyncMock(side_effect=AssertionError("must not connect"))
     monkeypatch.setattr(selection, "connect_target", connect)
-    path = tmp_path / "macro.json"
-    path.write_text(json.dumps({"macro_schema_version": "2.0", "actions": []}))
+    path = write_macro(tmp_path)
     result = CliRunner().invoke(
         cli, ["macro", "replay", str(path), "--dry-run", "--android", "--tcp"]
     )

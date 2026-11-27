@@ -30,7 +30,7 @@ class MacroSettings(BaseSettings):
     """Seconds between state guard checks."""
 
     MOBILERUN_MACRO_DIRECTORY: str | None = None
-    """Optional directory override for the macro list command."""
+    """Directory for published versions, named replay targets, and macro listing."""
 
     @field_validator("MOBILERUN_MACRO_DIRECTORY", mode="before")
     @classmethod

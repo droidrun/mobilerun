@@ -1,15 +1,18 @@
-"""Device-independent recording and strict, guarded replay."""
+"""Build versioned macros from runs and replay them with screen guards."""
 
-from mobilerun.macro.errors import MacroMismatch
+from mobilerun.macro.builder import build_macro, load_macro, resolve_macro_path
+from mobilerun.macro.errors import MacroError, MacroMismatch
+from mobilerun.macro.models import MacroStep
 from mobilerun.macro.operator import MacroOperator
-from mobilerun.macro.player import MacroPlayer, replay_macro_file, replay_macro_folder
-from mobilerun.macro.recorder import MacroRecorder
+from mobilerun.macro.player import MacroPlayer
 
 __all__ = [
+    "MacroError",
     "MacroMismatch",
     "MacroOperator",
     "MacroPlayer",
-    "MacroRecorder",
-    "replay_macro_file",
-    "replay_macro_folder",
+    "MacroStep",
+    "build_macro",
+    "load_macro",
+    "resolve_macro_path",
 ]

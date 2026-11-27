@@ -5,7 +5,8 @@ import json
 import click
 
 from mobilerun.cli.base import render
-from mobilerun.macro import MacroPlayer
+from mobilerun.macro import load_macro, resolve_macro_path
+from mobilerun.macro.errors import MacroError
 from mobilerun.macro.settings import get_macro_settings
 from mobilerun.utils.paths import PathResolver, local_store_path
 
@@ -22,29 +23,31 @@ from mobilerun.utils.paths import PathResolver, local_store_path
 @click.option("--debug", is_flag=True, help="Enable debug logging", default=False)
 @click.option("--json", "as_json", is_flag=True, help="Output JSON.")
 def list(directory: str, debug: bool, as_json: bool) -> None:
-    """List available trajectory folders in a directory."""
+    """List the latest version of each macro in a directory."""
     resolved_dir = PathResolver.resolve(directory)
     entries = []
     if resolved_dir.is_dir():
         for item in sorted(resolved_dir.iterdir()):
-            if item.is_dir() and (item / "macro.json").exists():
-                try:
-                    data = MacroPlayer().load_macro_from_folder(str(item))
-                    entries.append(
-                        {
-                            "name": item.name,
-                            "description": data.get("description", "No description"),
-                            "actions": data.get("total_actions", 0),
-                        }
-                    )
-                except Exception:
-                    entries.append(
-                        {
-                            "name": item.name,
-                            "description": "Error loading",
-                            "actions": 0,
-                        }
-                    )
+            if not item.is_dir():
+                continue
+            try:
+                path = resolve_macro_path(item)
+            except MacroError:
+                continue
+            try:
+                entry = {
+                    "name": item.name,
+                    "version": path.name,
+                    "actions": len(load_macro(path)),
+                }
+            except MacroError:
+                entry = {
+                    "name": item.name,
+                    "version": path.name,
+                    "actions": 0,
+                    "error": "Error loading",
+                }
+            entries.append(entry)
     elif resolved_dir.exists():
         raise click.ClickException(f"Not a directory: {directory}")
     elif (
@@ -63,8 +66,8 @@ def list(directory: str, debug: bool, as_json: bool) -> None:
             rows.append(
                 [
                     entry["name"],
-                    render.secondary(entry["description"]),
-                    render.secondary(f"{entry['actions']} actions"),
+                    render.secondary(entry["version"]),
+                    render.secondary(entry.get("error", f"{entry['actions']} actions")),
                 ]
             )
         render.table(rows)
